@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'   # triggers on tags like v1.0.0, v1.1.0
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write   # needed to create GitHub Releases and upload assets
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Flutter SDK
+        run: |
+          git clone https://github.com/flutter/flutter.git
+          cd flutter
+          git checkout $(cat bin/internal/flutter.version)
+
+      - name: Run tests
+        run: flutter/bin/dart test test/
+
+      - name: Run dart analyze
+        run: flutter/bin/dart analyze lib/
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "flutter-tvos ${{ steps.version.outputs.version }}" \
+            --notes "See [CHANGELOG.md](https://github.com/fluttertv/flutter-tvos/blob/main/CHANGELOG.md) for release notes." \
+            --repo fluttertv/flutter-tvos
