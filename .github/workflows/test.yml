@@ -1,0 +1,36 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Flutter SDK
+        run: |
+          git clone https://github.com/flutter/flutter.git
+          cd flutter
+          git checkout $(cat ../bin/internal/flutter.version)
+
+      - name: Run unit tests
+        run: flutter/bin/dart test test/
+
+  analyze:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Flutter SDK
+        run: |
+          git clone https://github.com/flutter/flutter.git
+          cd flutter
+          git checkout $(cat ../bin/internal/flutter.version)
+
+      - name: Run dart analyze
+        run: flutter/bin/dart analyze lib/

@@ -1,0 +1,37 @@
+# Auto-managed by shared.sh (cloned on first run)
+flutter/
+proxy_root/
+
+# Build artifacts
+build/
+.dart_tool/
+bin/cache/
+
+# Engine artifacts (distributed separately via GitHub Releases / darteverywhere.dev)
+engine_artifacts/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# Pub
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Generated
+*.dart_tool
+
+# Example app generated artifacts (built by flutter-tvos, not source)
+packages/flutter_tvos/example/build/
+packages/flutter_tvos/example/tvos/Flutter/
+packages/flutter_tvos/example/tvos/Pods/
+packages/flutter_tvos/example/tvos/.dart_tool/
+packages/flutter_tvos/example/.dart_tool/
+packages/flutter_tvos/build/
