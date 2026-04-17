@@ -11,7 +11,6 @@ environment:
 dependencies:
   analyzer:
   archive:
-  fake_async:
   flutter_tools:
     path: flutter/packages/flutter_tools
   file:
@@ -26,6 +25,7 @@ dependencies:
 
 dev_dependencies:
   args:
+  fake_async:
   file_testing:
   pubspec_parse:
   test:
