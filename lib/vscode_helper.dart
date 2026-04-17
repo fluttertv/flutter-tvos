@@ -13,8 +13,9 @@ void updateLaunchJsonFile(FlutterProject project, Uri observatoryUri) {
   }
 
   final File launchJsonFile = vscodeDir.childFile('launch.json');
+  // ignore: unused_local_variable — populated for future tvOS attach config injection
   Map<String, dynamic> launchJson = <String, dynamic>{};
-  
+
   if (launchJsonFile.existsSync()) {
     try {
       final String content = launchJsonFile.readAsStringSync();

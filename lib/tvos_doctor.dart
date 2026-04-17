@@ -4,11 +4,14 @@
 
 import 'dart:io';
 
+import 'package:file/file.dart';
 import 'package:flutter_tools/src/base/context.dart';
 import 'package:flutter_tools/src/base/os.dart';
+import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/user_messages.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/doctor_validator.dart';
+import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:process/process.dart';
 
 TvosWorkflow? get tvosWorkflow => context.get<TvosWorkflow>();
@@ -38,10 +41,16 @@ class TvosValidator extends DoctorValidator {
   TvosValidator({
     required ProcessManager processManager,
     required UserMessages userMessages,
+    FileSystem? fileSystem,
+    Platform? platform,
   })  : _processManager = processManager,
+        _fileSystem = fileSystem,
+        _platform = platform,
         super('tvOS toolchain - develop for Apple tvOS devices');
 
   final ProcessManager _processManager;
+  final FileSystem? _fileSystem;
+  final Platform? _platform;
 
   @override
   Future<ValidationResult> validate() async {
@@ -183,20 +192,22 @@ class TvosValidator extends DoctorValidator {
 
   /// Checks that tvOS engine artifacts are present.
   Future<void> _checkEngineArtifacts(List<ValidationMessage> messages) async {
-    try {
-      // Use `which flutter-tvos` or check known artifact paths
-      // For now, check if the precache command would find artifacts
-      final ProcessResult result = await _processManager.run(<String>[
-        'ls', '-d',
-        // This path is relative to the CLI root
-        'engine_artifacts/tvos_debug_sim_arm64',
-      ]);
-      if (result.exitCode == 0) {
-        messages.add(const ValidationMessage('tvOS engine artifacts present'));
-        return;
-      }
-    } on ProcessException {
-      // ignore
+    final FileSystem fs = _fileSystem ?? globals.fs;
+    final Platform platform = _platform ?? globals.platform;
+
+    // Resolve path relative to the flutter-tvos CLI root (script location),
+    // not the caller's cwd.
+    final String scriptPath = fs.path.fromUri(platform.script);
+    // bin/cache/flutter-tvos.snapshot → CLI root is two dirs up.
+    final String cliRoot = fs.path.dirname(
+      fs.path.dirname(fs.path.dirname(scriptPath)),
+    );
+    final String artifactDir = fs.path.join(
+      cliRoot, 'engine_artifacts', 'tvos_debug_sim_arm64',
+    );
+    if (fs.directory(artifactDir).existsSync()) {
+      messages.add(const ValidationMessage('tvOS engine artifacts present'));
+      return;
     }
 
     messages.add(const ValidationMessage.hint(

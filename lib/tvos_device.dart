@@ -242,8 +242,13 @@ class TvosDevice extends Device {
   Future<bool> installApp(covariant ApplicationPackage app, {String? userIdentifier}) async {
     final TvosApp tvosApp = app as TvosApp;
 
+    // Prefer Release bundle if present (device/release builds); fall back to Debug.
+    String appPath = tvosApp.bundlePath(BuildMode.release, isSimulator: isSimulator);
+    if (!globals.fs.directory(appPath).existsSync()) {
+      appPath = tvosApp.bundlePath(BuildMode.debug, isSimulator: isSimulator);
+    }
+
     if (isSimulator) {
-      final String appPath = tvosApp.bundlePath(BuildMode.debug, isSimulator: true);
       final RunResult result = await globals.processUtils.run(<String>[
         'xcrun', 'simctl', 'install', id, appPath,
       ]);
@@ -255,7 +260,6 @@ class TvosDevice extends Device {
     }
 
     // Physical device: use devicectl
-    final String appPath = tvosApp.bundlePath(BuildMode.release, isSimulator: false);
     logger.printStatus('Installing on physical Apple TV ($id)...');
 
     final RunResult result = await globals.processUtils.run(<String>[
@@ -493,15 +497,12 @@ class TvosDevice extends Device {
       return result.exitCode == 0;
     }
 
-    // Physical device: use devicectl to send SIGTERM
-    final RunResult result = await globals.processUtils.run(<String>[
-      'xcrun', 'devicectl', 'device', 'process', 'terminate',
-      '--device', id,
-      '--pid', '0', // Will terminate by bundle ID below
-    ]);
-    // Fallback: devicectl doesn't have a clean "terminate by bundle" command,
-    // but the log reader process kill will detach the console session
-    return result.exitCode == 0;
+    // Physical device: terminate by bundle identifier. devicectl's terminate
+    // subcommand requires a real PID, which we don't track here — fall back to
+    // killing the launch console session (which unlocks the app) and consider
+    // that success. A follow-up `devicectl device process launch` would replace it.
+    // The log reader dispose() above already terminates the launch console.
+    return true;
   }
 
   @override

@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/os.dart';
+import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/user_messages.dart';
 import 'package:flutter_tools/src/doctor_validator.dart';
 import 'package:flutter_tvos/tvos_doctor.dart';
@@ -10,6 +12,24 @@ import 'package:flutter_tvos/tvos_doctor.dart';
 import '../src/common.dart';
 import '../src/fake_process_manager.dart';
 import '../src/fakes.dart';
+
+// A fake platform whose script URI points to a known path so that
+// _checkEngineArtifacts can resolve the CLI root without touching globals.
+//
+// Layout mirrored by _engineFs below:
+//   /cli/bin/cache/flutter-tvos.snapshot  ← script
+//   /cli/engine_artifacts/tvos_debug_sim_arm64/
+FakePlatform _makePlatform() => FakePlatform(
+      script: Uri.file('/cli/bin/cache/flutter-tvos.snapshot'),
+    );
+
+MemoryFileSystem _makeEngineFs({bool artifactsPresent = true}) {
+  final MemoryFileSystem fs = MemoryFileSystem.test();
+  if (artifactsPresent) {
+    fs.directory('/cli/engine_artifacts/tvos_debug_sim_arm64').createSync(recursive: true);
+  }
+  return fs;
+}
 
 void main() {
   late FakeProcessManager processManager;
@@ -41,16 +61,13 @@ void main() {
           command: <String>['pod', '--version'],
           stdout: '1.15.2',
         ),
-        // Engine artifacts check
-        const FakeCommand(
-          command: <String>['ls', '-d', 'engine_artifacts/tvos_debug_sim_arm64'],
-          stdout: 'engine_artifacts/tvos_debug_sim_arm64',
-        ),
       ]);
 
       final TvosValidator validator = TvosValidator(
         processManager: processManager,
         userMessages: UserMessages(),
+        fileSystem: _makeEngineFs(artifactsPresent: true),
+        platform: _makePlatform(),
       );
 
       final ValidationResult result = await validator.validate();
@@ -76,6 +93,8 @@ void main() {
       final TvosValidator validator = TvosValidator(
         processManager: processManager,
         userMessages: UserMessages(),
+        fileSystem: _makeEngineFs(),
+        platform: _makePlatform(),
       );
 
       final ValidationResult result = await validator.validate();
@@ -101,15 +120,13 @@ void main() {
           command: <String>['pod', '--version'],
           stdout: '1.15.2',
         ),
-        const FakeCommand(
-          command: <String>['ls', '-d', 'engine_artifacts/tvos_debug_sim_arm64'],
-          stdout: 'engine_artifacts/tvos_debug_sim_arm64',
-        ),
       ]);
 
       final TvosValidator validator = TvosValidator(
         processManager: processManager,
         userMessages: UserMessages(),
+        fileSystem: _makeEngineFs(),
+        platform: _makePlatform(),
       );
 
       final ValidationResult result = await validator.validate();
@@ -139,15 +156,13 @@ void main() {
           command: <String>['pod', '--version'],
           stdout: '1.15.2',
         ),
-        const FakeCommand(
-          command: <String>['ls', '-d', 'engine_artifacts/tvos_debug_sim_arm64'],
-          stdout: 'engine_artifacts/tvos_debug_sim_arm64',
-        ),
       ]);
 
       final TvosValidator validator = TvosValidator(
         processManager: processManager,
         userMessages: UserMessages(),
+        fileSystem: _makeEngineFs(),
+        platform: _makePlatform(),
       );
 
       final ValidationResult result = await validator.validate();
@@ -176,15 +191,13 @@ void main() {
           command: <String>['pod', '--version'],
           exitCode: 1,
         ),
-        const FakeCommand(
-          command: <String>['ls', '-d', 'engine_artifacts/tvos_debug_sim_arm64'],
-          stdout: 'engine_artifacts/tvos_debug_sim_arm64',
-        ),
       ]);
 
       final TvosValidator validator = TvosValidator(
         processManager: processManager,
         userMessages: UserMessages(),
+        fileSystem: _makeEngineFs(),
+        platform: _makePlatform(),
       );
 
       final ValidationResult result = await validator.validate();
@@ -194,6 +207,42 @@ void main() {
           .map((ValidationMessage m) => m.message)
           .toList();
       expect(messageTexts, contains(contains('CocoaPods not installed')));
+    });
+
+    testWithoutContext('reports hint when engine artifacts are absent', () async {
+      processManager.addCommands(<FakeCommand>[
+        const FakeCommand(
+          command: <String>['xcodebuild', '-version'],
+          stdout: 'Xcode 16.3\nBuild version 16E140',
+        ),
+        const FakeCommand(
+          command: <String>['xcrun', '--sdk', 'appletvos', '--show-sdk-path'],
+          stdout: '/path/to/AppleTVOS17.0.sdk',
+        ),
+        const FakeCommand(
+          command: <String>['xcrun', 'simctl', 'list', 'runtimes', '--json'],
+          stdout: '{"runtimes":[{"name":"tvOS 17.0"}]}',
+        ),
+        const FakeCommand(
+          command: <String>['pod', '--version'],
+          stdout: '1.15.2',
+        ),
+      ]);
+
+      final TvosValidator validator = TvosValidator(
+        processManager: processManager,
+        userMessages: UserMessages(),
+        fileSystem: _makeEngineFs(artifactsPresent: false),
+        platform: _makePlatform(),
+      );
+
+      final ValidationResult result = await validator.validate();
+      // Missing artifacts = hint only; hints leave overall as success
+      expect(result.type, equals(ValidationType.success));
+      final List<String> messageTexts = result.messages
+          .map((ValidationMessage m) => m.message)
+          .toList();
+      expect(messageTexts, contains(contains('engine artifacts not found')));
     });
   });
 

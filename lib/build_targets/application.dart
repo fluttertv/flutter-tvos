@@ -594,7 +594,17 @@ class NativeTvosBundle extends Target {
     final ProcessResult result = await globals.processManager.run(
       <String>['xcrun', '--sdk', sdkName, '--show-sdk-path'],
     );
-    return (result.stdout as String).trim();
+    if (result.exitCode != 0) {
+      throw Exception(
+        'Failed to resolve SDK path for "$sdkName" via xcrun '
+        '(exit ${result.exitCode}): ${result.stderr}',
+      );
+    }
+    final String path = (result.stdout as String).trim();
+    if (path.isEmpty) {
+      throw Exception('xcrun returned empty SDK path for "$sdkName".');
+    }
+    return path;
   }
 
   /// Generates Generated.xcconfig, Debug.xcconfig, and Release.xcconfig.
@@ -610,8 +620,8 @@ class NativeTvosBundle extends Target {
     xcconfig.writeln('FLUTTER_APPLICATION_PATH=${project.directory.path}');
     xcconfig.writeln('FLUTTER_TARGET=$targetFile');
     xcconfig.writeln('FLUTTER_BUILD_DIR=${project.directory.childDirectory('build').path}');
-    xcconfig.writeln('FLUTTER_BUILD_NAME=1.0.0');
-    xcconfig.writeln('FLUTTER_BUILD_NUMBER=1');
+    xcconfig.writeln('FLUTTER_BUILD_NAME=${buildInfo.buildInfo.buildName ?? '1.0.0'}');
+    xcconfig.writeln('FLUTTER_BUILD_NUMBER=${buildInfo.buildInfo.buildNumber ?? '1'}');
 
     flutterDir.childFile('Generated.xcconfig').writeAsStringSync(xcconfig.toString());
 

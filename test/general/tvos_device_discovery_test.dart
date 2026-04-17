@@ -4,20 +4,16 @@
 
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart';
-import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tvos/tvos_device_discovery.dart';
 import 'package:flutter_tvos/tvos_doctor.dart';
 
 import '../src/common.dart';
-import '../src/fake_process_manager.dart';
 import '../src/fakes.dart';
 
 void main() {
-  late FakeProcessManager processManager;
   late TvosDeviceDiscovery discovery;
 
   setUp(() {
-    processManager = FakeProcessManager.empty();
     final TvosWorkflow workflow = TvosWorkflow(
       operatingSystemUtils: FakeOperatingSystemUtils(hostPlatform: HostPlatform.darwin_arm64),
     );

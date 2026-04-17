@@ -6,9 +6,6 @@ import 'dart:convert';
 
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
-import 'package:flutter_tools/src/base/template.dart';
-import 'package:flutter_tools/src/globals.dart' as globals;
-import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tvos/tvos_plugins.dart' show TvosPlugin;
 
 import '../src/common.dart';
@@ -131,8 +128,7 @@ void main() {
     testUsingContext('Podfile reads plugins from .flutter-plugins-dependencies', () {
       final Directory projectDir = fileSystem.directory('/project')
         ..createSync(recursive: true);
-      final Directory tvosDir = projectDir.childDirectory('tvos')
-        ..createSync();
+      projectDir.childDirectory('tvos').createSync();
 
       // Write .flutter-plugins-dependencies as tvos_plugins.dart would
       final Map<String, dynamic> deps = <String, dynamic>{
