@@ -14,9 +14,12 @@ jobs:
 
       - name: Fetch Flutter SDK
         run: |
-          git clone https://github.com/flutter/flutter.git
+          FLUTTER_COMMIT=$(head -n 1 bin/internal/flutter.version)
+          FLUTTER_BRANCH=$(sed -n '2p' bin/internal/flutter.version)
+          git clone --depth=1 https://github.com/flutter/flutter.git -b "$FLUTTER_BRANCH"
           cd flutter
-          git checkout $(cat ../bin/internal/flutter.version)
+          git fetch --depth=1 origin "$FLUTTER_COMMIT"
+          git checkout "$FLUTTER_COMMIT"
 
       - name: Run unit tests
         run: flutter/bin/dart test test/
@@ -28,9 +31,12 @@ jobs:
 
       - name: Fetch Flutter SDK
         run: |
-          git clone https://github.com/flutter/flutter.git
+          FLUTTER_COMMIT=$(head -n 1 bin/internal/flutter.version)
+          FLUTTER_BRANCH=$(sed -n '2p' bin/internal/flutter.version)
+          git clone --depth=1 https://github.com/flutter/flutter.git -b "$FLUTTER_BRANCH"
           cd flutter
-          git checkout $(cat ../bin/internal/flutter.version)
+          git fetch --depth=1 origin "$FLUTTER_COMMIT"
+          git checkout "$FLUTTER_COMMIT"
 
       - name: Run dart analyze
         run: flutter/bin/dart analyze lib/
