@@ -85,6 +85,12 @@ function update_flutter() {
   unset GIT_DIR
   unset GIT_WORK_TREE
 
+  # NOTE: Flutter SDK is intentionally NOT patched by flutter-tvos. All
+  # tvOS-specific behavior lives in (a) the engine artifact (Dart VM +
+  # Impeller + iOS embedder patches, shipped as pre-built zips) and
+  # (b) this CLI. The Flutter SDK checkout above is bit-for-bit identical
+  # to the pinned commit in bin/internal/flutter.version.
+
   # Invalidate the flutter cache.
   local stamp_path="$FLUTTER_DIR/bin/cache/flutter_tools.stamp"
   if [[ ! -f "$stamp_path" ]]; then

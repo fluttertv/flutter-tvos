@@ -15,6 +15,7 @@ import 'package:flutter_tools/src/base/logger.dart';
 
 import 'build_targets/application.dart';
 import 'tvos_build_info.dart';
+import 'tvos_plugins.dart';
 import 'tvos_project.dart';
 
 /// The define to control what tvOS target is built for.
@@ -49,6 +50,19 @@ class TvosBuilder {
       cacheDir: globals.cache.getRoot(),
       flutterRootDir: globals.fs.directory(Cache.flutterRoot),
       engineVersion: globals.flutterVersion.engineRevision,
+      // generateDartPluginRegistry propagates to KernelSnapshot as
+      // `checkDartPluginRegistry`, which tells frontend-server to link
+      // `_PluginRegistrant.register()` into the kernel blob via
+      // --source=<path>/dart_plugin_registrant.dart. We need this so the
+      // engine's FindAndInvokeDartPluginRegistrant() actually fires at
+      // isolate startup.
+      //
+      // On stock Flutter this also triggers DartPluginRegistrantTarget to
+      // generate a registrant based on Android/iOS/macOS plugins — which
+      // for a tvOS project would route to `_foundation` plugins that have
+      // no native code in our bundle. We side-step that by using
+      // TvosKernelSnapshot (see build_targets/application.dart), which
+      // substitutes TvosDartPluginRegistrantTarget for the upstream one.
       generateDartPluginRegistry: true,
       defines: <String, String>{
         kTargetFile: targetFile,
@@ -68,6 +82,14 @@ class TvosBuilder {
     final Target target = buildInfo.isDebug
         ? DebugTvosApplication(tvosBuildInfo)
         : ReleaseTvosApplication(tvosBuildInfo);
+
+    // Write the tvOS dart plugin registrant BEFORE the kernel compiles so
+    // that Dart-side federated plugins (e.g. shared_preferences_tvos) call
+    // registerWith() instead of the iOS implementations. Flutter's build
+    // system would otherwise emit a registrant that routes to iOS plugins
+    // (Platform.isIOS == true on tvOS). We disabled generateDartPluginRegistry
+    // above so Flutter won't overwrite this file during the build.
+    writeTvosDartPluginRegistrant(project);
 
     final Status status = globals.logger.startProgress(
         'Building a tvOS application in $buildModeName mode for ${tvosBuildInfo.targetArch} target...');

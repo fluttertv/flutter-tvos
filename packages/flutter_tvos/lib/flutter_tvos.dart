@@ -18,3 +18,5 @@ library flutter_tvos;
 
 export 'src/tvos_info.dart';
 export 'src/tvos_ffi_bindings.dart' show TvOSNativeBindings;
+export 'src/platform_extension.dart'
+    show FlutterTvosPlatform, FlutterTvosPlatformExt;

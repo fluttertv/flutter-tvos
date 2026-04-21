@@ -7,6 +7,8 @@ import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
+import 'package:flutter_tools/src/build_system/targets/localizations.dart';
+import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
@@ -15,6 +17,100 @@ import '../tvos_artifacts.dart';
 import '../tvos_build_info.dart';
 import '../tvos_cache.dart';
 import '../tvos_plugins.dart';
+
+/// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with tvOS-
+/// aware plugin registrations, as a proper build target.
+///
+/// This replaces Flutter's stock [DartPluginRegistrantTarget] in our build
+/// graph (via [TvosKernelSnapshot]) so that the file the frontend-server
+/// reads via `--source=dart_plugin_registrant.dart` contains entries for
+/// plugins declared under `flutter.plugin.platforms.tvos` — not the iOS
+/// entries Flutter would otherwise emit (since `Platform.isIOS` is false
+/// under our Dart VM patch, and the `tvos` platform key is unknown to
+/// upstream `generateMainDartWithPluginRegistrant`).
+class TvosDartPluginRegistrantTarget extends Target {
+  const TvosDartPluginRegistrantTarget();
+
+  @override
+  String get name => 'gen_tvos_dart_plugin_registrant';
+
+  @override
+  List<Target> get dependencies => const <Target>[];
+
+  @override
+  List<Source> get inputs => const <Source>[
+        Source.pattern('{WORKSPACE_DIR}/.dart_tool/package_config.json'),
+      ];
+
+  @override
+  List<Source> get outputs => const <Source>[
+        // Flutter's KernelCompiler reads this path when
+        // checkDartPluginRegistry is true. See
+        // `compile.dart:buildDir.parent.childFile('dart_plugin_registrant.dart')`.
+        Source.pattern('{BUILD_DIR}/../dart_plugin_registrant.dart'),
+      ];
+
+  @override
+  Future<void> build(Environment environment) async {
+    final FlutterProject project =
+        FlutterProject.fromDirectory(environment.projectDir);
+    writeTvosDartPluginRegistrant(project);
+  }
+}
+
+/// A [KernelSnapshot] subclass that swaps in our tvOS-aware registrant target.
+///
+/// The stock `KernelSnapshot.dependencies` includes upstream
+/// `DartPluginRegistrantTarget`, which would overwrite our file with an
+/// iOS-plugin-based registrant (via `generateMainDartWithPluginRegistrant`
+/// in `flutter_plugins.dart`). That's wrong on tvOS — iOS-only plugins like
+/// `shared_preferences_foundation` have no native code in our bundle, so
+/// calls through them raise `MissingPluginException` at runtime.
+///
+/// By replacing the dep with [TvosDartPluginRegistrantTarget] we keep the
+/// registrant file correct, AND the `checkDartPluginRegistry` flag still
+/// propagates (via `environment.generateDartPluginRegistry: true`) so the
+/// frontend-server receives `--source=dart_plugin_registrant.dart` and
+/// links `_PluginRegistrant.register()` into the kernel blob.
+class TvosKernelSnapshot extends KernelSnapshot {
+  const TvosKernelSnapshot();
+
+  @override
+  List<Target> get dependencies => const <Target>[
+        GenerateLocalizationsTarget(),
+        TvosDartPluginRegistrantTarget(),
+      ];
+}
+
+/// [AotElfRelease] subclass that uses [TvosKernelSnapshot] instead of the
+/// stock [KernelSnapshot], so AOT release builds also link the tvOS
+/// registrant into the compiled kernel.
+class TvosAotElfRelease extends AotElfRelease {
+  const TvosAotElfRelease(TargetPlatform targetPlatform) : super(targetPlatform);
+
+  @override
+  List<Target> get dependencies => const <Target>[TvosKernelSnapshot()];
+}
+
+/// [CopyFlutterBundle] subclass that depends on [TvosKernelSnapshot] instead
+/// of the stock [KernelSnapshot].
+///
+/// This matters because `dependencies` is how the build graph reaches
+/// transitively-needed targets. If we left stock [CopyFlutterBundle] in the
+/// graph, its `dependencies` list would drag [KernelSnapshot] in — which in
+/// turn drags upstream [DartPluginRegistrantTarget] in — and THAT target
+/// regenerates `dart_plugin_registrant.dart` from iOS-plugin data,
+/// overwriting our tvOS-correct file before frontend-server reads it.
+class TvosCopyFlutterBundle extends CopyFlutterBundle {
+  const TvosCopyFlutterBundle();
+
+  @override
+  List<Target> get dependencies => const <Target>[
+        DartBuildForNative(),
+        TvosKernelSnapshot(),
+        InstallCodeAssets(),
+      ];
+}
 
 class DebugTvosApplication extends Target {
   DebugTvosApplication(this.buildInfo);
@@ -26,8 +122,8 @@ class DebugTvosApplication extends Target {
 
   @override
   List<Target> get dependencies => const <Target>[
-        KernelSnapshot(),
-        CopyFlutterBundle(),
+        TvosKernelSnapshot(),
+        TvosCopyFlutterBundle(),
       ];
 
   @override
@@ -52,7 +148,7 @@ class ReleaseTvosApplication extends Target {
 
   @override
   List<Target> get dependencies => const <Target>[
-        AotElfRelease(TargetPlatform.ios),
+        TvosAotElfRelease(TargetPlatform.ios),
       ];
 
   @override
