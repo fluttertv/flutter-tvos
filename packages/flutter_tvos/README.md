@@ -92,24 +92,30 @@ works across all platforms.
 - Lock-screen media commands (play, pause, seek) via
   `MPRemoteCommandCenter`
 
-### Tuning thresholds
+### Tuning
+
+All tuning lives on `TvRemoteConfig`. Assigning a new config to
+`TvRemoteController.instance.config` ships the values to the native
+engine plugin (via a method-channel call); mutations take effect on
+the next input event.
 
 ```dart
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   TvRemoteController.instance.config = const TvRemoteConfig(
-    shortSwipeThreshold: 0.4,   // less sensitive swipes
-    fastSwipeThreshold: 0.6,    // higher "fast" flag threshold
-    dpadDeadZone: 0.6,          // wider center zone for directional-click bias
+    shortSwipeThreshold: 0.4,                         // raw-listener swipe threshold
+    fastSwipeThreshold: 0.6,                          // "fast" flag threshold
+    dpadDeadZone: 0.6,                                // off-center distance for click bias
+    continuousSwipeMoveThreshold: 4,                  // consecutive moves before auto-repeat
+    keyRepeatInitialDelay: Duration(milliseconds: 450),
+    keyRepeatInterval: Duration(milliseconds: 100),
   );
   runTvApp(const MyApp());
 }
 ```
 
-Key-repeat timing (initial delay and interval between repeated presses)
-is fixed in the native engine plugin and not currently configurable from
-Dart — the defaults (~400 ms initial, ~80 ms interval) match the pace of
-the macOS key-repeat system.
+All fields have sensible defaults so apps that never touch `config`
+behave identically to the stock configuration.
 
 ### Raw touch listener (video players, custom swipe zones)
 

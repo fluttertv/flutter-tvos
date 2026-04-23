@@ -2,52 +2,77 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:async' show unawaited;
+
 import 'package:flutter/foundation.dart'
     show ErrorDescription, FlutterError, FlutterErrorDetails, visibleForTesting;
-import 'package:flutter/services.dart' show LogicalKeyboardKey, MethodCall;
-import 'package:flutter/widgets.dart'
-    show Widget, WidgetsFlutterBinding, runApp;
+import 'package:flutter/widgets.dart' show Widget, WidgetsFlutterBinding, runApp;
 
 import '../platform_extension.dart' show FlutterTvosPlatform;
-import 'key_simulator.dart';
 import 'swipe_detector.dart';
 import 'tv_remote_channels.dart';
 
 /// Runtime configuration for [TvRemoteController].
 ///
-/// Defaults match horizon `SwipeMixin` tuning adapted to the normalized
-/// `[-1, 1]` coordinate space. A "short swipe" of 0.3 means the user moved
-/// their finger across roughly 30% of the touchpad width.
-///
-/// Key-repeat timing (initial delay + interval) lives in the native plugin
-/// and is not exposed here — physical button holds and continuous swipes
-/// auto-repeat at engine-set rates (~400ms initial, ~80ms interval).
+/// All tuning is shipped to the native plugin when [config] is assigned
+/// (and once at [init]) via the `configure` method on the
+/// [TvRemoteChannels.button] channel. Mutations take effect on the next
+/// input event. On iOS / Android `config` is a no-op — [runTvApp] does
+/// not call [init] there.
 class TvRemoteConfig {
   const TvRemoteConfig({
     this.shortSwipeThreshold = 0.3,
     this.fastSwipeThreshold = 0.5,
     this.dpadDeadZone = 0.5,
+    this.continuousSwipeMoveThreshold = 3,
+    this.keyRepeatInitialDelay = const Duration(milliseconds: 400),
+    this.keyRepeatInterval = const Duration(milliseconds: 80),
   })  : assert(shortSwipeThreshold > 0,
             'shortSwipeThreshold must be positive'),
         assert(fastSwipeThreshold >= shortSwipeThreshold,
             'fastSwipeThreshold must be >= shortSwipeThreshold'),
         assert(dpadDeadZone > 0,
-            'dpadDeadZone must be positive (use a value > 1.0 to disable bias)');
+            'dpadDeadZone must be positive (use a value > 1.0 to disable bias)'),
+        assert(continuousSwipeMoveThreshold >= 1,
+            'continuousSwipeMoveThreshold must be at least 1');
 
   /// Accumulated delta that triggers a single arrow-key emit from a
-  /// discrete swipe gesture (as seen by [addRawListener]). Continuous-swipe
-  /// auto-repeat is detected separately in native with a fixed threshold.
+  /// discrete swipe gesture (as seen by [TvRemoteController.addRawListener]).
+  /// The native continuous-swipe detector uses its own threshold —
+  /// see [continuousSwipeMoveThreshold].
   final double shortSwipeThreshold;
 
   /// Single-move delta above which the swipe is "fast". Consumers of
-  /// [addRawListener] may use this flag to accelerate their own scrolling.
+  /// [TvRemoteController.addRawListener] may use this to accelerate their
+  /// own scrolling.
   final double fastSwipeThreshold;
 
-  /// D-pad axis magnitude threshold for directional-click bias. If the
-  /// last D-pad `loc` X is off-center by at least this value when the
-  /// touchpad is clicked, the click is converted to the matching arrow
-  /// key instead of Select. Set to a value > 1.0 to disable the bias.
+  /// D-pad axis magnitude threshold used natively to bias a Siri Remote
+  /// touchpad click toward an arrow key. Set to a value > 1.0 to disable
+  /// the bias entirely.
   final double dpadDeadZone;
+
+  /// Number of consecutive same-direction touchpad `move` events required
+  /// natively before continuous-swipe auto-repeat engages.
+  final int continuousSwipeMoveThreshold;
+
+  /// Delay from the initial keydown to the first auto-repeated keydown
+  /// on a held arrow/page button. Applied to the native `NSTimer`.
+  final Duration keyRepeatInitialDelay;
+
+  /// Interval between auto-repeated keydown events while the key is held.
+  final Duration keyRepeatInterval;
+
+  /// Serialize to the method-channel payload expected by the native
+  /// plugin's `configure` method.
+  Map<String, dynamic> toMap() => <String, dynamic>{
+        'shortSwipeThreshold': shortSwipeThreshold,
+        'fastSwipeThreshold': fastSwipeThreshold,
+        'dpadDeadZone': dpadDeadZone,
+        'continuousSwipeMoveThreshold': continuousSwipeMoveThreshold,
+        'keyRepeatInitialDelayMs': keyRepeatInitialDelay.inMilliseconds,
+        'keyRepeatIntervalMs': keyRepeatInterval.inMilliseconds,
+      };
 }
 
 /// A single raw touch event from the Siri Remote touchpad, exposed for
@@ -100,64 +125,49 @@ enum TvRemoteTouchPhase {
 /// Signature for raw touch event listeners.
 typedef TvRemoteTouchListener = void Function(TvRemoteTouchEvent event);
 
-/// Receives remote-control events from the native tvOS embedder.
+/// Dart-side companion to the native `FlutterTvRemotePlugin`.
 ///
-/// Most keyboard events come straight from the engine plugin: physical
-/// arrow/page button presses (with native auto-repeat) and continuous-swipe
-/// auto-repeat. This controller handles the two things that need app-level
-/// policy:
+/// The native plugin owns all keyboard-event generation: arrow/page
+/// button presses, continuous-swipe auto-repeat, and the Select-click
+/// directional bias are emitted directly to `flutter/keyevent`. This
+/// controller only:
 ///
-///   - **Directional click bias.** When the user presses the touchpad with
-///     a finger off-center, we convert Select into the matching arrow key,
-///     controlled by [TvRemoteConfig.dpadDeadZone].
-///   - **Raw touch listeners.** Advanced UIs (video scrubbing, custom
-///     swipe zones) can subscribe via [addRawListener] and receive every
-///     touchpad event.
+///   - ships tuning values ([TvRemoteConfig]) to native;
+///   - fan-outs raw touchpad events to [addRawListener] consumers
+///     (video scrubbers, custom swipe zones).
 ///
 /// Initialize at app start via [runTvApp] or by calling
-/// [TvRemoteController.instance.init()].
+/// `TvRemoteController.instance.init()`.
 class TvRemoteController {
   TvRemoteController._();
 
   /// Process-wide singleton.
   static final TvRemoteController instance = TvRemoteController._();
 
-  /// Tuning for swipe thresholds and click bias. Mutations take effect on
-  /// the next event — no need to re-initialize after changing [config].
-  TvRemoteConfig config = const TvRemoteConfig();
+  TvRemoteConfig _config = const TvRemoteConfig();
 
-  /// SwipeDetector is lazily constructed on first use and refreshed when
-  /// thresholds in [config] change.
-  SwipeDetector get _swipe {
-    final threshold = config.shortSwipeThreshold;
-    final fastThreshold = config.fastSwipeThreshold;
-    if (_cachedSwipe == null ||
-        _cachedSwipeThreshold != threshold ||
-        _cachedFastThreshold != fastThreshold) {
-      _cachedSwipe = SwipeDetector(
-        shortThreshold: threshold,
-        fastThreshold: fastThreshold,
-      );
-      _cachedSwipeThreshold = threshold;
-      _cachedFastThreshold = fastThreshold;
+  /// Current tuning. Assigning a new value ships it to the native plugin.
+  TvRemoteConfig get config => _config;
+  set config(TvRemoteConfig next) {
+    _config = next;
+    _cachedSwipe = null;  // force rebuild of the raw-listener detector
+    if (_initialized) {
+      _pushConfig();
     }
+  }
+
+  /// Swipe detector for raw-listener consumers only. Lazily rebuilt when
+  /// thresholds change. Native runs its own detector for auto-repeat.
+  SwipeDetector get _swipe {
+    _cachedSwipe ??= SwipeDetector(
+      shortThreshold: _config.shortSwipeThreshold,
+      fastThreshold: _config.fastSwipeThreshold,
+    );
     return _cachedSwipe!;
   }
 
   SwipeDetector? _cachedSwipe;
-  double? _cachedSwipeThreshold;
-  double? _cachedFastThreshold;
-
   final _rawListeners = <TvRemoteTouchListener>[];
-
-  /// Last D-pad X from `loc` events. Used to bias touchpad clicks toward
-  /// an arrow direction when the user is holding the touchpad off-center.
-  double _lastDpadX = 0;
-
-  /// Key emitted on the most recent `clickStart`, so `clickEnd` can send
-  /// the matching keyup.
-  LogicalKeyboardKey? _lastClickKey;
-
   bool _initialized = false;
 
   /// Wire up channel handlers. Idempotent — subsequent calls are no-ops.
@@ -175,19 +185,29 @@ class TvRemoteController {
   @visibleForTesting
   void debugReset() {
     TvRemoteChannels.touches.setMessageHandler(null);
-    TvRemoteChannels.button.setMethodCallHandler(null);
     _rawListeners.clear();
     _cachedSwipe?.onEnd();
-    _lastDpadX = 0;
-    _lastClickKey = null;
+    _cachedSwipe = null;
+    _config = const TvRemoteConfig();
     _initialized = false;
   }
 
   void _attachChannelHandlers() {
     if (_initialized) return;
     TvRemoteChannels.touches.setMessageHandler(_onTouchMessage);
-    TvRemoteChannels.button.setMethodCallHandler(_onButtonCall);
     _initialized = true;
+    _pushConfig();
+  }
+
+  void _pushConfig() {
+    unawaited(TvRemoteChannels.button
+        .invokeMethod<void>('configure', _config.toMap())
+        .catchError((Object error, StackTrace stack) {
+      // Before native is reachable (e.g. iOS / Android / test binding
+      // without a plugin), the invocation fails. Silently ignore — the
+      // native side holds default values that match [TvRemoteConfig]
+      // defaults, so apps that never touch `config` behave identically.
+    }));
   }
 
   /// Register a listener that receives every raw touchpad event.
@@ -212,8 +232,7 @@ class TvRemoteController {
     if (_rawListeners.isNotEmpty) {
       final event = TvRemoteTouchEvent(phase: phase, x: x, y: y);
       // Iterate over a snapshot — a listener that calls addRawListener /
-      // removeRawListener during delivery (e.g. a video scrubber that
-      // self-removes when it finishes) would otherwise throw
+      // removeRawListener during delivery would otherwise throw
       // ConcurrentModificationError. Wrap each call in try/catch so one
       // bad listener cannot poison the rest.
       for (final listener in List.of(_rawListeners)) {
@@ -230,13 +249,13 @@ class TvRemoteController {
       }
     }
 
+    // Keep the raw-listener-facing swipe detector state in sync. The
+    // native side has its own detector for continuous-swipe auto-repeat.
     switch (phase) {
       case TvRemoteTouchPhase.started:
         _swipe.onStart(x, y);
         break;
       case TvRemoteTouchPhase.move:
-        // SwipeDetector runs for the benefit of raw listeners / tests.
-        // Keyboard events from continuous swipes are generated natively.
         _swipe.onMove(x, y);
         break;
       case TvRemoteTouchPhase.ended:
@@ -244,77 +263,10 @@ class TvRemoteController {
         _swipe.onEnd();
         break;
       case TvRemoteTouchPhase.loc:
-        _lastDpadX = x;
-        break;
       case TvRemoteTouchPhase.clickStart:
-        await _handleClickStart();
-        break;
       case TvRemoteTouchPhase.clickEnd:
-        await _handleClickEnd();
+        // Native handles keyboard emission for these phases.
         break;
-    }
-    return null;
-  }
-
-  /// Apply directional-click bias: if D-pad is off-center, convert to
-  /// arrow key; otherwise use Select. If a previous click is still open
-  /// (no matching clickEnd arrived), emit its keyup first to keep
-  /// `HardwareKeyboard.logicalKeysPressed` consistent.
-  Future<void> _handleClickStart() async {
-    final previous = _lastClickKey;
-    if (previous != null) {
-      await simulateKeyEvent(previous, isDown: false);
-    }
-
-    final LogicalKeyboardKey key;
-    if (_lastDpadX.abs() >= config.dpadDeadZone) {
-      key = _lastDpadX >= 0
-          ? LogicalKeyboardKey.arrowRight
-          : LogicalKeyboardKey.arrowLeft;
-    } else {
-      key = LogicalKeyboardKey.select;
-    }
-    _lastClickKey = key;
-    await simulateKeyEvent(key, isDown: true);
-  }
-
-  Future<void> _handleClickEnd() async {
-    final key = _lastClickKey;
-    _lastClickKey = null;
-    if (key != null) {
-      await simulateKeyEvent(key, isDown: false);
-    }
-  }
-
-  /// Method-channel handler for discrete (non-repeating) button presses
-  /// and media commands that native forwards to Dart.
-  ///
-  /// Arrow keys and page keys are **not** delivered here — native routes
-  /// them directly to `flutter/keyevent` via the engine's own key event
-  /// channel, with auto-repeat. Only Menu, Play/Pause, and media commands
-  /// arrive on this channel.
-  Future<dynamic> _onButtonCall(MethodCall call) async {
-    final args = call.arguments;
-    if (args is! Map) return null;
-
-    switch (call.method) {
-      case 'press':
-        final keyName = args['key'] as String?;
-        final isDown = args['isDown'] as bool? ?? false;
-        if (keyName == null) return null;
-        final key = _logicalKeyFromName(keyName);
-        if (key == null) return null;
-        await simulateKeyEvent(key, isDown: isDown);
-        return null;
-
-      case 'media':
-        final command = args['command'] as String?;
-        final isDown = args['isDown'] as bool? ?? false;
-        if (command == null) return null;
-        final key = _logicalKeyForMediaCommand(command);
-        if (key == null) return null;
-        await simulateKeyEvent(key, isDown: isDown);
-        return null;
     }
     return null;
   }
@@ -372,38 +324,6 @@ TvRemoteTouchPhase? _phaseFromString(dynamic type) {
       return TvRemoteTouchPhase.clickStart;
     case 'click_e':
       return TvRemoteTouchPhase.clickEnd;
-  }
-  return null;
-}
-
-LogicalKeyboardKey? _logicalKeyFromName(String name) {
-  switch (name) {
-    case 'select':
-      return LogicalKeyboardKey.select;
-    case 'menu':
-      return LogicalKeyboardKey.escape;
-    case 'playPause':
-      return LogicalKeyboardKey.mediaPlayPause;
-  }
-  return null;
-}
-
-LogicalKeyboardKey? _logicalKeyForMediaCommand(String command) {
-  switch (command) {
-    case 'play':
-      return LogicalKeyboardKey.mediaPlay;
-    case 'pause':
-      return LogicalKeyboardKey.mediaPause;
-    case 'stop':
-      return LogicalKeyboardKey.mediaStop;
-    case 'togglePlayPause':
-      return LogicalKeyboardKey.mediaPlayPause;
-    case 'seekForward':
-    case 'fastForward':
-      return LogicalKeyboardKey.mediaFastForward;
-    case 'seekBackward':
-    case 'rewind':
-      return LogicalKeyboardKey.mediaRewind;
   }
   return null;
 }
