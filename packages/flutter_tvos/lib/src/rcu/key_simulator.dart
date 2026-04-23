@@ -45,8 +45,15 @@ Future<bool> simulateKeyEvent(
       'characters': '',
       'charactersIgnoringModifiers': '',
     } else ...{
+      // Fields required by `RawKeyEventDataAndroid`. `source = 0x401`
+      // is SOURCE_GAMEPAD | SOURCE_CLASS_BUTTON, matching how a physical
+      // Siri Remote reports on Android — lets apps filter by
+      // `event.data.source` for gamepad input. `scanCode: 0` leaves
+      // `physicalKey` synthetic, which is acceptable because there's no
+      // real macOS scan code for Select anyway.
       'scanCode': 0,
       'metaState': 0,
+      'source': 0x401,
     },
   };
 
