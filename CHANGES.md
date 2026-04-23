@@ -1,4 +1,73 @@
 
+## Remote Control (RCU) Architecture (2026-04-23)
+
+Refactored Siri Remote / game controller / Walnut media handling from
+inline `FlutterViewController.mm` code into a proper internal plugin
+(`FlutterTvRemotePlugin`), following the `FlutterPlatformPlugin` pattern.
+Added the Dart counterpart in `packages/flutter_tvos`.
+
+### Engine changes (`flutter_upstream_tvos_engine`)
+
+- **NEW:** `FlutterTvRemotePlugin.h` / `.mm` — owns press recognizers,
+  game controller observers, media command handlers, and the two
+  channels (`flutter/tv_remote`, `flutter/tv_remote_touches`). Press
+  recognizers install on the view; lifecycle follows `attach`/`detach`.
+- **`FlutterEngine.mm`:** plugin created alongside `FlutterPlatformPlugin`
+  in `createDataPipe`. Accessor published via `FlutterEngine_Internal.h`.
+- **`FlutterViewController.mm`:** removed ~200 lines of inline tvOS
+  code (press handlers, gamepad setup, Walnut, channel creation).
+  `touchesBegan/Moved/Ended/Cancelled` now forward to plugin; `viewDidLoad`
+  calls `attachToViewController:`, `dealloc` calls `detach`.
+- **Coordinate normalization:** plugin sends normalized `[-1.0, 1.0]`
+  coords instead of raw pixels, removing the magic `x-1000 / y-500`
+  adjustment from Dart code and making behavior correct on both 1080p
+  and 4K Apple TVs.
+- **GameController double-registration fix:** plugin clears previous
+  `valueChangedHandler` before installing a new one, and tracks
+  configured controllers in a hash table. Addresses
+  `// TODO dangerous, multiple registrations can happen!`.
+- **Python 3.13+ compatibility:** `build_tvos_engine.sh` creates a
+  scoped shim that maps `python3 -> python3.12` for the build process
+  only, so depot_tools' `ninja.py` (which imports the removed `pipes`
+  module) works on Python 3.14 systems. Shim is cleaned up on exit.
+
+### Dart package (`packages/flutter_tvos`)
+
+- **NEW:** `lib/src/rcu/tv_remote_controller.dart` — singleton
+  `TvRemoteController` receiving channel messages and generating
+  keyboard events via `ServicesBinding.keyEvent`.
+- **NEW:** `lib/src/rcu/swipe_detector.dart` — normalized-space swipe
+  accumulator, adapted from horizon `SwipeMixin`. Emits arrow keys
+  when cumulative delta crosses the configured threshold.
+- **NEW:** `lib/src/rcu/key_repeat.dart` — long-press auto-repeat with
+  configurable initial delay + interval. Tested with `fake_async`.
+- **NEW:** `lib/src/rcu/key_simulator.dart` — wraps the macOS-format
+  `keyEvent` channel message used by Flutter's Darwin keyboard pipeline.
+- **NEW:** `lib/src/rcu/tv_remote_channels.dart` — channel definitions
+  shared with native.
+- **NEW public API:** `runTvApp(Widget)` — drop-in `runApp` replacement;
+  on iOS/Android it's a passthrough, on tvOS it initializes the
+  controller. One-line integration for app authors.
+- **19 new unit tests** covering swipe detection, key repeat timing,
+  raw listener delivery, and click event translation.
+- **Example app** (`packages/flutter_tvos/example`) now exposes a 4×4
+  focus grid to verify that Remote gestures drive Flutter's focus
+  traversal end-to-end.
+
+### For app authors
+
+```dart
+// before
+void main() => runApp(MyApp());
+
+// after
+void main() => runTvApp(MyApp());  // identical behavior on iOS/Android
+```
+
+Existing `Focus`, `Shortcuts`, and `Actions` code Just Works — arrow
+keys now come from both a hardware keyboard (as before) and Siri Remote
+swipes. No new widgets to learn.
+
 ## Bug Fixes (2026-04-17)
 
 ### `lib/tvos_device.dart`

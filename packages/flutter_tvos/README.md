@@ -61,6 +61,60 @@ Widget build(BuildContext context) {
 }
 ```
 
+## Remote Control (Siri Remote)
+
+`flutter_tvos` wires the Apple TV remote to Flutter's standard focus
+system. Swipes and button presses become keyboard events
+(`arrowLeft/Right/Up/Down`, `select`, etc.) which flow through
+`Focus`/`Shortcuts`/`Actions` exactly like arrow keys on a physical
+keyboard would.
+
+**One-line setup:** use `runTvApp` in place of `runApp`:
+
+```dart
+import 'package:flutter_tvos/flutter_tvos.dart';
+
+void main() => runTvApp(const MyApp());
+```
+
+On iOS/Android `runTvApp` is a plain passthrough — the same `main.dart`
+works across all platforms.
+
+### What works out of the box
+
+- Swipes Up/Down/Left/Right on Siri Remote → arrow keys
+- Select button → `LogicalKeyboardKey.select` (same as pressing Enter on
+  a focused widget)
+- Menu button → `LogicalKeyboardKey.escape` (drives `Navigator.pop`)
+- Play/Pause → `LogicalKeyboardKey.mediaPlayPause`
+- Long-press in a direction → auto-repeat arrow key at ~80 ms intervals
+- External game controllers (MFi) with a directional pad
+- Lock-screen media commands (play, pause, seek) via
+  `MPRemoteCommandCenter`
+
+### Tuning thresholds
+
+```dart
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  TvRemoteController.instance.config = const TvRemoteConfig(
+    shortSwipeThreshold: 0.4,   // less sensitive
+    keyRepeatInterval: Duration(milliseconds: 100),
+  );
+  runTvApp(const MyApp());
+}
+```
+
+### Raw touch listener (video players, custom swipe zones)
+
+```dart
+TvRemoteController.instance.addRawListener((event) {
+  if (event.phase == TvRemoteTouchPhase.move && isInPlayerArea(event)) {
+    seekVideo(event.x);
+  }
+});
+```
+
 ## API Reference
 
 | Property | Type | Description |

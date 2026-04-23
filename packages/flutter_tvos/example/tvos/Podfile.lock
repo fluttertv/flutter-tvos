@@ -2,11 +2,11 @@ PODS:
   - flutter_tvos (1.0.0)
 
 DEPENDENCIES:
-  - flutter_tvos (from `/Users/aliustaoglu/Developer/playground/flutter_tvos_engine_monorepo/flutter-tvos/packages/flutter_tvos/tvos`)
+  - flutter_tvos (from `/Users/sashadenisov/Work/fluttertv/packages/flutter_tvos/tvos`)
 
 EXTERNAL SOURCES:
   flutter_tvos:
-    :path: "/Users/aliustaoglu/Developer/playground/flutter_tvos_engine_monorepo/flutter-tvos/packages/flutter_tvos/tvos"
+    :path: "/Users/sashadenisov/Work/fluttertv/packages/flutter_tvos/tvos"
 
 SPEC CHECKSUMS:
   flutter_tvos: 4b0c46212b1244478f7cb923791faa9d87e37b37

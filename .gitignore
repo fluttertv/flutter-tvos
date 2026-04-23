@@ -9,6 +9,10 @@ bin/cache/
 
 # Engine artifacts (distributed separately via GitHub Releases / darteverywhere.dev)
 engine_artifacts/
+artifacts/
+
+# Local engine source checkout for development (tracked in a separate repo)
+flutter_upstream_tvos_engine/
 
 # macOS
 .DS_Store
