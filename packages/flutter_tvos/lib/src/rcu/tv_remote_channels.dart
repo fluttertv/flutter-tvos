@@ -28,10 +28,9 @@ abstract final class TvRemoteChannels {
   /// Message shape:
   /// ```json
   /// {
-  ///   "type": "started" | "move" | "ended" | "cancelled" | "loc",
+  ///   "type": "started" | "move" | "ended" | "cancelled" | "loc" | "click_s" | "click_e",
   ///   "x": <double in [-1.0, 1.0]>,
-  ///   "y": <double in [-1.0, 1.0]>,
-  ///   "timestamp": <int, milliseconds since boot>
+  ///   "y": <double in [-1.0, 1.0]>
   /// }
   /// ```
   ///
@@ -40,6 +39,9 @@ abstract final class TvRemoteChannels {
   ///   corners are (±1, ±1).
   /// - `loc` — D-pad value from `GCMicroGamepad.dpad.valueChangedHandler`.
   ///   x,y are already in [-1.0, 1.0] from GameController framework.
+  /// - `click_s` / `click_e` — Siri Remote touchpad physical click
+  ///   pressed in / released. x,y are 0.0 (the click is a discrete
+  ///   event, not located on the pad).
   static const touches = BasicMessageChannel<dynamic>(
     'flutter/tv_remote_touches',
     JSONMessageCodec(),

@@ -98,12 +98,18 @@ works across all platforms.
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   TvRemoteController.instance.config = const TvRemoteConfig(
-    shortSwipeThreshold: 0.4,   // less sensitive
-    keyRepeatInterval: Duration(milliseconds: 100),
+    shortSwipeThreshold: 0.4,   // less sensitive swipes
+    fastSwipeThreshold: 0.6,    // higher "fast" flag threshold
+    dpadDeadZone: 0.6,          // wider center zone for directional-click bias
   );
   runTvApp(const MyApp());
 }
 ```
+
+Key-repeat timing (initial delay and interval between repeated presses)
+is fixed in the native engine plugin and not currently configurable from
+Dart — the defaults (~400 ms initial, ~80 ms interval) match the pace of
+the macOS key-repeat system.
 
 ### Raw touch listener (video players, custom swipe zones)
 

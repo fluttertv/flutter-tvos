@@ -21,7 +21,7 @@ Future<void> _sendTouch(Map<String, dynamic> message) async {
 
 /// Invokes a method on the button channel as if it came from native.
 Future<void> _sendButton(String method, Map<String, dynamic> args) async {
-  final codec = TvRemoteChannels.button.codec as MethodCodec;
+  final codec = TvRemoteChannels.button.codec;
   final call = MethodCall(method, args);
   await TestDefaultBinaryMessengerBinding
       .instance.defaultBinaryMessenger
@@ -228,6 +228,128 @@ void main() {
     test('button channel: unknown method is ignored', () async {
       TvRemoteController.instance.debugInit();
       await _sendButton('mystery', {'key': 'anything'});
+    });
+  });
+
+  group('TvRemoteController keyboard event dispatch', () {
+    // Intercepts `SystemChannels.keyEvent` so tests can assert the exact
+    // sequence of keydown/keyup messages the controller emits for click
+    // phases and directional-click bias.
+    final recorded = <Map<String, dynamic>>[];
+
+    setUp(() {
+      recorded.clear();
+      // `simulateKeyEvent` pushes into `channelBuffers.push`, which
+      // delivers to whatever handler is registered for
+      // `flutter/keyevent` on the Dart side (normally `RawKeyboard`).
+      // Override that handler in-test to capture the payload.
+      SystemChannels.keyEvent.setMessageHandler((Object? message) async {
+        if (message is Map) {
+          recorded.add(Map<String, dynamic>.from(message));
+        }
+        return <String, dynamic>{'handled': true};
+      });
+    });
+
+    tearDown(() {
+      SystemChannels.keyEvent.setMessageHandler(null);
+    });
+
+    test('click_s then click_e emits select keydown + keyup', () async {
+      TvRemoteController.instance.debugInit();
+      await _sendTouch({'type': 'click_s', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'click_e', 'x': 0.0, 'y': 0.0});
+
+      expect(recorded.length, 2, reason: 'one keydown + one keyup');
+      expect(recorded[0]['type'], 'keydown');
+      expect(recorded[1]['type'], 'keyup');
+      // Select falls back to Android keymap code 23 because macOS has
+      // no dedicated kVK_* for LogicalKeyboardKey.select.
+      expect(recorded[0]['keymap'], 'android');
+      expect(recorded[0]['keyCode'], 23);
+      expect(recorded[1]['keymap'], 'android');
+      expect(recorded[1]['keyCode'], 23);
+    });
+
+    test(
+        'click_s then click_s then click_e emits 2 keydowns + 2 keyups '
+        '(CR #1 regression guard)', () async {
+      TvRemoteController.instance.debugInit();
+      await _sendTouch({'type': 'click_s', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'click_s', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'click_e', 'x': 0.0, 'y': 0.0});
+
+      final types = recorded.map((m) => m['type']).toList();
+      // Expected: keydown(select), keyup(select) [guard], keydown(select),
+      // keyup(select). Four events, alternating.
+      expect(types, ['keydown', 'keyup', 'keydown', 'keyup']);
+      for (final event in recorded) {
+        expect(event['keymap'], 'android');
+        expect(event['keyCode'], 23);
+      }
+    });
+
+    test('directional bias: loc(0.6) then click_s emits arrowRight',
+        () async {
+      TvRemoteController.instance.debugInit();
+      await _sendTouch({'type': 'loc', 'x': 0.6, 'y': 0.0});
+      await _sendTouch({'type': 'click_s', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'click_e', 'x': 0.0, 'y': 0.0});
+
+      // arrowRight uses macOS keymap code 0x7C.
+      expect(recorded.length, 2);
+      expect(recorded[0]['keymap'], 'macos');
+      expect(recorded[0]['keyCode'], 0x7C);
+      expect(recorded[1]['keyCode'], 0x7C);
+    });
+
+    test('directional bias: loc(-0.6) then click_s emits arrowLeft',
+        () async {
+      TvRemoteController.instance.debugInit();
+      await _sendTouch({'type': 'loc', 'x': -0.6, 'y': 0.0});
+      await _sendTouch({'type': 'click_s', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'click_e', 'x': 0.0, 'y': 0.0});
+
+      expect(recorded.length, 2);
+      expect(recorded[0]['keymap'], 'macos');
+      expect(recorded[0]['keyCode'], 0x7B);  // arrowLeft
+      expect(recorded[1]['keyCode'], 0x7B);
+    });
+
+    test('directional bias: loc inside dead zone stays Select', () async {
+      TvRemoteController.instance.debugInit();
+      await _sendTouch({'type': 'loc', 'x': 0.49, 'y': 0.0});
+      await _sendTouch({'type': 'click_s', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'click_e', 'x': 0.0, 'y': 0.0});
+
+      // Still Select → Android keymap 23 fallback.
+      expect(recorded.length, 2);
+      expect(recorded[0]['keymap'], 'android');
+      expect(recorded[0]['keyCode'], 23);
+    });
+  });
+
+  group('TvRemoteConfig validation', () {
+    test('rejects non-positive shortSwipeThreshold', () {
+      expect(() => TvRemoteConfig(shortSwipeThreshold: 0), throwsAssertionError);
+      expect(() => TvRemoteConfig(shortSwipeThreshold: -0.1),
+          throwsAssertionError);
+    });
+
+    test('requires fastSwipeThreshold >= shortSwipeThreshold', () {
+      expect(
+          () => TvRemoteConfig(
+              shortSwipeThreshold: 0.5, fastSwipeThreshold: 0.3),
+          throwsAssertionError);
+    });
+
+    test('rejects non-positive dpadDeadZone', () {
+      expect(() => TvRemoteConfig(dpadDeadZone: 0), throwsAssertionError);
+      expect(() => TvRemoteConfig(dpadDeadZone: -1), throwsAssertionError);
+    });
+
+    test('accepts sentinel dpadDeadZone > 1.0 to disable bias', () {
+      expect(() => const TvRemoteConfig(dpadDeadZone: 2.0), returnsNormally);
     });
   });
 }

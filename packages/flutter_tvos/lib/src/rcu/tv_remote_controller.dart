@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
-import 'package:flutter/services.dart'
-    show LogicalKeyboardKey, MethodCall;
-import 'package:flutter/widgets.dart' show WidgetsFlutterBinding, runApp;
-import 'package:flutter/widgets.dart' as widgets show Widget;
+import 'package:flutter/foundation.dart'
+    show ErrorDescription, FlutterError, FlutterErrorDetails, visibleForTesting;
+import 'package:flutter/services.dart' show LogicalKeyboardKey, MethodCall;
+import 'package:flutter/widgets.dart'
+    show Widget, WidgetsFlutterBinding, runApp;
 
 import '../platform_extension.dart' show FlutterTvosPlatform;
 import 'key_simulator.dart';
@@ -27,7 +27,12 @@ class TvRemoteConfig {
     this.shortSwipeThreshold = 0.3,
     this.fastSwipeThreshold = 0.5,
     this.dpadDeadZone = 0.5,
-  });
+  })  : assert(shortSwipeThreshold > 0,
+            'shortSwipeThreshold must be positive'),
+        assert(fastSwipeThreshold >= shortSwipeThreshold,
+            'fastSwipeThreshold must be >= shortSwipeThreshold'),
+        assert(dpadDeadZone > 0,
+            'dpadDeadZone must be positive (use a value > 1.0 to disable bias)');
 
   /// Accumulated delta that triggers a single arrow-key emit from a
   /// discrete swipe gesture (as seen by [addRawListener]). Continuous-swipe
@@ -206,8 +211,22 @@ class TvRemoteController {
 
     if (_rawListeners.isNotEmpty) {
       final event = TvRemoteTouchEvent(phase: phase, x: x, y: y);
-      for (final listener in _rawListeners) {
-        listener(event);
+      // Iterate over a snapshot — a listener that calls addRawListener /
+      // removeRawListener during delivery (e.g. a video scrubber that
+      // self-removes when it finishes) would otherwise throw
+      // ConcurrentModificationError. Wrap each call in try/catch so one
+      // bad listener cannot poison the rest.
+      for (final listener in List.of(_rawListeners)) {
+        try {
+          listener(event);
+        } catch (error, stack) {
+          FlutterError.reportError(FlutterErrorDetails(
+            exception: error,
+            stack: stack,
+            library: 'flutter_tvos',
+            context: ErrorDescription('while dispatching a raw touch event'),
+          ));
+        }
       }
     }
 
@@ -307,7 +326,28 @@ class TvRemoteController {
 /// ```dart
 /// void main() => runTvApp(const MyApp());
 /// ```
-void runTvApp(widgets.Widget app) {
+///
+/// **Custom `WidgetsBinding` subclasses.** `runTvApp` force-installs the
+/// concrete `WidgetsFlutterBinding`. If your app uses a custom binding
+/// subclass (e.g. for analytics observers), initialize it first and then
+/// wire up RCU manually:
+///
+/// ```dart
+/// void main() {
+///   MyCustomBinding.ensureInitialized();
+///   if (FlutterTvosPlatform.isTvos) {
+///     TvRemoteController.instance.init();
+///   }
+///   runApp(const MyApp());
+/// }
+/// ```
+///
+/// **Hot restart.** On hot restart the Dart VM re-initializes static
+/// state: `TvRemoteController.instance._initialized` resets to `false`
+/// and its channel handlers disappear. `runTvApp` is not re-invoked —
+/// only cold restart re-registers the RCU listeners. If the Remote
+/// appears dead after a hot restart, do a cold restart.
+void runTvApp(Widget app) {
   WidgetsFlutterBinding.ensureInitialized();
   if (FlutterTvosPlatform.isTvos) {
     TvRemoteController.instance.init();

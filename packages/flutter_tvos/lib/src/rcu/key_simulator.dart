@@ -18,26 +18,36 @@ import 'package:flutter/services.dart'
 /// logic that stays in Dart so it can be configured per-app via
 /// [TvRemoteConfig.dpadDeadZone].
 ///
-/// On Apple TV we use the `macos` keymap because the Flutter engine's
-/// Darwin path decodes that format.
+/// We use the `macos` keymap for keys Apple's `kVK_*` constants cover
+/// (arrows, enter, escape). For `LogicalKeyboardKey.select` there is no
+/// dedicated macOS keycode — the closest match, `kVK_Return` (0x24),
+/// decodes to `enter` in Flutter's `kMacOsToLogicalKey` table. To still
+/// deliver `LogicalKeyboardKey.select`, we fall back to the `android`
+/// keymap, which maps `23 → select`. Both paths land in the same
+/// `HardwareKeyboard` state so consumers see a consistent key.
 ///
 /// Returns `true` if the event was handled by Flutter, `false` otherwise.
 Future<bool> simulateKeyEvent(
   LogicalKeyboardKey logicalKey, {
   required bool isDown,
 }) async {
-  final macOsKeyCode = _logicalKeyToMacOsKeyCode(logicalKey);
-  if (macOsKeyCode == null) {
+  final encoding = _encodingFor(logicalKey);
+  if (encoding == null) {
     return false;
   }
 
   final message = <String, dynamic>{
     'type': isDown ? 'keydown' : 'keyup',
-    'keymap': 'macos',
-    'keyCode': macOsKeyCode,
-    'characters': '',
-    'charactersIgnoringModifiers': '',
+    'keymap': encoding.keymap,
+    'keyCode': encoding.keyCode,
     'modifiers': 0,
+    if (encoding.keymap == 'macos') ...{
+      'characters': '',
+      'charactersIgnoringModifiers': '',
+    } else ...{
+      'scanCode': 0,
+      'metaState': 0,
+    },
   };
 
   final completer = Completer<bool>();
@@ -61,13 +71,21 @@ Future<bool> simulateKeyEvent(
   return completer.future;
 }
 
-int? _logicalKeyToMacOsKeyCode(LogicalKeyboardKey key) {
-  if (key == LogicalKeyboardKey.arrowUp) return 0x7E;
-  if (key == LogicalKeyboardKey.arrowDown) return 0x7D;
-  if (key == LogicalKeyboardKey.arrowLeft) return 0x7B;
-  if (key == LogicalKeyboardKey.arrowRight) return 0x7C;
-  if (key == LogicalKeyboardKey.select) return 0x24;
-  if (key == LogicalKeyboardKey.enter) return 0x24;
-  if (key == LogicalKeyboardKey.escape) return 0x35;
+class _KeyEncoding {
+  const _KeyEncoding(this.keymap, this.keyCode);
+  final String keymap;
+  final int keyCode;
+}
+
+_KeyEncoding? _encodingFor(LogicalKeyboardKey key) {
+  if (key == LogicalKeyboardKey.arrowUp) return const _KeyEncoding('macos', 0x7E);
+  if (key == LogicalKeyboardKey.arrowDown) return const _KeyEncoding('macos', 0x7D);
+  if (key == LogicalKeyboardKey.arrowLeft) return const _KeyEncoding('macos', 0x7B);
+  if (key == LogicalKeyboardKey.arrowRight) return const _KeyEncoding('macos', 0x7C);
+  if (key == LogicalKeyboardKey.enter) return const _KeyEncoding('macos', 0x24);
+  if (key == LogicalKeyboardKey.escape) return const _KeyEncoding('macos', 0x35);
+  // No macOS keycode produces `LogicalKeyboardKey.select`; use Android
+  // keymap entry `23 → select` from Flutter's `kAndroidToLogicalKey`.
+  if (key == LogicalKeyboardKey.select) return const _KeyEncoding('android', 23);
   return null;
 }

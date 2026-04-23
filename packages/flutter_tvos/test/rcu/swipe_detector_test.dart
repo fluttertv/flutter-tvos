@@ -80,8 +80,9 @@ void main() {
       detector.onStart(0, 0);
       final right = detector.onMove(0.4, 0);
       expect(right!.direction, SwipeDirection.right);
-      // Segment start reset to (0.4, 0). Going back to (0.0, -0.4) emits
-      // Up because |dy|=0.4 > |dx|=0.4 ties — right side wins by `>=`.
+      // After the first emit, segment start resets to (0.4, 0). Moving
+      // to (0.0, -0.4) produces dx=-0.4, dy=-0.4. |dx| == |dy|, so the
+      // `absDx >= absDy` branch wins (horizontal), and dx < 0 → Left.
       final next = detector.onMove(0.0, -0.4);
       expect(next, isNotNull);
       expect(next!.direction, SwipeDirection.left);
