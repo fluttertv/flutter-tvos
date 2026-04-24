@@ -83,14 +83,19 @@ works across all platforms.
 ### What works out of the box
 
 - Swipes Up/Down/Left/Right on Siri Remote → arrow keys
-- Select button → `LogicalKeyboardKey.select` (same as pressing Enter on
-  a focused widget)
-- Menu button → `LogicalKeyboardKey.escape` (drives `Navigator.pop`)
+- Select button → `LogicalKeyboardKey.enter` — activates focused
+  buttons / list items through Flutter's default `ActivateIntent`
+  binding, matching Flutter Android / flutter-tizen behavior
+- Menu button → `flutter/navigation popRoute` → `Navigator.maybePop`
+  (same as Android's physical back button)
 - Play/Pause → `LogicalKeyboardKey.mediaPlayPause`
 - Long-press in a direction → auto-repeat arrow key at ~80 ms intervals
 - External game controllers (MFi) with a directional pad
-- Lock-screen media commands (play, pause, seek) via
-  `MPRemoteCommandCenter`
+- Lock-screen media commands (play, pause, seek, stop, toggle) are
+  forwarded through `flutter/keyevent` so any widget reacting to
+  `LogicalKeyboardKey.mediaPlay` / `mediaPause` / `mediaFastForward`
+  / `mediaRewind` / `mediaStop` / `mediaPlayPause` is triggered with
+  no app-level wiring
 
 ### Tuning
 
