@@ -4,6 +4,7 @@
 
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/io.dart';
+import 'package:flutter_tools/src/base/logger.dart' show Status;
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
@@ -134,7 +135,7 @@ class DebugTvosApplication extends Target {
 
   @override
   Future<void> build(Environment environment) async {
-    globals.logger.printStatus('Assembling debug tvOS application...');
+    globals.logger.printTrace('Assembling debug tvOS application...');
   }
 }
 
@@ -148,7 +149,14 @@ class ReleaseTvosApplication extends Target {
 
   @override
   List<Target> get dependencies => const <Target>[
-        TvosAotElfRelease(TargetPlatform.ios),
+        // We do AOT compilation ourselves in NativeTvosBundle._compileAotSnapshot
+        // (gen_snapshot → assembly → clang → App.framework) because upstream
+        // AotElfRelease throws "Null check operator used on a null value" when
+        // TargetPlatform == ios but no darwinArch is plumbed through. Just
+        // depend on the kernel snapshot — the AOT step reads app.dill from the
+        // build output dir.
+        TvosKernelSnapshot(),
+        TvosCopyFlutterBundle(),
       ];
 
   @override
@@ -159,7 +167,7 @@ class ReleaseTvosApplication extends Target {
 
   @override
   Future<void> build(Environment environment) async {
-    globals.logger.printStatus('Assembling release tvOS application...');
+    globals.logger.printTrace('Assembling release tvOS application...');
   }
 }
 
@@ -230,22 +238,30 @@ class NativeTvosBundle extends Target {
 
     // 6. Run pod install if Podfile exists
     if (tvosProjectDir.childFile('Podfile').existsSync()) {
-      globals.logger.printStatus('Running pod install...');
-      final ProcessResult podResult = await globals.processManager.run(
-        <String>['pod', 'install'],
-        workingDirectory: tvosProjectDir.path,
-        environment: <String, String>{
-          'LANG': 'en_US.UTF-8',
-          'LC_ALL': 'en_US.UTF-8',
-        },
-      );
-      if (podResult.exitCode != 0) {
-        throw Exception('pod install failed:\n${podResult.stderr}');
+      // Use a Status spinner so the user sees timing the same way stock
+      // iOS `flutter run` reports it.
+      final Status podStatus = globals.logger.startProgress('Running pod install...');
+      try {
+        final ProcessResult podResult = await globals.processManager.run(
+          <String>['pod', 'install'],
+          workingDirectory: tvosProjectDir.path,
+          environment: <String, String>{
+            'LANG': 'en_US.UTF-8',
+            'LC_ALL': 'en_US.UTF-8',
+          },
+        );
+        if (podResult.exitCode != 0) {
+          throw Exception('pod install failed:\n${podResult.stderr}');
+        }
+      } finally {
+        podStatus.stop();
       }
     }
 
-    // 7. Run xcodebuild
-    globals.logger.printStatus(
+    // 7. Run xcodebuild — wrap in a Status spinner so the user sees the
+    //    same "Running Xcode build... / Xcode build done." cadence stock
+    //    `flutter run` for iOS produces.
+    globals.logger.printTrace(
       'Executing xcodebuild for tvOS (${buildInfo.sdkName})...',
     );
 
@@ -263,38 +279,120 @@ class NativeTvosBundle extends Target {
       buildInfo.simulator,
     );
 
-    final ProcessResult result = await globals.processManager.run(
-      <String>[
-        'xcodebuild',
-        if (hasWorkspace) ...<String>[
-          '-workspace', 'Runner.xcworkspace',
-        ] else ...<String>[
-          '-project', 'Runner.xcodeproj',
+    final Status xcodeStatus = globals.logger.startProgress('Running Xcode build...');
+    ProcessResult result;
+    try {
+      result = await globals.processManager.run(
+        <String>[
+          'xcodebuild',
+          if (hasWorkspace) ...<String>[
+            '-workspace', 'Runner.xcworkspace',
+          ] else ...<String>[
+            '-project', 'Runner.xcodeproj',
+          ],
+          '-scheme', 'Runner',
+          '-configuration', configuration,
+          '-sdk', buildInfo.sdkName,
+          'SYMROOT=$symroot',
+          'COMPILER_INDEX_STORE_ENABLE=NO',
+          'ARCHS=arm64',
+          ...signingArgs,
+          'build',
         ],
-        '-scheme', 'Runner',
-        '-configuration', configuration,
-        '-sdk', buildInfo.sdkName,
-        'SYMROOT=$symroot',
-        'COMPILER_INDEX_STORE_ENABLE=NO',
-        'ARCHS=arm64',
-        ...signingArgs,
-        'build',
-      ],
-      workingDirectory: tvosProjectDir.path,
-    );
+        workingDirectory: tvosProjectDir.path,
+      );
+    } finally {
+      xcodeStatus.stop();
+    }
 
     if (result.exitCode != 0) {
-      globals.logger.printError('xcodebuild failed:');
+      globals.logger.printError('Xcode build failed:');
       globals.logger.printError(result.stdout as String);
       globals.logger.printError(result.stderr as String);
-      throw Exception('xcodebuild failed');
+      throw Exception('Xcode build failed');
     }
+    globals.logger.printStatus('Xcode build done.');
 
     final String platformSuffix = buildInfo.simulator
         ? '$configuration-appletvsimulator'
         : '$configuration-appletvos';
-    globals.logger.printStatus(
-      'tvOS application built successfully: build/tvos/$platformSuffix/Runner.app',
+
+    // For release/profile (AOT) builds, embed App.framework into the .app
+    // bundle. The Xcode project template only embeds Flutter.framework, but
+    // FlutterDartProject.mm looks for `Frameworks/App.framework/App` to load
+    // the AOT VM/isolate snapshots via dlsym. Without this, the engine
+    // reports "VM snapshot invalid and could not be inferred from settings"
+    // and aborts.
+    if (!buildInfo.buildInfo.isDebug) {
+      final Directory builtApp = globals.fs
+          .directory(symroot)
+          .childDirectory(platformSuffix)
+          .childDirectory('Runner.app');
+      final Directory generatedAppFramework = tvosProjectDir
+          .childDirectory('Flutter')
+          .childDirectory('App.framework');
+      if (builtApp.existsSync() && generatedAppFramework.existsSync()) {
+        final Directory destFrameworks = builtApp.childDirectory('Frameworks');
+        destFrameworks.createSync(recursive: true);
+        final Directory destAppFramework = destFrameworks.childDirectory('App.framework');
+        if (destAppFramework.existsSync()) {
+          destAppFramework.deleteSync(recursive: true);
+        }
+        // Use `cp -R` to preserve structure / symlinks.
+        final ProcessResult cpResult = await globals.processManager.run(
+          <String>['cp', '-R', generatedAppFramework.path, destFrameworks.path],
+        );
+        if (cpResult.exitCode != 0) {
+          throw Exception(
+            'Failed to embed App.framework into Runner.app: ${cpResult.stderr}',
+          );
+        }
+
+        // Codesign App.framework for device builds. The on-device installer
+        // verifies every Mach-O inside the bundle, so an unsigned (or
+        // ad-hoc-signed) App.framework will fail with
+        // "0xe8008014 The executable contains an invalid signature."
+        // Reuse the identity that xcodebuild used for Flutter.framework —
+        // it's already embedded and signed correctly.
+        if (!buildInfo.simulator) {
+          final File flutterBinary = builtApp
+              .childDirectory('Frameworks')
+              .childDirectory('Flutter.framework')
+              .childFile('Flutter');
+          String? identity;
+          if (flutterBinary.existsSync()) {
+            final ProcessResult displayResult = await globals.processManager.run(
+              <String>['codesign', '-d', '--verbose=2', flutterBinary.path],
+            );
+            // codesign writes its display info to stderr.
+            final String info = '${displayResult.stdout}\n${displayResult.stderr}';
+            final Match? authorityMatch =
+                RegExp(r'Authority=(.+)').firstMatch(info);
+            identity = authorityMatch?.group(1)?.trim();
+          }
+          identity ??= 'Apple Development';
+          final ProcessResult signResult = await globals.processManager.run(
+            <String>[
+              'codesign',
+              '--force',
+              '--sign', identity,
+              '--timestamp=none',
+              '--generate-entitlement-der',
+              destAppFramework.path,
+            ],
+          );
+          if (signResult.exitCode != 0) {
+            globals.logger.printError(
+              'codesign App.framework failed (identity="$identity"): ${signResult.stderr}',
+            );
+            throw Exception('Failed to codesign App.framework');
+          }
+        }
+      }
+    }
+
+    globals.logger.printTrace(
+      'tvOS application built: build/tvos/$platformSuffix/Runner.app',
     );
   }
 
@@ -338,7 +436,7 @@ class NativeTvosBundle extends Target {
     // 3. Try to discover from keychain
     final String? keychainTeam = await _discoverTeamFromKeychain();
     if (keychainTeam != null) {
-      globals.logger.printStatus('Auto-detected development team: $keychainTeam');
+      globals.logger.printTrace('Auto-detected development team: $keychainTeam');
       return <String>[
         'DEVELOPMENT_TEAM=$keychainTeam',
         'CODE_SIGN_STYLE=Automatic',
@@ -566,7 +664,7 @@ class NativeTvosBundle extends Target {
     Directory tvosProjectDir,
     Environment environment,
   ) async {
-    globals.logger.printStatus('Compiling AOT snapshot for tvOS...');
+    globals.logger.printTrace('Compiling AOT snapshot for tvOS...');
 
     final TvosArtifacts tvosArtifacts = globals.artifacts! as TvosArtifacts;
     final String genSnapshotPath = tvosArtifacts.getGenSnapshotPath(buildInfo.buildInfo.mode);
@@ -578,8 +676,14 @@ class NativeTvosBundle extends Target {
       );
     }
 
-    // Find the kernel snapshot (app.dill) produced by the Dart compiler
-    final File kernelSnapshot = environment.outputDir.childFile('app.dill');
+    // Find the kernel snapshot (app.dill) produced by the Dart compiler.
+    // KernelSnapshot writes to environment.buildDir (.dart_tool/flutter_build/<hash>/),
+    // not outputDir (build/tvos/).
+    File kernelSnapshot = environment.buildDir.childFile('app.dill');
+    if (!kernelSnapshot.existsSync()) {
+      // Fallback to legacy location.
+      kernelSnapshot = environment.outputDir.childFile('app.dill');
+    }
     if (!kernelSnapshot.existsSync()) {
       throw Exception(
         'Kernel snapshot (app.dill) not found at ${kernelSnapshot.path}.\n'
@@ -682,7 +786,7 @@ class NativeTvosBundle extends Target {
       '</plist>\n',
     );
 
-    globals.logger.printStatus('AOT compilation complete: ${appFramework.path}');
+    globals.logger.printTrace('AOT compilation complete: ${appFramework.path}');
   }
 
   /// Returns the SDK path for the given SDK name.

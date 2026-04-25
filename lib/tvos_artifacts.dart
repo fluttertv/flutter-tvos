@@ -105,8 +105,12 @@ class TvosArtifacts extends CachedArtifacts {
 
   /// Returns the path to gen_snapshot for the target build mode.
   ///
-  /// For release/profile builds, gen_snapshot is in the device artifact directory
-  /// under `clang_arm64/gen_snapshot`.
+  /// gen_snapshot is shipped inside each tvOS device artifact at
+  /// `clang_arm64/gen_snapshot`. Built with `target_os=ios` + `--tvos`
+  /// + `--runtime-mode=<mode>`, so it cross-compiles AOT snapshots that
+  /// target tvOS arm64 (not the host). Using `host_release/gen_snapshot`
+  /// here would emit a macOS-arm64 snapshot and the engine fails to load
+  /// it at runtime ("VM snapshot invalid").
   String getGenSnapshotPath(BuildMode mode) {
     return getArtifactPath(
       Artifact.genSnapshot,
