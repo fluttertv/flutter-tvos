@@ -20,3 +20,13 @@ export 'src/tvos_info.dart';
 export 'src/tvos_ffi_bindings.dart' show TvOSNativeBindings;
 export 'src/platform_extension.dart'
     show FlutterTvosPlatform, FlutterTvosPlatformExt;
+export 'src/rcu/tv_remote_controller.dart'
+    show
+        SwipeListener,
+        TvRemoteConfig,
+        TvRemoteController,
+        TvRemoteTouchEvent,
+        TvRemoteTouchListener,
+        TvRemoteTouchPhase,
+        runTvApp;
+export 'src/rcu/swipe_detector.dart' show SwipeDirection, SwipeEvent;

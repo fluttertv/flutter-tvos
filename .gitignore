@@ -9,6 +9,10 @@ bin/cache/
 
 # Engine artifacts (distributed separately via GitHub Releases / darteverywhere.dev)
 engine_artifacts/
+artifacts/
+
+# Local engine source checkout for development (tracked in a separate repo)
+flutter_upstream_tvos_engine/
 
 # macOS
 .DS_Store
@@ -35,3 +39,8 @@ packages/flutter_tvos/example/tvos/Pods/
 packages/flutter_tvos/example/tvos/.dart_tool/
 packages/flutter_tvos/example/.dart_tool/
 packages/flutter_tvos/build/
+
+# Example Podfile.lock contains a developer-specific absolute :path:
+# (CocoaPods expands local-path pods into the lock). Regenerated per
+# developer by `pod install`.
+packages/flutter_tvos/example/tvos/Podfile.lock

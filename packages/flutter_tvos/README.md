@@ -61,6 +61,97 @@ Widget build(BuildContext context) {
 }
 ```
 
+## Remote Control (Siri Remote)
+
+`flutter_tvos` wires the Apple TV remote to Flutter's standard focus
+system. Swipes and button presses become keyboard events
+(`arrowLeft/Right/Up/Down`, `select`, etc.) which flow through
+`Focus`/`Shortcuts`/`Actions` exactly like arrow keys on a physical
+keyboard would.
+
+**One-line setup:** use `runTvApp` in place of `runApp`:
+
+```dart
+import 'package:flutter_tvos/flutter_tvos.dart';
+
+void main() => runTvApp(const MyApp());
+```
+
+On iOS/Android `runTvApp` is a plain passthrough — the same `main.dart`
+works across all platforms.
+
+### What works out of the box
+
+- Swipes Up/Down/Left/Right on Siri Remote → arrow keys
+- Select button → `LogicalKeyboardKey.enter` — activates focused
+  buttons / list items through Flutter's default `ActivateIntent`
+  binding, matching Flutter Android / flutter-tizen behavior
+- Menu button → `flutter/navigation popRoute` → `Navigator.maybePop`
+  (same as Android's physical back button)
+- Play/Pause → `LogicalKeyboardKey.mediaPlayPause`
+- Long-press in a direction → auto-repeat arrow key at ~80 ms intervals
+- External game controllers (MFi) with a directional pad
+- Lock-screen media commands (play, pause, seek, stop, toggle) are
+  forwarded through `flutter/keyevent` so any widget reacting to
+  `LogicalKeyboardKey.mediaPlay` / `mediaPause` / `mediaFastForward`
+  / `mediaRewind` / `mediaStop` / `mediaPlayPause` is triggered with
+  no app-level wiring
+
+### Tuning
+
+All tuning lives on `TvRemoteConfig`. Assigning a new config to
+`TvRemoteController.instance.config` ships the values to the native
+engine plugin (via a method-channel call); mutations take effect on
+the next input event.
+
+```dart
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  TvRemoteController.instance.config = const TvRemoteConfig(
+    shortSwipeThreshold: 0.4,                         // raw-listener swipe threshold
+    fastSwipeThreshold: 0.6,                          // "fast" flag threshold
+    dpadDeadZone: 0.6,                                // off-center distance for click bias
+    continuousSwipeMoveThreshold: 4,                  // consecutive moves before auto-repeat
+    keyRepeatInitialDelay: Duration(milliseconds: 450),
+    keyRepeatInterval: Duration(milliseconds: 100),
+  );
+  runTvApp(const MyApp());
+}
+```
+
+All fields have sensible defaults so apps that never touch `config`
+behave identically to the stock configuration.
+
+### Raw touch listener (video players, custom swipe zones)
+
+```dart
+TvRemoteController.instance.addRawListener((event) {
+  if (event.phase == TvRemoteTouchPhase.move && isInPlayerArea(event)) {
+    seekVideo(event.x);
+  }
+});
+```
+
+### Swipe listener (high-level direction + magnitude)
+
+For consumers that just want "user swiped left/right/up/down" without
+hand-rolling a detector, subscribe at the swipe-event level:
+
+```dart
+TvRemoteController.instance.addSwipeListener((event) {
+  if (event.direction == SwipeDirection.right && event.isFast) {
+    seekVideo(seconds: 30);
+  }
+});
+```
+
+`SwipeEvent` carries `direction` (left/right/up/down), `magnitude`
+(`max(|dx|, |dy|)` in normalized [-1, 1] view space), and `isFast`
+(true when magnitude crosses `fastSwipeThreshold` from `TvRemoteConfig`).
+
+Raw `addRawListener` callbacks still receive every touch point in
+parallel — the two layers are independent.
+
 ## API Reference
 
 | Property | Type | Description |

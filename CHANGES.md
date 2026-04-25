@@ -1,4 +1,120 @@
 
+## Remote Control (RCU) Architecture (2026-04-23)
+
+### For app authors
+
+```dart
+// before
+void main() => runApp(const MyApp());
+
+// after
+void main() => runTvApp(const MyApp());  // identical behavior on iOS/Android
+```
+
+Existing `Focus`, `Shortcuts`, and `Actions` code Just Works — arrow
+keys and Select now come from the Siri Remote (both touchpad and
+physical buttons), the Apple TV Remote app, MFi game controllers, and
+lock-screen media commands. No new widgets to learn. Threshold tuning
+is available via `TvRemoteController.instance.config` (see the package
+README).
+
+### Engine changes (`flutter_upstream_tvos_engine`)
+
+Refactored Siri Remote / game controller / Walnut media handling from
+inline `FlutterViewController.mm` code into a proper internal plugin
+(`FlutterTvRemotePlugin`), following the `FlutterPlatformPlugin`
+pattern.
+
+- **NEW:** `FlutterTvRemotePlugin.{h,mm,_Internal.h}` — owns press
+  recognizers, game controller observers, media command handlers, an
+  internal `FlutterTvKeyRepeater` (NSTimer-based auto-repeat), and the
+  two public channels: `flutter/tv_remote` (`FlutterMethodChannel`,
+  JSON) for buttons/media and `flutter/tv_remote_touches`
+  (`FlutterBasicMessageChannel`, JSON) for touchpad events.
+- **NEW:** `FlutterTvRemotePluginTest.mm` — XCTests for attach/detach,
+  VC migration, touch normalization with zero-size view, `sendKey`
+  keymap selection, and the full `FlutterTvKeyRepeater` state machine.
+  (The `ios_test_flutter` target is currently disabled for tvOS builds;
+  tests will land as part of re-enabling that target — coordinate with
+  Mehmet.)
+- **`FlutterEngine.mm`:** plugin created alongside
+  `FlutterPlatformPlugin` inside `setUpChannels`. Accessor on
+  `FlutterEngine_Internal.h`. `setViewController:` now attaches/detaches
+  the plugin to mirror the `textInputPlugin` lifecycle, so engine-group
+  / headless-to-headed flows work correctly.
+- **`FlutterViewController.mm`:** removed ~200 lines of inline tvOS
+  code (press handlers, gamepad setup, Walnut, channel creation).
+  `touchesBegan/Moved/Ended/Cancelled` forward to the plugin guarded
+  against stale-VC forwarding; `viewDidLoad` calls
+  `attachToViewController:`, `dealloc` only detaches if this VC is
+  still the plugin's attached VC.
+- **Keyboard event path:** arrow/page button presses and continuous-
+  swipe auto-repeat emit macOS-keymap `flutter/keyevent` messages via
+  the engine's own channel. Touchpad clicks route through the touches
+  channel (`click_s`/`click_e`) so the Dart controller can apply
+  directional bias from the last D-pad position. For
+  `LogicalKeyboardKey.select` the plugin switches to the Android keymap
+  (`23 → select`) because macOS `kVK_Return` decodes to `enter` — using
+  it would silently deliver a different logical key.
+- **Coordinate normalization:** plugin sends normalized `[-1.0, 1.0]`
+  coords with double precision, removing the magic `x-1000 / y-500`
+  adjustment from Dart code and making behavior correct on both 1080p
+  and 4K Apple TVs.
+- **Continuous-swipe auto-repeat:** native accumulator counts
+  consecutive same-direction moves; after a small threshold the
+  `FlutterTvKeyRepeater` is engaged so holding a swipe behaves like
+  holding an arrow key.
+- **Lifecycle fixes:** GameController `valueChangedHandler` cleared
+  before reassignment; `configureController` skip path logs the vendor
+  name in debug; `controllerDidConnect:` and `controllerDidDisconnect:`
+  both dispatch to the main queue; `MPRemoteCommandCenter` handlers are
+  captured by `(command, token)` pairs and removed in `detach` so they
+  do not accumulate across engine restarts; `registerMediaCommandsOnce`
+  only flips its "registered" flag after all handlers installed.
+- **Select press during text input:** restored the
+  `tvosKeyboardPending` / `tvosActivateKeyboard` handoff so tapping
+  Select on a focused text field opens the tvOS keyboard without also
+  firing a `click_s` to Dart.
+- **Build script:** `build_tvos_engine.sh` creates a scoped shim that
+  maps `python3 -> python3.12` for the build process only, so
+  depot_tools' `ninja.py` (which imports the removed `pipes` module)
+  works on Python 3.13+. Shim validated on creation and cleaned up via
+  `trap` on EXIT / INT / TERM / HUP.
+
+### Dart package (`packages/flutter_tvos`)
+
+- **NEW:** `lib/src/rcu/tv_remote_controller.dart` — singleton
+  `TvRemoteController`. Handles touchpad click events (with
+  directional-click bias and click-race protection), exposes
+  `addRawListener` for advanced consumers (video scrubbing, custom
+  swipe zones), and carries mutable `TvRemoteConfig` with validated
+  defaults.
+- **NEW:** `lib/src/rcu/swipe_detector.dart` — normalized-space swipe
+  accumulator used for the raw-listener API and unit tests. Actual
+  continuous-swipe auto-repeat runs natively.
+- **NEW:** `lib/src/rcu/key_simulator.dart` — sends a simulated
+  hardware keyboard event through `SystemChannels.keyEvent`. Only used
+  for touchpad click events now (physical buttons and continuous
+  swipes are simulated in native). Falls back to the Android keymap
+  for `LogicalKeyboardKey.select` since macOS has no matching keycode.
+- **NEW:** `lib/src/rcu/tv_remote_channels.dart` — channel definitions
+  shared with native.
+- **NEW public API:** `runTvApp(Widget)` — drop-in `runApp` replacement;
+  on iOS/Android it's a passthrough, on tvOS it initializes the
+  controller. Documented interaction with custom `WidgetsBinding`
+  subclasses and the hot-restart limitation (cold restart required to
+  re-register channel handlers after hot restart).
+- **Tests:** 52+ unit tests split across `swipe_detector_test.dart`
+  (threshold edge cases, direction reversal, zigzag) and
+  `tv_remote_controller_test.dart` (raw listener delivery, malformed
+  messages, click phases, directional-click bias, rapid click_s
+  sequences verifying the keyup-for-previous fix, config mutation,
+  button channel handlers, media commands).
+- **Example app** (`packages/flutter_tvos/example`) uses `runTvApp`
+  and exposes a 4×4 `FocusableActionDetector` grid with click counters
+  so focus traversal, Select activation, and hold-to-scroll can be
+  verified visually on the Apple TV simulator.
+
 ## Bug Fixes (2026-04-17)
 
 ### `lib/tvos_device.dart`
