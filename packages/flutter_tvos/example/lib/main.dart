@@ -48,6 +48,8 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
             ),
+            const Divider(height: 1),
+            const _SwipeDemoCard(),
           ],
         ),
       ),
@@ -151,6 +153,57 @@ class _InfoTile extends StatelessWidget {
           Text(label,
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           Text(value, style: const TextStyle(fontSize: 14)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Subscribes to [TvRemoteController.addSwipeListener] and displays the
+/// last received [SwipeEvent]. Demonstrates the high-level swipe API
+/// without needing a custom [SwipeDetector] instance.
+class _SwipeDemoCard extends StatefulWidget {
+  const _SwipeDemoCard();
+
+  @override
+  State<_SwipeDemoCard> createState() => _SwipeDemoCardState();
+}
+
+class _SwipeDemoCardState extends State<_SwipeDemoCard> {
+  String _status = 'Swipe the touchpad to see direction + magnitude';
+
+  void _onSwipe(SwipeEvent event) {
+    setState(() {
+      _status = '${event.direction.name.toUpperCase()}  '
+          '|  mag ${event.magnitude.toStringAsFixed(2)}  '
+          '|  ${event.isFast ? "FAST" : "short"}';
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    TvRemoteController.instance.addSwipeListener(_onSwipe);
+  }
+
+  @override
+  void dispose() {
+    TvRemoteController.instance.removeSwipeListener(_onSwipe);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          const Icon(Icons.swipe, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(_status,
+                style: const TextStyle(fontSize: 14, fontFamily: 'monospace')),
+          ),
         ],
       ),
     );

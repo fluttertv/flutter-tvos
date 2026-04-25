@@ -132,6 +132,26 @@ TvRemoteController.instance.addRawListener((event) {
 });
 ```
 
+### Swipe listener (high-level direction + magnitude)
+
+For consumers that just want "user swiped left/right/up/down" without
+hand-rolling a detector, subscribe at the swipe-event level:
+
+```dart
+TvRemoteController.instance.addSwipeListener((event) {
+  if (event.direction == SwipeDirection.right && event.isFast) {
+    seekVideo(seconds: 30);
+  }
+});
+```
+
+`SwipeEvent` carries `direction` (left/right/up/down), `magnitude`
+(`max(|dx|, |dy|)` in normalized [-1, 1] view space), and `isFast`
+(true when magnitude crosses `fastSwipeThreshold` from `TvRemoteConfig`).
+
+Raw `addRawListener` callbacks still receive every touch point in
+parallel — the two layers are independent.
+
 ## API Reference
 
 | Property | Type | Description |

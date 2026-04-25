@@ -22,6 +22,7 @@ export 'src/platform_extension.dart'
     show FlutterTvosPlatform, FlutterTvosPlatformExt;
 export 'src/rcu/tv_remote_controller.dart'
     show
+        SwipeListener,
         TvRemoteConfig,
         TvRemoteController,
         TvRemoteTouchEvent,

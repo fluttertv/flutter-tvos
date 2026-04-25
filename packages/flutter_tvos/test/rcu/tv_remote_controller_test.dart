@@ -5,6 +5,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_tvos/src/rcu/swipe_detector.dart';
 import 'package:flutter_tvos/src/rcu/tv_remote_channels.dart';
 import 'package:flutter_tvos/src/rcu/tv_remote_controller.dart';
 
@@ -460,6 +461,254 @@ void main() {
       ]));
       expect(map['keyRepeatInitialDelayMs'], 100);
       expect(map['keyRepeatIntervalMs'], 50);
+    });
+  });
+
+  group('TvRemoteController swipe listener fan-out', () {
+    test('emits SwipeEvent on threshold-crossing move', () async {
+      final events = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener(events.add);
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+
+      expect(events.length, 1);
+      expect(events.single.direction, SwipeDirection.right);
+      expect(events.single.magnitude, closeTo(0.4, 1e-9));
+      expect(events.single.isFast, isFalse);
+    });
+
+    test('emits isFast=true when fastThreshold is crossed', () async {
+      final events = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener(events.add);
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.6, 'y': 0.0});
+
+      expect(events.single.isFast, isTrue);
+    });
+
+    test('no event under shortThreshold', () async {
+      final events = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener(events.add);
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.1, 'y': 0.0});
+
+      expect(events, isEmpty);
+    });
+
+    test('multi-segment swipe — 3 emits in one touch', () async {
+      final events = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener(events.add);
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.8, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 1.2, 'y': 0.0});
+
+      expect(events.length, 3);
+      expect(events.every((e) => e.direction == SwipeDirection.right), isTrue);
+    });
+
+    test('direction switch mid-touch', () async {
+      final events = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener(events.add);
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.5, 'y': 0.0});  // right
+      // After right emit, segment resets to (0.5, 0). Move to (0.5, 0.5):
+      // dy=0.5 > shortThreshold → Down event.
+      await _sendTouch({'type': 'move', 'x': 0.5, 'y': 0.5});
+
+      expect(events.length, 2);
+      expect(events[0].direction, SwipeDirection.right);
+      expect(events[1].direction, SwipeDirection.down);
+    });
+
+    test('multiple listeners all receive same event', () async {
+      final listenerA = <SwipeEvent>[];
+      final listenerB = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener(listenerA.add);
+      controller.addSwipeListener(listenerB.add);
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+
+      expect(listenerA.length, 1);
+      expect(listenerB.length, 1);
+    });
+
+    test('removeSwipeListener stops delivery', () async {
+      final events = <SwipeEvent>[];
+      void listener(SwipeEvent e) => events.add(e);
+
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener(listener);
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+      controller.removeSwipeListener(listener);
+      await _sendTouch({'type': 'move', 'x': 0.8, 'y': 0.0});
+
+      expect(events.length, 1);
+    });
+
+    test('throwing swipe listener does not block subsequent listeners',
+        () async {
+      final tailEvents = <SwipeEvent>[];
+      final errors = <FlutterErrorDetails>[];
+      final previousOnError = FlutterError.onError;
+      FlutterError.onError = errors.add;
+
+      try {
+        final controller = TvRemoteController.instance;
+        controller.addSwipeListener((e) => throw StateError('boom'));
+        controller.addSwipeListener(tailEvents.add);
+        controller.debugInit();
+
+        await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+        await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+
+        expect(tailEvents.length, 1, reason: 'tail listener still runs');
+        expect(errors.length, 1,
+            reason: 'first listener reported via FlutterError');
+      } finally {
+        FlutterError.onError = previousOnError;
+      }
+    });
+
+    test('addSwipeListener during dispatch fires only on next event',
+        () async {
+      final orderLog = <String>[];
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener((_) {
+        orderLog.add('outer');
+        controller.addSwipeListener((_) => orderLog.add('inner'));
+      });
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+
+      expect(orderLog, ['outer'],
+          reason: 'newly added listener must not fire for the same event');
+
+      // Second swipe — both listeners now installed.
+      await _sendTouch({'type': 'move', 'x': 0.8, 'y': 0.0});
+      expect(orderLog, ['outer', 'outer', 'inner']);
+    });
+
+    test('removeSwipeListener during dispatch — current iteration still fires',
+        () async {
+      final received = <String>[];
+      final controller = TvRemoteController.instance;
+      void secondListener(SwipeEvent e) => received.add('second');
+      void firstListener(SwipeEvent e) {
+        received.add('first');
+        controller.removeSwipeListener(secondListener);
+      }
+      controller.addSwipeListener(firstListener);
+      controller.addSwipeListener(secondListener);
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+
+      expect(received, ['first', 'second']);
+
+      received.clear();
+      await _sendTouch({'type': 'move', 'x': 0.8, 'y': 0.0});
+      expect(received, ['first']);
+    });
+
+    test('debugReset clears swipe listeners', () async {
+      final events = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener(events.add);
+      controller.debugInit();
+
+      controller.debugReset();
+      // Re-init (without re-registering listener).
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+
+      expect(events, isEmpty,
+          reason: 'debugReset() must drop swipe listeners');
+    });
+
+    test('config change rebuilds detector — new thresholds in effect on '
+        'next move', () async {
+      final events = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener(events.add);
+      controller.debugInit();
+
+      // Default shortSwipeThreshold is 0.3 — a 0.15 move would not emit.
+      // Lower the threshold to 0.1 and confirm the next move now emits.
+      controller.config = const TvRemoteConfig(
+        shortSwipeThreshold: 0.1,
+      );
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.15, 'y': 0.0});
+
+      expect(events.length, 1,
+          reason: 'detector should rebuild with the new threshold');
+    });
+
+    test('cancelled phase resets swipe state — next gesture starts fresh',
+        () async {
+      final events = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+      controller.addSwipeListener(events.add);
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+      expect(events.length, 1);
+
+      // Cancel mid-gesture. Next started/move stream should behave as
+      // fresh — no leftover segment state.
+      await _sendTouch({'type': 'cancelled', 'x': 0.4, 'y': 0.0});
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+
+      expect(events.length, 2,
+          reason: 'second gesture should emit a new event after cancel');
+    });
+
+    test('parallel raw + swipe listeners both fire on the same gesture',
+        () async {
+      final raws = <TvRemoteTouchEvent>[];
+      final swipes = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+      controller.addRawListener(raws.add);
+      controller.addSwipeListener(swipes.add);
+      controller.debugInit();
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+
+      // Raw gets all phases (started + move), swipe only the threshold-
+      // crossing move.
+      expect(raws.length, 2);
+      expect(swipes.length, 1);
     });
   });
 }

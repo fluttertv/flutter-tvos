@@ -131,6 +131,12 @@ enum TvRemoteTouchPhase {
 /// Signature for raw touch event listeners.
 typedef TvRemoteTouchListener = void Function(TvRemoteTouchEvent event);
 
+/// Signature for aggregated swipe-event listeners. Receives a
+/// [SwipeEvent] each time accumulated touchpad motion crosses
+/// `shortSwipeThreshold` from [TvRemoteConfig]. Independent from
+/// [TvRemoteTouchListener] — both fire in parallel for the same gesture.
+typedef SwipeListener = void Function(SwipeEvent event);
+
 /// Dart-side companion to the native `FlutterTvRemotePlugin`.
 ///
 /// The native plugin owns all keyboard-event generation: arrow/page
@@ -162,8 +168,10 @@ class TvRemoteController {
     }
   }
 
-  /// Swipe detector for raw-listener consumers only. Lazily rebuilt when
-  /// thresholds change. Native runs its own detector for auto-repeat.
+  /// Swipe detector that drives [addSwipeListener] consumers and keeps
+  /// the raw-listener-facing aggregation state in sync. Lazily rebuilt
+  /// when thresholds change. Native runs its own detector for arrow-key
+  /// auto-repeat — those are unrelated layers.
   SwipeDetector get _swipe {
     _cachedSwipe ??= SwipeDetector(
       shortThreshold: _config.shortSwipeThreshold,
@@ -174,6 +182,7 @@ class TvRemoteController {
 
   SwipeDetector? _cachedSwipe;
   final _rawListeners = <TvRemoteTouchListener>[];
+  final _swipeListeners = <SwipeListener>[];
   bool _initialized = false;
 
   /// Wire up channel handlers. Idempotent — subsequent calls are no-ops.
@@ -192,6 +201,7 @@ class TvRemoteController {
   void debugReset() {
     TvRemoteChannels.touches.setMessageHandler(null);
     _rawListeners.clear();
+    _swipeListeners.clear();
     _cachedSwipe?.onEnd();
     _cachedSwipe = null;
     _config = const TvRemoteConfig();
@@ -226,6 +236,25 @@ class TvRemoteController {
     _rawListeners.remove(listener);
   }
 
+  /// Register a listener that receives aggregated [SwipeEvent]s.
+  ///
+  /// Fires when the touchpad delta crosses
+  /// [TvRemoteConfig.shortSwipeThreshold] in a dominant cardinal
+  /// direction. Independent from [addRawListener] — both fire in
+  /// parallel for the same gesture; raw listeners get every move,
+  /// swipe listeners get aggregated direction + magnitude + isFast.
+  ///
+  /// Use this for high-level gesture handling (video scrub, custom
+  /// swipe zones) where focus-navigation arrow keys aren't enough.
+  void addSwipeListener(SwipeListener listener) {
+    _swipeListeners.add(listener);
+  }
+
+  /// Remove a previously-added swipe listener. No-op if not registered.
+  void removeSwipeListener(SwipeListener listener) {
+    _swipeListeners.remove(listener);
+  }
+
   Future<dynamic> _onTouchMessage(dynamic message) async {
     if (message is! Map) return null;
     final typeStr = message['type'];
@@ -255,14 +284,18 @@ class TvRemoteController {
       }
     }
 
-    // Keep the raw-listener-facing swipe detector state in sync. The
-    // native side has its own detector for continuous-swipe auto-repeat.
+    // Drive the swipe detector. Native runs its own detector for arrow-
+    // key auto-repeat; this one is for high-level [SwipeEvent] consumers
+    // (video scrub, custom gesture zones).
     switch (phase) {
       case TvRemoteTouchPhase.started:
         _swipe.onStart(x, y);
         break;
       case TvRemoteTouchPhase.move:
-        _swipe.onMove(x, y);
+        final swipe = _swipe.onMove(x, y);
+        if (swipe != null) {
+          _dispatchSwipe(swipe);
+        }
         break;
       case TvRemoteTouchPhase.ended:
       case TvRemoteTouchPhase.cancelled:
@@ -275,6 +308,25 @@ class TvRemoteController {
         break;
     }
     return null;
+  }
+
+  void _dispatchSwipe(SwipeEvent event) {
+    if (_swipeListeners.isEmpty) return;
+    // Iterate over a snapshot — see _onTouchMessage for rationale.
+    // Wrap each listener in try/catch so one bad subscriber cannot
+    // poison the rest.
+    for (final listener in List.of(_swipeListeners)) {
+      try {
+        listener(event);
+      } catch (error, stack) {
+        FlutterError.reportError(FlutterErrorDetails(
+          exception: error,
+          stack: stack,
+          library: 'flutter_tvos',
+          context: ErrorDescription('while dispatching a swipe event'),
+        ));
+      }
+    }
   }
 }
 

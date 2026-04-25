@@ -8,6 +8,10 @@
   zone, auto-repeat delays); shipped to native via method channel.
 - `TvRemoteController.addRawListener` — raw touchpad events for
   custom swipe zones (video scrubbers etc.).
+- `TvRemoteController.addSwipeListener` — receive aggregated
+  `SwipeEvent` notifications (direction + magnitude + isFast) without
+  hand-rolling a `SwipeDetector` from raw touches. Raw and swipe
+  listeners fire in parallel for the same gesture.
 - Lock-screen media commands (`MPRemoteCommandCenter`) forwarded to
   `flutter/keyevent` so widgets reacting to
   `LogicalKeyboardKey.mediaPlay/Pause/Stop/...` light up for free.
