@@ -137,6 +137,55 @@ void main() {
       expect(devices, isEmpty);
     });
 
+    testWithoutContext('filters out paired-but-offline devices (tunnelState=unavailable)', () {
+      const String jsonOutput = '''
+{
+  "result": {
+    "devices": [
+      {
+        "identifier": "online-atv-udid",
+        "deviceProperties": {
+          "name": "Living Room Apple TV"
+        },
+        "hardwareProperties": {
+          "platform": "tvOS",
+          "reality": "physical",
+          "marketingName": "Apple TV 4K"
+        },
+        "connectionProperties": {
+          "tunnelState": "connected"
+        }
+      },
+      {
+        "identifier": "offline-atv-udid",
+        "deviceProperties": {
+          "name": "Entertainment Room"
+        },
+        "hardwareProperties": {
+          "platform": "tvOS",
+          "reality": "physical",
+          "marketingName": "Apple TV 4K"
+        },
+        "connectionProperties": {
+          "tunnelState": "unavailable"
+        }
+      }
+    ]
+  }
+}
+''';
+      final BufferLogger logger = BufferLogger.test();
+      final List<TvosDevice> devices = TvosEmulator.parseDevicectlOutput(
+        jsonOutput,
+        logger,
+      );
+
+      expect(devices, hasLength(1));
+      expect(devices.first.id, equals('online-atv-udid'));
+      // The offline device should be logged as a trace message.
+      expect(logger.traceText, contains('Entertainment Room'));
+    });
+
     testWithoutContext('falls back to marketingName when name is missing', () {
       const String jsonOutput = '''
 {
@@ -166,7 +215,7 @@ void main() {
 
   group('TvosPhysicalDeviceLogReader', () {
     testWithoutContext('emits lines to log stream', () async {
-      final TvosPhysicalDeviceLogReader reader = TvosPhysicalDeviceLogReader('test');
+      final TvosPhysicalDeviceLogReader reader = TvosPhysicalDeviceLogReader('test', logger: BufferLogger.test());
       final List<String> lines = <String>[];
       reader.logLines.listen(lines.add);
 
@@ -179,8 +228,8 @@ void main() {
       reader.dispose();
     });
 
-    testWithoutContext('emits all lines without filtering', () async {
-      final TvosPhysicalDeviceLogReader reader = TvosPhysicalDeviceLogReader('test');
+    testWithoutContext('emits non-noise lines to log stream', () async {
+      final TvosPhysicalDeviceLogReader reader = TvosPhysicalDeviceLogReader('test', logger: BufferLogger.test());
       final List<String> lines = <String>[];
       reader.logLines.listen(lines.add);
 
@@ -190,6 +239,33 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(lines, hasLength(3));
+
+      reader.dispose();
+    });
+
+    testWithoutContext('suppresses devicectl progress chatter', () async {
+      final BufferLogger testLogger = BufferLogger.test();
+      final TvosPhysicalDeviceLogReader reader = TvosPhysicalDeviceLogReader('test', logger: testLogger);
+      final List<String> lines = <String>[];
+      reader.logLines.listen(lines.add);
+
+      // These patterns come from `script -t 0 /dev/null` wrapping devicectl.
+      reader.processLogLine('Script started, output file is /dev/null');
+      reader.processLogLine('07:49:03  Acquired tunnel connection to device.');
+      reader.processLogLine('07:49:03  Enabling developer mode throttling override.');
+      reader.processLogLine('07:49:04  Establishing a tunnel connection to the device.');
+      reader.processLogLine('07:49:05  Resolved tunnel endpoint.');
+      reader.processLogLine('Script done, output file is /dev/null');
+      // System framework noise
+      reader.processLogLine('2026-04-25 07:49:05.123+0200 Runner[1234] [UIFocus] Focus update started');
+      // Empty line
+      reader.processLogLine('');
+      // This one should pass through
+      reader.processLogLine('flutter: VM service listening on http://0.0.0.0:12345/abc=/');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(lines, hasLength(1));
+      expect(lines.first, contains('VM service'));
 
       reader.dispose();
     });

@@ -30,7 +30,18 @@ import 'tvos_builder.dart';
 /// Uses `xcrun devicectl device process launch --console` output or
 /// `log stream` via devicectl to capture the VM service URL.
 class TvosPhysicalDeviceLogReader implements DeviceLogReader {
-  TvosPhysicalDeviceLogReader(this.name);
+  /// Creates a log reader for a physical tvOS device.
+  ///
+  /// [logger] is used for noise-filtered lines (demoted to printTrace). If
+  /// omitted, falls back to the DI-injected [globals.logger] — safe for
+  /// production use. Pass an explicit logger in unit tests to avoid needing
+  /// a full Zone context.
+  TvosPhysicalDeviceLogReader(this.name, {Logger? logger}) : _logger = logger;
+
+  /// Logger for noise-filtered lines. Lazily resolved from globals so that
+  /// production code doesn't need to pass it, but tests can inject explicitly.
+  final Logger? _logger;
+  Logger get _log => _logger ?? globals.logger;
 
   final StreamController<String> _linesController =
       StreamController<String>.broadcast();
@@ -154,7 +165,7 @@ class TvosPhysicalDeviceLogReader implements DeviceLogReader {
   void _processLine(String line) {
     if (_linesController.isClosed) return;
     if (_isNoise(line)) {
-      globals.logger.printTrace(line);
+      _log.printTrace(line);
       return;
     }
     _linesController.add(line);
