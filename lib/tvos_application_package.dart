@@ -56,6 +56,9 @@ class TvosApp extends ApplicationPackage {
       if (matches.isNotEmpty) {
         // Use the first match (usually the app's bundle ID)
         bundleId = matches.first.group(1)?.trim();
+        if (bundleId != null && bundleId.length >= 2 && bundleId.startsWith('"') && bundleId.endsWith('"')) {
+          bundleId = bundleId.substring(1, bundleId.length - 1);
+        }
       }
     }
 
