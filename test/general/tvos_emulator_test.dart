@@ -22,9 +22,11 @@ void main() {
   });
 
   testWithoutContext('getConnectedSimulators returns available tvOS simulators', () async {
+    // Only Booted+isAvailable tvOS sims are returned; iOS sims and Shutdown
+    // tvOS sims are excluded.
     processManager.addCommand(const FakeCommand(
       command: <String>['xcrun', 'simctl', 'list', 'devices', '--json'],
-      stdout: '{"devices":{"com.apple.CoreSimulator.SimRuntime.tvOS-18-4":[{"udid":"AAAA-BBBB-CCCC","name":"Apple TV 4K","state":"Shutdown","isAvailable":true},{"udid":"DDDD-EEEE-FFFF","name":"Apple TV","state":"Shutdown","isAvailable":false}],"com.apple.CoreSimulator.SimRuntime.iOS-18-4":[{"udid":"1111-2222-3333","name":"iPhone 16","state":"Booted","isAvailable":true}]}}',
+      stdout: '{"devices":{"com.apple.CoreSimulator.SimRuntime.tvOS-18-4":[{"udid":"AAAA-BBBB-CCCC","name":"Apple TV 4K","state":"Booted","isAvailable":true},{"udid":"DDDD-EEEE-FFFF","name":"Apple TV","state":"Shutdown","isAvailable":false}],"com.apple.CoreSimulator.SimRuntime.iOS-18-4":[{"udid":"1111-2222-3333","name":"iPhone 16","state":"Booted","isAvailable":true}]}}',
     ));
 
     final List<Device> devices = await TvosEmulator.getConnectedSimulators(
@@ -67,9 +69,10 @@ void main() {
   });
 
   testWithoutContext('getConnectedSimulators returns multiple available simulators', () async {
+    // Both Booted sims are returned; Shutdown ones are excluded.
     processManager.addCommand(const FakeCommand(
       command: <String>['xcrun', 'simctl', 'list', 'devices', '--json'],
-      stdout: '{"devices":{"com.apple.CoreSimulator.SimRuntime.tvOS-18-4":[{"udid":"AAAA-BBBB-CCCC","name":"Apple TV 4K","state":"Booted","isAvailable":true},{"udid":"DDDD-EEEE-FFFF","name":"Apple TV 4K (3rd generation)","state":"Shutdown","isAvailable":true}]}}',
+      stdout: '{"devices":{"com.apple.CoreSimulator.SimRuntime.tvOS-18-4":[{"udid":"AAAA-BBBB-CCCC","name":"Apple TV 4K","state":"Booted","isAvailable":true},{"udid":"DDDD-EEEE-FFFF","name":"Apple TV 4K (3rd generation)","state":"Booted","isAvailable":true}]}}',
     ));
 
     final List<Device> devices = await TvosEmulator.getConnectedSimulators(

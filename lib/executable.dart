@@ -50,6 +50,7 @@ import 'tvos_artifacts.dart';
 import 'tvos_cache.dart';
 import 'tvos_device_discovery.dart';
 import 'tvos_doctor.dart';
+import 'tvos_logger.dart';
 
 /// Main entry point for commands.
 ///
@@ -197,12 +198,23 @@ Future<void> main(List<String> args) async {
             processManager: globals.processManager,
             userMessages: globals.userMessages,
           ),
-      if (verbose && !muteCommandLogging)
-        Logger: () => VerboseLogger(StdoutLogger(
-              stdio: globals.stdio,
-              terminal: globals.terminal,
-              outputPreferences: globals.outputPreferences,
-            )),
+      // Always wrap the logger with TvosCategoryRewritingLogger so the
+      // device list shows `(tv)` instead of `(mobile)` for tvOS devices.
+      // The wrapper is a no-op on every other line. In verbose mode,
+      // VerboseLogger sits inside ours so timestamps still apply.
+      Logger: () => TvosCategoryRewritingLogger(
+            verbose && !muteCommandLogging
+                ? VerboseLogger(StdoutLogger(
+                    stdio: globals.stdio,
+                    terminal: globals.terminal,
+                    outputPreferences: globals.outputPreferences,
+                  ))
+                : StdoutLogger(
+                    stdio: globals.stdio,
+                    terminal: globals.terminal,
+                    outputPreferences: globals.outputPreferences,
+                  ),
+          ),
     },
     shutdownHooks: globals.shutdownHooks,
   );

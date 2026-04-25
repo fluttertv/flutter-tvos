@@ -12,10 +12,17 @@ import 'package:meta/meta.dart';
 import 'tvos_device.dart';
 
 class TvosEmulator {
-  /// Queries `xcrun simctl list --json` to find available Apple TV simulators.
+  /// Queries `xcrun simctl list --json` for tvOS simulators.
+  ///
+  /// Matches stock Flutter's iOS simulator behaviour: by default, only
+  /// **booted** simulators are returned (those are what `flutter devices`
+  /// reports). Pass [includeShutdown] true to get every available simulator
+  /// — used by `flutter-tvos emulators` and the device manager when
+  /// `--device-id <id>` resolves to a shutdown sim that needs booting.
   static Future<List<TvosDevice>> getConnectedSimulators(
     Logger logger, {
     ProcessUtils? processUtils,
+    bool includeShutdown = false,
   }) async {
     final ProcessUtils pUtils = processUtils ?? globals.processUtils;
     final List<TvosDevice> devices = <TvosDevice>[];
@@ -34,19 +41,21 @@ class TvosEmulator {
         final Map<String, dynamic> devicesList = json['devices'] as Map<String, dynamic>;
 
         for (final String runtime in devicesList.keys) {
-          if (runtime.contains('tvOS')) {
-            final List<dynamic> simulators = devicesList[runtime] as List<dynamic>;
-            for (final dynamic simulator in simulators) {
-              final Map<String, dynamic> sim = simulator as Map<String, dynamic>;
-              if (sim['isAvailable'] == true) {
-                devices.add(TvosDevice(
-                  sim['udid'] as String,
-                  name: sim['name'] as String,
-                  logger: logger,
-                  isSimulator: true,
-                ));
-              }
-            }
+          if (!runtime.contains('tvOS')) continue;
+          final String runtimeVersion = _parseRuntimeVersion(runtime);
+          final List<dynamic> simulators = devicesList[runtime] as List<dynamic>;
+          for (final dynamic simulator in simulators) {
+            final Map<String, dynamic> sim = simulator as Map<String, dynamic>;
+            if (sim['isAvailable'] != true) continue;
+            final String state = (sim['state'] as String?) ?? 'Shutdown';
+            if (!includeShutdown && state != 'Booted') continue;
+            devices.add(TvosDevice(
+              sim['udid'] as String,
+              name: sim['name'] as String,
+              logger: logger,
+              isSimulator: true,
+              osVersion: runtimeVersion,
+            ));
           }
         }
       }
@@ -55,6 +64,17 @@ class TvosEmulator {
     }
 
     return devices;
+  }
+
+  /// Converts `com.apple.CoreSimulator.SimRuntime.tvOS-18-4` → `tvOS 18.4`.
+  static String _parseRuntimeVersion(String runtime) {
+    final RegExpMatch? m =
+        RegExp(r'tvOS[-_](\d+)[-_](\d+)(?:[-_](\d+))?').firstMatch(runtime);
+    if (m == null) return 'tvOS';
+    final String major = m.group(1)!;
+    final String minor = m.group(2)!;
+    final String? patch = m.group(3);
+    return patch == null ? 'tvOS $major.$minor' : 'tvOS $major.$minor.$patch';
   }
 
   /// Queries `xcrun devicectl list devices` to find connected physical Apple TV devices.
@@ -104,6 +124,11 @@ class TvosEmulator {
   }
 
   /// Parses devicectl JSON output and returns physical Apple TV devices.
+  ///
+  /// Hides devices that are paired but currently unreachable — devicectl
+  /// reports them with `connectionProperties.tunnelState == "unavailable"`
+  /// and emits a separate "Browsing on the local area network..." error.
+  /// Stock `flutter devices` doesn't surface those either.
   @visibleForTesting
   static List<TvosDevice> parseDevicectlOutput(String jsonContent, Logger logger) {
     final List<TvosDevice> devices = <TvosDevice>[];
@@ -120,6 +145,8 @@ class TvosEmulator {
           deviceMap['hardwareProperties'] as Map<String, dynamic>?;
       final Map<String, dynamic>? deviceProps =
           deviceMap['deviceProperties'] as Map<String, dynamic>?;
+      final Map<String, dynamic>? connection =
+          deviceMap['connectionProperties'] as Map<String, dynamic>?;
 
       if (hardware == null) continue;
 
@@ -129,17 +156,41 @@ class TvosEmulator {
       // Only include physical tvOS devices
       if (platform != 'tvOS' || reality != 'physical') continue;
 
+      // Filter out paired-but-offline devices.
+      final String? tunnelState = connection?['tunnelState'] as String?;
+      if (tunnelState == 'unavailable') {
+        final String? offlineName = deviceProps?['name'] as String?;
+        logger.printTrace(
+          'Skipping offline tvOS device "${offlineName ?? '?'}" '
+          '(tunnelState=$tunnelState).',
+        );
+        continue;
+      }
+
       final String? udid = deviceMap['identifier'] as String?;
       final String? name = deviceProps?['name'] as String? ??
           hardware['marketingName'] as String?;
 
       if (udid == null || name == null) continue;
 
+      // Build the OS version string the same way stock iOS does:
+      // "<version> <build>" (e.g. "18.6 22M84"). Falls back gracefully if
+      // either piece is missing.
+      final String? osVersionNumber =
+          deviceProps?['osVersionNumber'] as String?;
+      final String? osBuildUpdate =
+          deviceProps?['osBuildUpdate'] as String?;
+      final String osVersion = <String?>[
+        if (osVersionNumber != null) 'tvOS $osVersionNumber',
+        osBuildUpdate,
+      ].whereType<String>().join(' ');
+
       devices.add(TvosDevice(
         udid,
         name: name,
         logger: logger,
         isSimulator: false,
+        osVersion: osVersion.isEmpty ? null : osVersion,
       ));
     }
 
