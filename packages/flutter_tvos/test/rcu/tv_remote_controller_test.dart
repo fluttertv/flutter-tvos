@@ -267,4 +267,199 @@ void main() {
       expect(configureCalls.last['dpadDeadZone'], 0.8);
     });
   });
+
+  group('Edge cases', () {
+    final configureCalls = <Map<String, Object?>>[];
+
+    setUp(() {
+      configureCalls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(TvRemoteChannels.button,
+              (MethodCall call) async {
+        if (call.method == 'configure') {
+          configureCalls.add(
+              Map<String, Object?>.from(call.arguments as Map));
+        }
+        return null;
+      });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(TvRemoteChannels.button, null);
+    });
+
+    test('init() second call does not re-push config', () async {
+      TvRemoteController.instance.debugInit();
+      await Future<void>.delayed(Duration.zero);
+      final firstCount = configureCalls.length;
+
+      TvRemoteController.instance.debugInit();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(configureCalls.length, firstCount,
+          reason: 'second init() should be a no-op');
+    });
+
+    test('config setter before init() is pushed on init()', () async {
+      TvRemoteController.instance.config = const TvRemoteConfig(
+        dpadDeadZone: 0.9,
+      );
+      // Pre-init mutations don't ship to native (no handler attached
+      // yet). The dispatch must happen on first init().
+      await Future<void>.delayed(Duration.zero);
+      expect(configureCalls, isEmpty,
+          reason: 'pre-init config setter must not push prematurely');
+
+      TvRemoteController.instance.debugInit();
+      await Future<void>.delayed(Duration.zero);
+      expect(configureCalls.last['dpadDeadZone'], 0.9);
+    });
+
+    test('addRawListener during dispatch fires only on next event',
+        () async {
+      final orderLog = <String>[];
+      final controller = TvRemoteController.instance;
+      controller.addRawListener((_) {
+        orderLog.add('outer');
+        // Adding mid-dispatch must not surface for the current event —
+        // List.of(...) snapshot is taken before iteration.
+        controller.addRawListener((_) => orderLog.add('inner'));
+      });
+      controller.debugInit();
+
+      final codec = TvRemoteChannels.touches.codec;
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        TvRemoteChannels.touches.name,
+        codec.encodeMessage({'type': 'started', 'x': 0.0, 'y': 0.0}),
+        (_) {},
+      );
+
+      expect(orderLog, ['outer'],
+          reason: 'newly added listener must not fire for the same event');
+
+      // Second event — both listeners now installed.
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        TvRemoteChannels.touches.name,
+        codec.encodeMessage({'type': 'move', 'x': 0.5, 'y': 0.0}),
+        (_) {},
+      );
+      expect(orderLog, ['outer', 'outer', 'inner']);
+    });
+
+    test('removeRawListener during dispatch — current iteration still fires',
+        () async {
+      final received = <String>[];
+      final controller = TvRemoteController.instance;
+      void secondListener(TvRemoteTouchEvent e) {
+        received.add('second');
+      }
+      void firstListener(TvRemoteTouchEvent e) {
+        received.add('first');
+        // Remove the second listener during dispatch — but it should
+        // still fire on this event (snapshot semantics).
+        controller.removeRawListener(secondListener);
+      }
+      controller.addRawListener(firstListener);
+      controller.addRawListener(secondListener);
+      controller.debugInit();
+
+      final codec = TvRemoteChannels.touches.codec;
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        TvRemoteChannels.touches.name,
+        codec.encodeMessage({'type': 'started', 'x': 0.0, 'y': 0.0}),
+        (_) {},
+      );
+
+      expect(received, ['first', 'second']);
+
+      // Second event: secondListener was removed, only first should run.
+      received.clear();
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        TvRemoteChannels.touches.name,
+        codec.encodeMessage({'type': 'move', 'x': 0.5, 'y': 0.0}),
+        (_) {},
+      );
+      expect(received, ['first']);
+    });
+
+    test('x/y outside [-1, 1] are passed through unclamped', () async {
+      final events = <TvRemoteTouchEvent>[];
+      TvRemoteController.instance.addRawListener(events.add);
+      TvRemoteController.instance.debugInit();
+
+      final codec = TvRemoteChannels.touches.codec;
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        TvRemoteChannels.touches.name,
+        codec.encodeMessage({'type': 'move', 'x': 1.5, 'y': -2.0}),
+        (_) {},
+      );
+
+      expect(events.single.x, closeTo(1.5, 1e-9));
+      expect(events.single.y, closeTo(-2.0, 1e-9));
+    });
+
+    test('phase string with wrong case is silently dropped', () async {
+      final events = <TvRemoteTouchEvent>[];
+      TvRemoteController.instance.addRawListener(events.add);
+      TvRemoteController.instance.debugInit();
+
+      final codec = TvRemoteChannels.touches.codec;
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        TvRemoteChannels.touches.name,
+        codec.encodeMessage({'type': 'STARTED', 'x': 0.0, 'y': 0.0}),
+        (_) {},
+      );
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        TvRemoteChannels.touches.name,
+        codec.encodeMessage({'type': 'Started', 'x': 0.0, 'y': 0.0}),
+        (_) {},
+      );
+
+      expect(events, isEmpty,
+          reason: 'phase strings are case-sensitive on the wire');
+    });
+
+    test('TvRemoteConfig accepts Duration.zero for repeat parameters', () {
+      expect(
+        () => const TvRemoteConfig(
+          keyRepeatInitialDelay: Duration.zero,
+          keyRepeatInterval: Duration.zero,
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('TvRemoteConfig.toMap uses exact wire-format keys', () {
+      // Drift detection: native plugin reads these exact keys from the
+      // configure args dict. If you rename one, the engine side must
+      // mirror — this test will alarm on drift.
+      const cfg = TvRemoteConfig(
+        shortSwipeThreshold: 0.1,
+        fastSwipeThreshold: 0.2,
+        dpadDeadZone: 0.3,
+        continuousSwipeMoveThreshold: 4,
+        keyRepeatInitialDelay: Duration(milliseconds: 100),
+        keyRepeatInterval: Duration(milliseconds: 50),
+      );
+      final map = cfg.toMap();
+      expect(map.keys, containsAll(<String>[
+        'shortSwipeThreshold',
+        'fastSwipeThreshold',
+        'dpadDeadZone',
+        'continuousSwipeMoveThreshold',
+        'keyRepeatInitialDelayMs',
+        'keyRepeatIntervalMs',
+      ]));
+      expect(map['keyRepeatInitialDelayMs'], 100);
+      expect(map['keyRepeatIntervalMs'], 50);
+    });
+  });
 }

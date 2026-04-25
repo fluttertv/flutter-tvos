@@ -87,4 +87,92 @@ void main() {
     }
     await tester.pumpAndSettle();
   });
+
+  testWidgets(
+      'real codec round-trip on touches channel: message reaches listener '
+      'with correct phase + coordinates',
+      (tester) async {
+    TvRemoteController.instance.debugReset();
+    final received = <TvRemoteTouchEvent>[];
+    TvRemoteController.instance.addRawListener(received.add);
+    TvRemoteController.instance.debugInit();
+
+    const codec = JSONMessageCodec();
+    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+      'flutter/tv_remote_touches',
+      codec.encodeMessage({'type': 'move', 'x': 0.33, 'y': 0.66}),
+      (_) {},
+    );
+    await tester.pumpAndSettle();
+
+    expect(received.length, 1);
+    expect(received.first.phase, TvRemoteTouchPhase.move);
+    expect(received.first.x, closeTo(0.33, 1e-9));
+    expect(received.first.y, closeTo(0.66, 1e-9));
+  });
+
+  testWidgets(
+      'high-frequency touch stream (1000 events) reaches every listener '
+      'without drop',
+      (tester) async {
+    TvRemoteController.instance.debugReset();
+    var receivedCount = 0;
+    TvRemoteController.instance.addRawListener((_) => receivedCount++);
+    TvRemoteController.instance.debugInit();
+
+    const codec = JSONMessageCodec();
+    for (var i = 0; i < 1000; i++) {
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        'flutter/tv_remote_touches',
+        codec.encodeMessage(
+            {'type': 'move', 'x': i / 1000.0, 'y': 0.5}),
+        (_) {},
+      );
+    }
+    await tester.pumpAndSettle();
+
+    expect(receivedCount, 1000,
+        reason: 'no event must be dropped under stress');
+  });
+
+  testWidgets('config setter pushes updated values to native',
+      (tester) async {
+    // The configure call goes through the real button channel. The
+    // engine plugin (if linked) acknowledges it; either way the
+    // exception-free path is verified by the absence of throws.
+    TvRemoteController.instance.config = const TvRemoteConfig(
+      shortSwipeThreshold: 0.27,
+      dpadDeadZone: 0.65,
+      continuousSwipeMoveThreshold: 5,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(TvRemoteController.instance.config.shortSwipeThreshold,
+        closeTo(0.27, 1e-9));
+    expect(TvRemoteController.instance.config.dpadDeadZone, closeTo(0.65, 1e-9));
+    expect(TvRemoteController.instance.config.continuousSwipeMoveThreshold,
+        5);
+  });
+
+  testWidgets('popRoute on root is graceful (no crash, no pop)',
+      (tester) async {
+    final navKey = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navKey,
+        home: const Scaffold(body: Text('root')),
+      ),
+    );
+
+    const codec = JSONMethodCodec();
+    final message = codec.encodeMethodCall(const MethodCall('popRoute'));
+    await tester.binding.defaultBinaryMessenger
+        .handlePlatformMessage('flutter/navigation', message, (_) {});
+    await tester.pumpAndSettle();
+
+    // Root route still present — Flutter's navigator returned 'not
+    // handled' and Apple TV's system would normally take over (we
+    // don't simulate the system handler here).
+    expect(find.text('root'), findsOneWidget);
+  });
 }

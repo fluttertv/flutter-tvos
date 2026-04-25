@@ -11,6 +11,7 @@ import 'package:flutter/widgets.dart' show Widget, WidgetsFlutterBinding, runApp
 import '../platform_extension.dart' show FlutterTvosPlatform;
 import 'swipe_detector.dart';
 import 'tv_remote_channels.dart';
+import 'tv_remote_protocol.dart';
 
 /// Runtime configuration for [TvRemoteController].
 ///
@@ -64,14 +65,19 @@ class TvRemoteConfig {
   final Duration keyRepeatInterval;
 
   /// Serialize to the method-channel payload expected by the native
-  /// plugin's `configure` method.
+  /// plugin's `configure` method. Keys are the wire-format strings
+  /// defined in [TvRemoteProtocol]; the native plugin reads exactly
+  /// these names.
   Map<String, dynamic> toMap() => <String, dynamic>{
-        'shortSwipeThreshold': shortSwipeThreshold,
-        'fastSwipeThreshold': fastSwipeThreshold,
-        'dpadDeadZone': dpadDeadZone,
-        'continuousSwipeMoveThreshold': continuousSwipeMoveThreshold,
-        'keyRepeatInitialDelayMs': keyRepeatInitialDelay.inMilliseconds,
-        'keyRepeatIntervalMs': keyRepeatInterval.inMilliseconds,
+        TvRemoteProtocol.cfgShortSwipeThreshold: shortSwipeThreshold,
+        TvRemoteProtocol.cfgFastSwipeThreshold: fastSwipeThreshold,
+        TvRemoteProtocol.cfgDpadDeadZone: dpadDeadZone,
+        TvRemoteProtocol.cfgContinuousSwipeMoveThreshold:
+            continuousSwipeMoveThreshold,
+        TvRemoteProtocol.cfgKeyRepeatInitialDelayMs:
+            keyRepeatInitialDelay.inMilliseconds,
+        TvRemoteProtocol.cfgKeyRepeatIntervalMs:
+            keyRepeatInterval.inMilliseconds,
       };
 }
 
@@ -201,7 +207,7 @@ class TvRemoteController {
 
   void _pushConfig() {
     unawaited(TvRemoteChannels.button
-        .invokeMethod<void>('configure', _config.toMap())
+        .invokeMethod<void>(TvRemoteProtocol.methodConfigure, _config.toMap())
         .catchError((Object error, StackTrace stack) {
       // Before native is reachable (e.g. iOS / Android / test binding
       // without a plugin), the invocation fails. Silently ignore — the
@@ -310,19 +316,19 @@ void runTvApp(Widget app) {
 TvRemoteTouchPhase? _phaseFromString(dynamic type) {
   if (type is! String) return null;
   switch (type) {
-    case 'started':
+    case TvRemoteProtocol.phaseStarted:
       return TvRemoteTouchPhase.started;
-    case 'move':
+    case TvRemoteProtocol.phaseMove:
       return TvRemoteTouchPhase.move;
-    case 'ended':
+    case TvRemoteProtocol.phaseEnded:
       return TvRemoteTouchPhase.ended;
-    case 'cancelled':
+    case TvRemoteProtocol.phaseCancelled:
       return TvRemoteTouchPhase.cancelled;
-    case 'loc':
+    case TvRemoteProtocol.phaseLoc:
       return TvRemoteTouchPhase.loc;
-    case 'click_s':
+    case TvRemoteProtocol.phaseClickStart:
       return TvRemoteTouchPhase.clickStart;
-    case 'click_e':
+    case TvRemoteProtocol.phaseClickEnd:
       return TvRemoteTouchPhase.clickEnd;
   }
   return null;

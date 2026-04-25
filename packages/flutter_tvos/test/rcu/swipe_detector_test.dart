@@ -138,4 +138,48 @@ void main() {
       expect(event!.isFast, isFalse);
     });
   });
+
+  group('Algorithm precision', () {
+    test('extreme small threshold (0.01) emits on tiny motion', () {
+      final detector =
+          SwipeDetector(shortThreshold: 0.01, fastThreshold: 0.02);
+      detector.onStart(0.5, 0.5);
+      final event = detector.onMove(0.515, 0.5);
+      expect(event, isNotNull);
+      expect(event!.direction, SwipeDirection.right);
+    });
+
+    test('multi-segment continuous swipe of 5 moves emits multiple events',
+        () {
+      final detector =
+          SwipeDetector(shortThreshold: 0.3, fastThreshold: 0.6);
+      final events = <SwipeEvent>[];
+
+      detector.onStart(0, 0);
+      // Each move advances by 0.4 (above shortThreshold). After every
+      // emit the segment start resets to current; so each subsequent
+      // 0.4-step also crosses the threshold.
+      for (final x in [0.4, 0.8, 1.2, 1.6, 2.0]) {
+        final e = detector.onMove(x, 0);
+        if (e != null) events.add(e);
+      }
+      expect(events.length, greaterThanOrEqualTo(2),
+          reason: 'multi-segment swipe should emit at least 2 events');
+      expect(events.every((e) => e.direction == SwipeDirection.right),
+          isTrue);
+    });
+
+    test('alternating direction within same touch stream', () {
+      final detector = SwipeDetector();
+      detector.onStart(0, 0);
+      final right = detector.onMove(0.4, 0);
+      expect(right!.direction, SwipeDirection.right);
+      // Now starting from (0.4, 0): swipe back left to (-0.1, 0),
+      // dx = -0.5, large enough to emit Left.
+      final left = detector.onMove(-0.1, 0);
+      expect(left!.direction, SwipeDirection.left);
+      expect(left.isFast, isTrue,
+          reason: 'magnitude 0.5 reaches default fastThreshold 0.5');
+    });
+  });
 }

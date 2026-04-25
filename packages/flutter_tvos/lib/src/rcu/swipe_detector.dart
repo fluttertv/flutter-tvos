@@ -28,6 +28,12 @@ enum SwipeDirection {
 /// - If a single delta exceeds [fastThreshold], the swipe is marked as
 ///   "fast" — useful for accelerated navigation.
 ///
+/// **Magnitude is `max(|dx|, |dy|)`, not Euclidean** (`sqrt(dx² + dy²)`).
+/// This matches how the gesture is perceived: a 0.4-unit move in the
+/// dominant axis feels the same to the user whether the off-axis was 0
+/// or 0.1, so we report the dominant component. Tests rely on this
+/// precise definition.
+///
 /// Coordinates are in `[-1.0, 1.0]` normalized view space, so thresholds
 /// are also in that space (typical `shortThreshold ~ 0.3`).
 class SwipeDetector {

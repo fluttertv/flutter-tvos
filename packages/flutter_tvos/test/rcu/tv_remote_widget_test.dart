@@ -196,4 +196,125 @@ void main() {
       expect(find.text('root'), findsOneWidget);
     });
   });
+
+  group('Media key surface', () {
+    // Native plugin emits all media keys via the android keymap (Flutter's
+    // macOS table has no media entries). Verify each one reaches
+    // HardwareKeyboard so apps reacting to LogicalKeyboardKey.mediaXxx
+    // light up out of the box.
+    Future<void> expectMediaKey(WidgetTester tester,
+        LogicalKeyboardKey key) async {
+      var saw = false;
+      bool handler(KeyEvent event) {
+        if (event is KeyDownEvent && event.logicalKey == key) {
+          saw = true;
+        }
+        return false;
+      }
+
+      HardwareKeyboard.instance.addHandler(handler);
+      addTearDown(() => HardwareKeyboard.instance.removeHandler(handler));
+
+      await tester.sendKeyEvent(key, platform: 'android');
+      await tester.pumpAndSettle();
+      expect(saw, isTrue, reason: '$key should surface on HardwareKeyboard');
+    }
+
+    testWidgets('mediaPlay surfaces on HardwareKeyboard', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await expectMediaKey(tester, LogicalKeyboardKey.mediaPlay);
+    });
+
+    testWidgets('mediaPause surfaces on HardwareKeyboard', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await expectMediaKey(tester, LogicalKeyboardKey.mediaPause);
+    });
+
+    testWidgets('mediaStop surfaces on HardwareKeyboard', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await expectMediaKey(tester, LogicalKeyboardKey.mediaStop);
+    });
+
+    testWidgets('mediaFastForward surfaces on HardwareKeyboard',
+        (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await expectMediaKey(tester, LogicalKeyboardKey.mediaFastForward);
+    });
+
+    testWidgets('mediaRewind surfaces on HardwareKeyboard', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await expectMediaKey(tester, LogicalKeyboardKey.mediaRewind);
+    });
+  });
+
+  group('Page navigation regression', () {
+    testWidgets(
+        'pageUp/pageDown surface as LogicalKeyboardKey on HardwareKeyboard',
+        (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+
+      var sawPageUp = false;
+      var sawPageDown = false;
+      bool handler(KeyEvent event) {
+        if (event is KeyDownEvent) {
+          if (event.logicalKey == LogicalKeyboardKey.pageUp) sawPageUp = true;
+          if (event.logicalKey == LogicalKeyboardKey.pageDown) {
+            sawPageDown = true;
+          }
+        }
+        return false;
+      }
+
+      HardwareKeyboard.instance.addHandler(handler);
+      addTearDown(() => HardwareKeyboard.instance.removeHandler(handler));
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.pageUp, platform: 'macos');
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.pageDown,
+          platform: 'macos');
+      await tester.pumpAndSettle();
+
+      expect(sawPageUp, isTrue);
+      expect(sawPageDown, isTrue);
+    });
+  });
+
+  group('Select activates focused button across multiple targets', () {
+    testWidgets(
+        'enter activates focused ElevatedButton even with multiple buttons',
+        (tester) async {
+      var pressedFirst = 0;
+      var pressedSecond = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ElevatedButton(
+                    autofocus: true,
+                    onPressed: () => pressedFirst++,
+                    child: const Text('First'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => pressedSecond++,
+                    child: const Text('Second'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter, platform: 'macos');
+      await tester.pumpAndSettle();
+
+      expect(pressedFirst, 1, reason: 'autofocused First should activate');
+      expect(pressedSecond, 0,
+          reason: 'unfocused Second must not activate');
+    });
+  });
 }
