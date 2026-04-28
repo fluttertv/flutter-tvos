@@ -36,9 +36,7 @@ class TvosCleanCommand extends CleanCommand {
     }
 
     // Clean tvOS xcodebuild output
-    final Directory tvosBuildDir = project.directory
-        .childDirectory('build')
-        .childDirectory('tvos');
+    final Directory tvosBuildDir = project.directory.childDirectory('build').childDirectory('tvos');
     if (tvosBuildDir.existsSync()) {
       tvosBuildDir.deleteSync(recursive: true);
       globals.logger.printStatus('Removed build/tvos/');

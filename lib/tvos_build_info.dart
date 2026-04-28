@@ -6,11 +6,7 @@ import 'package:flutter_tools/src/build_info.dart';
 
 /// Build configuration for tvOS targets.
 class TvosBuildInfo {
-  const TvosBuildInfo(
-    this.buildInfo, {
-    required this.targetArch,
-    this.simulator = false,
-  });
+  const TvosBuildInfo(this.buildInfo, {required this.targetArch, this.simulator = false});
 
   final BuildInfo buildInfo;
   final String targetArch;
@@ -22,7 +18,5 @@ class TvosBuildInfo {
   String get sdkName => simulator ? 'appletvsimulator' : 'appletvos';
 
   /// The Xcode destination for this build configuration.
-  String get destination => simulator
-      ? 'generic/platform=tvOS Simulator'
-      : 'generic/platform=tvOS';
+  String get destination => simulator ? 'generic/platform=tvOS Simulator' : 'generic/platform=tvOS';
 }

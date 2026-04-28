@@ -25,7 +25,7 @@ class TvosEmulator {
     bool includeShutdown = false,
   }) async {
     final ProcessUtils pUtils = processUtils ?? globals.processUtils;
-    final List<TvosDevice> devices = <TvosDevice>[];
+    final devices = <TvosDevice>[];
 
     try {
       final RunResult result = await pUtils.run(<String>[
@@ -33,29 +33,37 @@ class TvosEmulator {
         'simctl',
         'list',
         'devices',
-        '--json'
+        '--json',
       ]);
 
       if (result.exitCode == 0) {
-        final Map<String, dynamic> json = jsonDecode(result.stdout) as Map<String, dynamic>;
-        final Map<String, dynamic> devicesList = json['devices'] as Map<String, dynamic>;
+        final json = jsonDecode(result.stdout) as Map<String, dynamic>;
+        final devicesList = json['devices'] as Map<String, dynamic>;
 
         for (final String runtime in devicesList.keys) {
-          if (!runtime.contains('tvOS')) continue;
+          if (!runtime.contains('tvOS')) {
+            continue;
+          }
           final String runtimeVersion = _parseRuntimeVersion(runtime);
-          final List<dynamic> simulators = devicesList[runtime] as List<dynamic>;
+          final simulators = devicesList[runtime] as List<dynamic>;
           for (final dynamic simulator in simulators) {
-            final Map<String, dynamic> sim = simulator as Map<String, dynamic>;
-            if (sim['isAvailable'] != true) continue;
+            final sim = simulator as Map<String, dynamic>;
+            if (sim['isAvailable'] != true) {
+              continue;
+            }
             final String state = (sim['state'] as String?) ?? 'Shutdown';
-            if (!includeShutdown && state != 'Booted') continue;
-            devices.add(TvosDevice(
-              sim['udid'] as String,
-              name: sim['name'] as String,
-              logger: logger,
-              isSimulator: true,
-              osVersion: runtimeVersion,
-            ));
+            if (!includeShutdown && state != 'Booted') {
+              continue;
+            }
+            devices.add(
+              TvosDevice(
+                sim['udid'] as String,
+                name: sim['name'] as String,
+                logger: logger,
+                isSimulator: true,
+                osVersion: runtimeVersion,
+              ),
+            );
           }
         }
       }
@@ -68,9 +76,10 @@ class TvosEmulator {
 
   /// Converts `com.apple.CoreSimulator.SimRuntime.tvOS-18-4` → `tvOS 18.4`.
   static String _parseRuntimeVersion(String runtime) {
-    final RegExpMatch? m =
-        RegExp(r'tvOS[-_](\d+)[-_](\d+)(?:[-_](\d+))?').firstMatch(runtime);
-    if (m == null) return 'tvOS';
+    final RegExpMatch? m = RegExp(r'tvOS[-_](\d+)[-_](\d+)(?:[-_](\d+))?').firstMatch(runtime);
+    if (m == null) {
+      return 'tvOS';
+    }
     final String major = m.group(1)!;
     final String minor = m.group(2)!;
     final String? patch = m.group(3);
@@ -86,7 +95,7 @@ class TvosEmulator {
     ProcessUtils? processUtils,
   }) async {
     final ProcessUtils pUtils = processUtils ?? globals.processUtils;
-    final List<TvosDevice> devices = <TvosDevice>[];
+    final devices = <TvosDevice>[];
 
     try {
       // devicectl writes JSON to a file, not stdout
@@ -96,7 +105,12 @@ class TvosEmulator {
       );
 
       final RunResult result = await pUtils.run(<String>[
-        'xcrun', 'devicectl', 'list', 'devices', '--json-output', tempPath,
+        'xcrun',
+        'devicectl',
+        'list',
+        'devices',
+        '--json-output',
+        tempPath,
       ]);
 
       if (result.exitCode != 0) {
@@ -131,35 +145,40 @@ class TvosEmulator {
   /// Stock `flutter devices` doesn't surface those either.
   @visibleForTesting
   static List<TvosDevice> parseDevicectlOutput(String jsonContent, Logger logger) {
-    final List<TvosDevice> devices = <TvosDevice>[];
-    final Map<String, dynamic> json = jsonDecode(jsonContent) as Map<String, dynamic>;
-    final Map<String, dynamic>? resultMap = json['result'] as Map<String, dynamic>?;
-    if (resultMap == null) return devices;
+    final devices = <TvosDevice>[];
+    final json = jsonDecode(jsonContent) as Map<String, dynamic>;
+    final resultMap = json['result'] as Map<String, dynamic>?;
+    if (resultMap == null) {
+      return devices;
+    }
 
-    final List<dynamic>? deviceList = resultMap['devices'] as List<dynamic>?;
-    if (deviceList == null) return devices;
+    final deviceList = resultMap['devices'] as List<dynamic>?;
+    if (deviceList == null) {
+      return devices;
+    }
 
-    for (final dynamic device in deviceList) {
-      final Map<String, dynamic> deviceMap = device as Map<String, dynamic>;
-      final Map<String, dynamic>? hardware =
-          deviceMap['hardwareProperties'] as Map<String, dynamic>?;
-      final Map<String, dynamic>? deviceProps =
-          deviceMap['deviceProperties'] as Map<String, dynamic>?;
-      final Map<String, dynamic>? connection =
-          deviceMap['connectionProperties'] as Map<String, dynamic>?;
+    for (final Object? device in deviceList) {
+      final deviceMap = device! as Map<String, dynamic>;
+      final hardware = deviceMap['hardwareProperties'] as Map<String, dynamic>?;
+      final deviceProps = deviceMap['deviceProperties'] as Map<String, dynamic>?;
+      final connection = deviceMap['connectionProperties'] as Map<String, dynamic>?;
 
-      if (hardware == null) continue;
+      if (hardware == null) {
+        continue;
+      }
 
-      final String? platform = hardware['platform'] as String?;
-      final String? reality = hardware['reality'] as String?;
+      final platform = hardware['platform'] as String?;
+      final reality = hardware['reality'] as String?;
 
       // Only include physical tvOS devices
-      if (platform != 'tvOS' || reality != 'physical') continue;
+      if (platform != 'tvOS' || reality != 'physical') {
+        continue;
+      }
 
       // Filter out paired-but-offline devices.
-      final String? tunnelState = connection?['tunnelState'] as String?;
+      final tunnelState = connection?['tunnelState'] as String?;
       if (tunnelState == 'unavailable') {
-        final String? offlineName = deviceProps?['name'] as String?;
+        final offlineName = deviceProps?['name'] as String?;
         logger.printTrace(
           'Skipping offline tvOS device "${offlineName ?? '?'}" '
           '(tunnelState=$tunnelState).',
@@ -167,31 +186,32 @@ class TvosEmulator {
         continue;
       }
 
-      final String? udid = deviceMap['identifier'] as String?;
-      final String? name = deviceProps?['name'] as String? ??
-          hardware['marketingName'] as String?;
+      final udid = deviceMap['identifier'] as String?;
+      final String? name = deviceProps?['name'] as String? ?? hardware['marketingName'] as String?;
 
-      if (udid == null || name == null) continue;
+      if (udid == null || name == null) {
+        continue;
+      }
 
       // Build the OS version string the same way stock iOS does:
       // "<version> <build>" (e.g. "18.6 22M84"). Falls back gracefully if
       // either piece is missing.
-      final String? osVersionNumber =
-          deviceProps?['osVersionNumber'] as String?;
-      final String? osBuildUpdate =
-          deviceProps?['osBuildUpdate'] as String?;
+      final osVersionNumber = deviceProps?['osVersionNumber'] as String?;
+      final osBuildUpdate = deviceProps?['osBuildUpdate'] as String?;
       final String osVersion = <String?>[
         if (osVersionNumber != null) 'tvOS $osVersionNumber',
         osBuildUpdate,
       ].whereType<String>().join(' ');
 
-      devices.add(TvosDevice(
-        udid,
-        name: name,
-        logger: logger,
-        isSimulator: false,
-        osVersion: osVersion.isEmpty ? null : osVersion,
-      ));
+      devices.add(
+        TvosDevice(
+          udid,
+          name: name,
+          logger: logger,
+          isSimulator: false,
+          osVersion: osVersion.isEmpty ? null : osVersion,
+        ),
+      );
     }
 
     return devices;

@@ -15,7 +15,7 @@ import '../src/common.dart';
 void main() {
   group('TvosEmulator.parseDevicectlOutput', () {
     testWithoutContext('parses physical Apple TV from devicectl JSON', () {
-      const String jsonOutput = '''
+      const jsonOutput = '''
 {
   "result": {
     "devices": [
@@ -50,7 +50,7 @@ void main() {
     });
 
     testWithoutContext('filters out non-tvOS devices', () {
-      const String jsonOutput = '''
+      const jsonOutput = '''
 {
   "result": {
     "devices": [
@@ -90,7 +90,7 @@ void main() {
     });
 
     testWithoutContext('filters out virtual devices', () {
-      const String jsonOutput = '''
+      const jsonOutput = '''
 {
   "result": {
     "devices": [
@@ -118,7 +118,7 @@ void main() {
     });
 
     testWithoutContext('returns empty list for empty devices array', () {
-      const String jsonOutput = '{"result": {"devices": []}}';
+      const jsonOutput = '{"result": {"devices": []}}';
       final List<TvosDevice> devices = TvosEmulator.parseDevicectlOutput(
         jsonOutput,
         BufferLogger.test(),
@@ -128,7 +128,7 @@ void main() {
     });
 
     testWithoutContext('returns empty list when result is missing', () {
-      const String jsonOutput = '{"info": {"outcome": "success"}}';
+      const jsonOutput = '{"info": {"outcome": "success"}}';
       final List<TvosDevice> devices = TvosEmulator.parseDevicectlOutput(
         jsonOutput,
         BufferLogger.test(),
@@ -138,7 +138,7 @@ void main() {
     });
 
     testWithoutContext('filters out paired-but-offline devices (tunnelState=unavailable)', () {
-      const String jsonOutput = '''
+      const jsonOutput = '''
 {
   "result": {
     "devices": [
@@ -174,11 +174,8 @@ void main() {
   }
 }
 ''';
-      final BufferLogger logger = BufferLogger.test();
-      final List<TvosDevice> devices = TvosEmulator.parseDevicectlOutput(
-        jsonOutput,
-        logger,
-      );
+      final logger = BufferLogger.test();
+      final List<TvosDevice> devices = TvosEmulator.parseDevicectlOutput(jsonOutput, logger);
 
       expect(devices, hasLength(1));
       expect(devices.first.id, equals('online-atv-udid'));
@@ -187,7 +184,7 @@ void main() {
     });
 
     testWithoutContext('falls back to marketingName when name is missing', () {
-      const String jsonOutput = '''
+      const jsonOutput = '''
 {
   "result": {
     "devices": [
@@ -215,11 +212,13 @@ void main() {
 
   group('TvosPhysicalDeviceLogReader', () {
     testWithoutContext('emits lines to log stream', () async {
-      final TvosPhysicalDeviceLogReader reader = TvosPhysicalDeviceLogReader('test', logger: BufferLogger.test());
-      final List<String> lines = <String>[];
+      final reader = TvosPhysicalDeviceLogReader('test', logger: BufferLogger.test());
+      final lines = <String>[];
       reader.logLines.listen(lines.add);
 
-      reader.processLogLine('flutter: The Dart VM service is listening on http://127.0.0.1:12345/abc=/');
+      reader.processLogLine(
+        'flutter: The Dart VM service is listening on http://127.0.0.1:12345/abc=/',
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(lines, hasLength(1));
@@ -229,8 +228,8 @@ void main() {
     });
 
     testWithoutContext('emits non-noise lines to log stream', () async {
-      final TvosPhysicalDeviceLogReader reader = TvosPhysicalDeviceLogReader('test', logger: BufferLogger.test());
-      final List<String> lines = <String>[];
+      final reader = TvosPhysicalDeviceLogReader('test', logger: BufferLogger.test());
+      final lines = <String>[];
       reader.logLines.listen(lines.add);
 
       reader.processLogLine('Some debug output');
@@ -244,9 +243,9 @@ void main() {
     });
 
     testWithoutContext('suppresses devicectl progress chatter', () async {
-      final BufferLogger testLogger = BufferLogger.test();
-      final TvosPhysicalDeviceLogReader reader = TvosPhysicalDeviceLogReader('test', logger: testLogger);
-      final List<String> lines = <String>[];
+      final testLogger = BufferLogger.test();
+      final reader = TvosPhysicalDeviceLogReader('test', logger: testLogger);
+      final lines = <String>[];
       reader.logLines.listen(lines.add);
 
       // These patterns come from `script -t 0 /dev/null` wrapping devicectl.
@@ -257,7 +256,9 @@ void main() {
       reader.processLogLine('07:49:05  Resolved tunnel endpoint.');
       reader.processLogLine('Script done, output file is /dev/null');
       // System framework noise
-      reader.processLogLine('2026-04-25 07:49:05.123+0200 Runner[1234] [UIFocus] Focus update started');
+      reader.processLogLine(
+        '2026-04-25 07:49:05.123+0200 Runner[1234] [UIFocus] Focus update started',
+      );
       // Empty line
       reader.processLogLine('');
       // This one should pass through
@@ -273,7 +274,7 @@ void main() {
 
   group('TvosDevice physical properties', () {
     testWithoutContext('physical device reports not emulator', () async {
-      final TvosDevice device = TvosDevice(
+      final device = TvosDevice(
         'physical-atv-id',
         name: 'Living Room Apple TV',
         logger: BufferLogger.test(),
@@ -286,7 +287,7 @@ void main() {
     });
 
     testWithoutContext('physical device supports all modes except jitRelease', () {
-      final TvosDevice device = TvosDevice(
+      final device = TvosDevice(
         'physical-atv-id',
         name: 'Apple TV',
         logger: BufferLogger.test(),
@@ -300,7 +301,7 @@ void main() {
     });
 
     testWithoutContext('getLogReader returns physical log reader for device', () async {
-      final TvosDevice device = TvosDevice(
+      final device = TvosDevice(
         'physical-id',
         name: 'Apple TV',
         logger: BufferLogger.test(),
@@ -312,7 +313,7 @@ void main() {
     });
 
     testWithoutContext('getLogReader returns simulator log reader for simulator', () async {
-      final TvosDevice device = TvosDevice(
+      final device = TvosDevice(
         'sim-id',
         name: 'Apple TV Simulator',
         logger: BufferLogger.test(),

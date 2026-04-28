@@ -12,10 +12,7 @@ import 'package:flutter_tools/src/project.dart';
 import 'tvos_project.dart';
 
 class TvosApp extends ApplicationPackage {
-  TvosApp({
-    required String id,
-    required this.projectDirectory,
-  }) : super(id: id);
+  TvosApp({required super.id, required this.projectDirectory});
 
   final Directory projectDirectory;
 
@@ -24,9 +21,9 @@ class TvosApp extends ApplicationPackage {
 
   /// Returns the path to the app bundle for the given build mode and architecture.
   String bundlePath(BuildMode buildMode, {bool isSimulator = false}) {
-    final String configuration = (buildMode == BuildMode.debug) ? 'Debug' : 'Release';
-    final String platformSuffix = isSimulator ? 'appletvsimulator' : 'appletvos';
-    
+    final configuration = (buildMode == BuildMode.debug) ? 'Debug' : 'Release';
+    final platformSuffix = isSimulator ? 'appletvsimulator' : 'appletvos';
+
     // This matches the SYMROOT set in application.dart (build/tvos)
     return globals.fs.path.join(
       projectDirectory.parent.path,
@@ -47,16 +44,19 @@ class TvosApp extends ApplicationPackage {
         .childDirectory('tvos')
         .childDirectory('Runner.xcodeproj')
         .childFile('project.pbxproj');
-    
+
     String? bundleId;
     if (projectFile.existsSync()) {
       final String content = projectFile.readAsStringSync();
-      final RegExp regex = RegExp(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*(.*?);');
+      final regex = RegExp(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*(.*?);');
       final Iterable<Match> matches = regex.allMatches(content);
       if (matches.isNotEmpty) {
         // Use the first match (usually the app's bundle ID)
         bundleId = matches.first.group(1)?.trim();
-        if (bundleId != null && bundleId.length >= 2 && bundleId.startsWith('"') && bundleId.endsWith('"')) {
+        if (bundleId != null &&
+            bundleId.length >= 2 &&
+            bundleId.startsWith('"') &&
+            bundleId.endsWith('"')) {
           bundleId = bundleId.substring(1, bundleId.length - 1);
         }
       }
@@ -77,8 +77,8 @@ class TvosApplicationPackageFactory extends ApplicationPackageFactory {
     File? applicationBinary,
   }) async {
     final FlutterProject project = FlutterProject.current();
-    final TvosProject tvosProject = TvosProject.fromFlutter(project);
-    
+    final tvosProject = TvosProject.fromFlutter(project);
+
     if (tvosProject.existsSync()) {
       return TvosApp.fromTvosProject(tvosProject);
     }

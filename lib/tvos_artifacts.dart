@@ -7,10 +7,7 @@
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
-import 'package:flutter_tools/src/base/os.dart';
-import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/build_info.dart';
-import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 
 import 'tvos_cache.dart';
@@ -24,17 +21,11 @@ import 'tvos_cache.dart';
 ///   - `tvos_release_arm64`        — Release device (arm64)
 class TvosArtifacts extends CachedArtifacts {
   TvosArtifacts({
-    required FileSystem fileSystem,
-    required Cache cache,
-    required Platform platform,
-    required OperatingSystemUtils operatingSystemUtils,
-  }) : _fileSystem = fileSystem,
-       super(
-         fileSystem: fileSystem,
-         cache: cache,
-         platform: platform,
-         operatingSystemUtils: operatingSystemUtils,
-       );
+    required super.fileSystem,
+    required super.cache,
+    required super.platform,
+    required super.operatingSystemUtils,
+  }) : _fileSystem = fileSystem;
 
   final FileSystem _fileSystem;
 
@@ -51,10 +42,7 @@ class TvosArtifacts extends CachedArtifacts {
     if (artifact == Artifact.flutterXcframework ||
         artifact == Artifact.flutterFramework ||
         artifact == Artifact.genSnapshot) {
-      final String engineDir = _resolveEngineDirectory(
-        mode ?? BuildMode.debug,
-        environmentType,
-      );
+      final String engineDir = _resolveEngineDirectory(mode ?? BuildMode.debug, environmentType);
 
       if (artifact == Artifact.genSnapshot) {
         return _fileSystem.path.join(engineDir, 'clang_arm64', 'gen_snapshot');
@@ -123,7 +111,7 @@ class TvosArtifacts extends CachedArtifacts {
   ///
   /// Host tools (frontend_server, dart) are in the Flutter SDK, not in engine_artifacts.
   String getHostToolsPath(BuildMode mode) {
-    final String dirName = mode == BuildMode.debug ? 'host_debug_unopt' : 'host_release';
+    final dirName = mode == BuildMode.debug ? 'host_debug_unopt' : 'host_release';
     return _fileSystem.path.join(_tvosArtifactRoot, dirName);
   }
 }

@@ -15,7 +15,11 @@ class TvosProject {
 
   Directory get managedDirectory => _directory.childDirectory('flutter');
 
-  Directory get pluginSymlinkDirectory => _directory.childDirectory('flutter').childDirectory('ephemeral').childDirectory('.symlinks').childDirectory('plugins');
+  Directory get pluginSymlinkDirectory => _directory
+      .childDirectory('flutter')
+      .childDirectory('ephemeral')
+      .childDirectory('.symlinks')
+      .childDirectory('plugins');
 
   bool existsSync() => _directory.existsSync();
 

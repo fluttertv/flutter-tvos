@@ -9,46 +9,27 @@ import '../src/common.dart';
 
 void main() {
   testWithoutContext('TvosBuildInfo.sdkName returns appletvsimulator for simulator builds', () {
-    const TvosBuildInfo buildInfo = TvosBuildInfo(
-      BuildInfo.debug,
-      targetArch: 'arm64',
-      simulator: true,
-    );
+    const buildInfo = TvosBuildInfo(BuildInfo.debug, targetArch: 'arm64', simulator: true);
     expect(buildInfo.sdkName, equals('appletvsimulator'));
   });
 
   testWithoutContext('TvosBuildInfo.sdkName returns appletvos for device builds', () {
-    const TvosBuildInfo buildInfo = TvosBuildInfo(
-      BuildInfo.debug,
-      targetArch: 'arm64',
-      simulator: false,
-    );
+    const buildInfo = TvosBuildInfo(BuildInfo.debug, targetArch: 'arm64');
     expect(buildInfo.sdkName, equals('appletvos'));
   });
 
   testWithoutContext('TvosBuildInfo.destination returns simulator destination', () {
-    const TvosBuildInfo buildInfo = TvosBuildInfo(
-      BuildInfo.debug,
-      targetArch: 'arm64',
-      simulator: true,
-    );
+    const buildInfo = TvosBuildInfo(BuildInfo.debug, targetArch: 'arm64', simulator: true);
     expect(buildInfo.destination, equals('generic/platform=tvOS Simulator'));
   });
 
   testWithoutContext('TvosBuildInfo.destination returns device destination', () {
-    const TvosBuildInfo buildInfo = TvosBuildInfo(
-      BuildInfo.release,
-      targetArch: 'arm64',
-      simulator: false,
-    );
+    const buildInfo = TvosBuildInfo(BuildInfo.release, targetArch: 'arm64');
     expect(buildInfo.destination, equals('generic/platform=tvOS'));
   });
 
   testWithoutContext('TvosBuildInfo defaults to non-simulator', () {
-    const TvosBuildInfo buildInfo = TvosBuildInfo(
-      BuildInfo.debug,
-      targetArch: 'arm64',
-    );
+    const buildInfo = TvosBuildInfo(BuildInfo.debug, targetArch: 'arm64');
     expect(buildInfo.simulator, isFalse);
     expect(buildInfo.sdkName, equals('appletvos'));
   });

@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:flutter_tools/src/platform_plugins.dart';
-import 'package:flutter_tools/src/project.dart';
+import 'dart:convert';
+
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/platform_plugins.dart';
+import 'package:flutter_tools/src/project.dart';
 import 'package:yaml/yaml.dart';
-import 'dart:convert';
 
 const String _swiftPluginRegistryTemplate = '''
 //
@@ -36,7 +37,7 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
 /// (which Flutter does populate) to get plugin names and paths,
 /// then parse each plugin's pubspec.yaml ourselves.
 List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
-  final List<TvosPlugin> tvosPlugins = <TvosPlugin>[];
+  final tvosPlugins = <TvosPlugin>[];
 
   // Read .flutter-plugins-dependencies to get dependencyGraph
   // Flutter writes this even for unrecognized platforms — it lists all
@@ -49,26 +50,30 @@ List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
   Map<String, dynamic> depsJson;
   try {
     depsJson = json.decode(depsFile.readAsStringSync()) as Map<String, dynamic>;
-  } catch (_) {
+  } on FormatException {
+    // Malformed JSON — treat as no plugins.
+    return tvosPlugins;
+  } on FileSystemException {
+    // File disappeared between existsSync() and read.
     return tvosPlugins;
   }
 
   final List<dynamic> depGraph = (depsJson['dependencyGraph'] as List<dynamic>?) ?? <dynamic>[];
 
   // Build a name→path map from the pub package config
-  final Map<String, String> packagePaths = <String, String>{};
+  final packagePaths = <String, String>{};
   final File packageConfigFile = project.directory
       .childDirectory('.dart_tool')
       .childFile('package_config.json');
   if (packageConfigFile.existsSync()) {
     try {
-      final Map<String, dynamic> packageConfig =
+      final packageConfig =
           json.decode(packageConfigFile.readAsStringSync()) as Map<String, dynamic>;
       final List<dynamic> packages = (packageConfig['packages'] as List<dynamic>?) ?? <dynamic>[];
       for (final dynamic pkg in packages) {
-        final Map<String, dynamic> pkgMap = pkg as Map<String, dynamic>;
-        final String name = pkgMap['name'] as String;
-        String rootUri = pkgMap['rootUri'] as String;
+        final pkgMap = pkg as Map<String, dynamic>;
+        final name = pkgMap['name'] as String;
+        var rootUri = pkgMap['rootUri'] as String;
         // rootUri may be relative to .dart_tool/
         if (rootUri.startsWith('../')) {
           rootUri = globals.fs.path.normalize(
@@ -79,48 +84,68 @@ List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
         }
         packagePaths[name] = rootUri;
       }
-    } catch (_) {
-      // Fall through
+    } on FormatException {
+      // Malformed package_config.json — leave packagePaths empty and let
+      // pubspec-based fallback handle plugin resolution.
+    } on TypeError {
+      // Unexpected JSON shape (cast failure); fall through to pubspec fallback.
     }
   }
 
   for (final dynamic dep in depGraph) {
-    final Map<String, dynamic> depMap = dep as Map<String, dynamic>;
-    final String pluginName = depMap['name'] as String;
+    final depMap = dep as Map<String, dynamic>;
+    final pluginName = depMap['name'] as String;
     final String? pluginPath = packagePaths[pluginName];
-    if (pluginPath == null) continue;
+    if (pluginPath == null) {
+      continue;
+    }
 
     // Read the plugin's pubspec.yaml for tvos platform
-    final File pubspecFile = globals.fs.file(
-      globals.fs.path.join(pluginPath, 'pubspec.yaml'),
-    );
-    if (!pubspecFile.existsSync()) continue;
+    final File pubspecFile = globals.fs.file(globals.fs.path.join(pluginPath, 'pubspec.yaml'));
+    if (!pubspecFile.existsSync()) {
+      continue;
+    }
 
     try {
-      final YamlMap pubspec = loadYaml(pubspecFile.readAsStringSync()) as YamlMap;
-      final YamlMap? flutter = pubspec['flutter'] as YamlMap?;
-      if (flutter == null) continue;
+      final pubspec = loadYaml(pubspecFile.readAsStringSync()) as YamlMap;
+      final flutter = pubspec['flutter'] as YamlMap?;
+      if (flutter == null) {
+        continue;
+      }
 
-      final YamlMap? plugin = flutter['plugin'] as YamlMap?;
-      if (plugin == null) continue;
+      final plugin = flutter['plugin'] as YamlMap?;
+      if (plugin == null) {
+        continue;
+      }
 
-      final YamlMap? platforms = plugin['platforms'] as YamlMap?;
-      if (platforms == null) continue;
+      final platforms = plugin['platforms'] as YamlMap?;
+      if (platforms == null) {
+        continue;
+      }
 
-      final YamlMap? tvosConfig = platforms['tvos'] as YamlMap?;
-      if (tvosConfig == null) continue;
+      final tvosConfig = platforms['tvos'] as YamlMap?;
+      if (tvosConfig == null) {
+        continue;
+      }
 
       // Found a tvOS plugin
-      tvosPlugins.add(TvosPlugin(
-        name: pluginName,
-        path: pluginPath,
-        pluginClass: tvosConfig['pluginClass'] as String?,
-        dartPluginClass: tvosConfig['dartPluginClass'] as String?,
-        ffiPlugin: tvosConfig[kFfiPlugin] as bool?,
-      ));
+      tvosPlugins.add(
+        TvosPlugin(
+          name: pluginName,
+          path: pluginPath,
+          pluginClass: tvosConfig['pluginClass'] as String?,
+          dartPluginClass: tvosConfig['dartPluginClass'] as String?,
+          ffiPlugin: tvosConfig[kFfiPlugin] as bool?,
+        ),
+      );
 
       globals.logger.printTrace('Discovered tvOS plugin: $pluginName at $pluginPath');
-    } catch (_) {
+    } on YamlException {
+      // Malformed pubspec.yaml — skip this plugin.
+      continue;
+    } on TypeError {
+      // pubspec layout doesn't match the expected schema (e.g. plugin.platforms
+      // is a list rather than a map); skip this plugin.
       continue;
     }
   }
@@ -135,20 +160,20 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   }
 
   final List<TvosPlugin> plugins = _discoverTvosPlugins(project);
-  final List<Map<String, Object?>> methodChannelPlugins = <Map<String, Object?>>[];
-  final List<Map<String, Object?>> ffiPlugins = <Map<String, Object?>>[];
+  final methodChannelPlugins = <Map<String, Object?>>[];
+  final ffiPlugins = <Map<String, Object?>>[];
 
-  final Map<String, dynamic> dependenciesJson = <String, dynamic>{
+  // Tightly-typed inner list lets us avoid dynamic dispatch on `.add(...)`.
+  final tvosPluginEntries = <Map<String, dynamic>>[];
+  final dependenciesJson = <String, dynamic>{
     'info': 'This is a generated file; do not edit or check into version control.',
-    'plugins': <String, dynamic>{
-      'tvos': <Map<String, dynamic>>[],
-    },
+    'plugins': <String, dynamic>{'tvos': tvosPluginEntries},
     'dependencyGraph': <dynamic>[],
   };
 
-  final StringBuffer pluginsBuffer = StringBuffer();
+  final pluginsBuffer = StringBuffer();
 
-  for (final TvosPlugin plugin in plugins) {
+  for (final plugin in plugins) {
     if (plugin.hasMethodChannel()) {
       methodChannelPlugins.add(plugin.toMap());
     }
@@ -156,7 +181,7 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
       ffiPlugins.add(plugin.toMap());
     }
 
-    (dependenciesJson['plugins'] as Map<String, dynamic>)['tvos'].add(<String, dynamic>{
+    tvosPluginEntries.add(<String, dynamic>{
       'name': plugin.name,
       'path': plugin.path,
       'native_build': plugin.hasNativeBuild(),
@@ -177,13 +202,16 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   project.flutterPluginsDependenciesFile.writeAsStringSync(json.encode(dependenciesJson));
   project.directory.childFile('.flutter-plugins').writeAsStringSync(pluginsBuffer.toString());
 
-  final Map<String, Object> context = <String, Object>{
-    'methodChannelPlugins': methodChannelPlugins,
-  };
+  final context = <String, Object>{'methodChannelPlugins': methodChannelPlugins};
 
-  final File registryFile = tvosDir.childDirectory('Flutter').childFile('GeneratedPluginRegistrant.swift');
+  final File registryFile = tvosDir
+      .childDirectory('Flutter')
+      .childFile('GeneratedPluginRegistrant.swift');
 
-  final String renderedTemplate = globals.templateRenderer.renderString(_swiftPluginRegistryTemplate, context);
+  final String renderedTemplate = globals.templateRenderer.renderString(
+    _swiftPluginRegistryTemplate,
+    context,
+  );
   registryFile.parent.createSync(recursive: true);
   registryFile.writeAsStringSync(renderedTemplate);
 
@@ -193,13 +221,16 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   // actually compiles. This bridges to the CocoaPods framework modules.
   final Directory runnerDir = tvosDir.childDirectory('Runner');
   if (runnerDir.existsSync()) {
-    final StringBuffer imports = StringBuffer();
-    final StringBuffer registrations = StringBuffer();
+    final imports = StringBuffer();
+    final registrations = StringBuffer();
 
-    for (final TvosPlugin plugin in plugins) {
+    for (final plugin in plugins) {
       if (plugin.hasMethodChannel()) {
         imports.writeln('@import ${plugin.name};');
+        // The two string literals concatenate to one Objective-C statement.
+        // No whitespace belongs between them — this is `selector:[arg]` syntax.
         registrations.writeln(
+          // ignore: missing_whitespace_between_adjacent_strings
           '  [${plugin.pluginClass} registerWithRegistrar:'
           '[registry registrarForPlugin:@"${plugin.pluginClass}"]];',
         );
@@ -236,12 +267,12 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
       '\n'
       '#import "GeneratedPluginRegistrant.h"\n'
       '\n'
-      '${imports.toString()}'
+      '$imports'
       '\n'
       '@implementation GeneratedPluginRegistrant\n'
       '\n'
       '+ (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry {\n'
-      '${registrations.toString()}'
+      '$registrations'
       '}\n'
       '\n'
       '@end\n',
@@ -272,27 +303,20 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
 /// Pass [plugins] to skip re-discovery when already known (e.g. when called
 /// from [ensureReadyForTvosTooling]). When omitted, plugins are discovered
 /// from the project's pubspec/package-config.
-void writeTvosDartPluginRegistrant(
-  FlutterProject project, {
-  List<TvosPlugin>? plugins,
-}) {
-  final List<TvosPlugin> dartPlugins =
-      (plugins ?? _discoverTvosPlugins(project))
-          .where((p) => p.hasDart())
-          .toList();
+void writeTvosDartPluginRegistrant(FlutterProject project, {List<TvosPlugin>? plugins}) {
+  final List<TvosPlugin> dartPlugins = (plugins ?? _discoverTvosPlugins(project))
+      .where((p) => p.hasDart())
+      .toList();
 
   // Build registrant content even when there are no dart plugins — we still
   // want an empty (but valid) registrant to prevent the iOS one from loading.
-  final StringBuffer dartImports = StringBuffer();
-  final StringBuffer dartRegistrations = StringBuffer();
+  final dartImports = StringBuffer();
+  final dartRegistrations = StringBuffer();
 
-  for (final TvosPlugin plugin in dartPlugins) {
-    final String alias =
-        plugin.name.replaceAll('.', '_').replaceAll('-', '_');
-    final String libFile = '${plugin.name}.dart';
-    dartImports.writeln(
-      "import 'package:${plugin.name}/$libFile' as $alias;",
-    );
+  for (final plugin in dartPlugins) {
+    final String alias = plugin.name.replaceAll('.', '_').replaceAll('-', '_');
+    final libFile = '${plugin.name}.dart';
+    dartImports.writeln("import 'package:${plugin.name}/$libFile' as $alias;");
     dartRegistrations.writeln(
       '    try {\n'
       '      $alias.${plugin.dartPluginClass}.registerWith();\n'
@@ -303,7 +327,7 @@ void writeTvosDartPluginRegistrant(
     );
   }
 
-  final String dartRegistrantContent =
+  final dartRegistrantContent =
       '//\n'
       '// Generated by flutter-tvos. Do not edit.\n'
       "// Flutter's own plugin-registrant generator only recognizes the\n"
@@ -317,12 +341,12 @@ void writeTvosDartPluginRegistrant(
       '\n'
       '// @dart = 3.9\n'
       '\n'
-      '${dartImports.toString()}\n'
-      '@pragma(\'vm:entry-point\')\n'
+      '$dartImports\n'
+      "@pragma('vm:entry-point')\n"
       'class _PluginRegistrant {\n'
-      '  @pragma(\'vm:entry-point\')\n'
+      "  @pragma('vm:entry-point')\n"
       '  static void register() {\n'
-      '${dartRegistrations.toString()}'
+      '$dartRegistrations'
       '  }\n'
       '}\n';
 
@@ -331,8 +355,7 @@ void writeTvosDartPluginRegistrant(
       .childDirectory('flutter_build');
   // Create the directory if it doesn't exist yet (first build).
   dartToolBuildDir.createSync(recursive: true);
-  final File dartRegistrantFile =
-      dartToolBuildDir.childFile('dart_plugin_registrant.dart');
+  final File dartRegistrantFile = dartToolBuildDir.childFile('dart_plugin_registrant.dart');
   dartRegistrantFile.writeAsStringSync(dartRegistrantContent);
   globals.logger.printTrace(
     'Wrote tvOS dart_plugin_registrant.dart '
@@ -348,10 +371,12 @@ class TvosPlugin extends PluginPlatform implements NativeOrDartPlugin {
     this.dartPluginClass,
     this.defaultPackage,
     this.ffiPlugin,
-  }) : assert(pluginClass != null ||
-            dartPluginClass != null ||
-            defaultPackage != null ||
-            (ffiPlugin ?? false));
+  }) : assert(
+         pluginClass != null ||
+             dartPluginClass != null ||
+             defaultPackage != null ||
+             (ffiPlugin ?? false),
+       );
 
   final String name;
   final String path;

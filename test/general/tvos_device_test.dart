@@ -13,11 +13,12 @@ import '../src/common.dart';
 void main() {
   group('TvosSimulatorLogReader', () {
     testWithoutContext('extracts eventMessage from JSON log', () async {
-      final TvosSimulatorLogReader reader = TvosSimulatorLogReader('test');
-      final List<String> lines = <String>[];
+      final reader = TvosSimulatorLogReader('test');
+      final lines = <String>[];
       reader.logLines.listen(lines.add);
 
-      const String logLine = '{ "eventMessage" : "flutter: The Dart VM service is listening on http:\\/\\/127.0.0.1:12345\\/abc=\\/" }';
+      const logLine =
+          r'{ "eventMessage" : "flutter: The Dart VM service is listening on http:\/\/127.0.0.1:12345\/abc=\/" }';
       reader.processLogLine(logLine);
       await Future<void>.delayed(Duration.zero);
 
@@ -29,8 +30,8 @@ void main() {
     });
 
     testWithoutContext('ignores lines without eventMessage', () async {
-      final TvosSimulatorLogReader reader = TvosSimulatorLogReader('test');
-      final List<String> lines = <String>[];
+      final reader = TvosSimulatorLogReader('test');
+      final lines = <String>[];
       reader.logLines.listen(lines.add);
 
       reader.processLogLine('Filtering the log data using "senderImagePath ENDSWITH"');
@@ -44,8 +45,8 @@ void main() {
     });
 
     testWithoutContext('handles flutter print output', () async {
-      final TvosSimulatorLogReader reader = TvosSimulatorLogReader('test');
-      final List<String> lines = <String>[];
+      final reader = TvosSimulatorLogReader('test');
+      final lines = <String>[];
       reader.logLines.listen(lines.add);
 
       reader.processLogLine('{ "eventMessage" : "flutter: Hello from Dart!" }');
@@ -60,7 +61,7 @@ void main() {
 
   group('TvosDevice', () {
     testWithoutContext('TvosDevice reports correct platform', () async {
-      final TvosDevice device = TvosDevice(
+      final device = TvosDevice(
         'test-id',
         name: 'Apple TV 4K',
         logger: BufferLogger.test(),
@@ -74,7 +75,7 @@ void main() {
     });
 
     testWithoutContext('TvosDevice physical device reports not emulator', () async {
-      final TvosDevice device = TvosDevice(
+      final device = TvosDevice(
         'physical-id',
         name: 'Apple TV',
         logger: BufferLogger.test(),
@@ -86,7 +87,7 @@ void main() {
     });
 
     testWithoutContext('TvosDevice supports expected build modes', () {
-      final TvosDevice device = TvosDevice(
+      final device = TvosDevice(
         'test-id',
         name: 'Apple TV 4K',
         logger: BufferLogger.test(),

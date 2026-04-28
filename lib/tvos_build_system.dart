@@ -2,22 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:flutter_tools/src/base/file_system.dart';
-import 'package:flutter_tools/src/base/logger.dart';
-import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/targets/dart_plugin_registrant.dart';
 
 class TvosBuildSystem extends FlutterBuildSystem {
   const TvosBuildSystem({
-    required FileSystem fileSystem,
-    required Platform platform,
-    required Logger logger,
-  }) : super(
-         fileSystem: fileSystem,
-         platform: platform,
-         logger: logger,
-       );
+    required super.fileSystem,
+    required super.platform,
+    required super.logger,
+  });
 
   @override
   Future<BuildResult> buildIncremental(
@@ -26,9 +19,11 @@ class TvosBuildSystem extends FlutterBuildSystem {
     BuildResult? previousBuild,
   ) {
     if (target is CompositeTarget) {
-      target = CompositeTarget(target.dependencies
-          .where((Target target) => target is! DartPluginRegistrantTarget)
-          .toList());
+      target = CompositeTarget(
+        target.dependencies
+            .where((Target target) => target is! DartPluginRegistrantTarget)
+            .toList(),
+      );
     }
     return super.buildIncremental(target, environment, previousBuild);
   }

@@ -5,13 +5,13 @@
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/base/analyze_size.dart';
 import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/dart/package_map.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
-import 'package:flutter_tools/src/base/logger.dart';
 
 import 'build_targets/application.dart';
 import 'tvos_build_info.dart';
@@ -28,7 +28,7 @@ class TvosBuilder {
     required String targetFile,
     SizeAnalyzer? sizeAnalyzer,
   }) async {
-    final TvosProject tvosProject = TvosProject.fromFlutter(project);
+    final tvosProject = TvosProject.fromFlutter(project);
     if (!tvosProject.existsSync()) {
       throwToolExit(
         'This project is not configured for tvOS.\n'
@@ -43,7 +43,7 @@ class TvosBuilder {
     // Used by AotElfBase to generate an AOT snapshot.
     final String targetPlatformName = getNameForTargetPlatform(TargetPlatform.ios);
 
-    final Environment environment = Environment(
+    final environment = Environment(
       projectDir: project.directory,
       outputDir: outputDir,
       buildDir: project.dartTool.childDirectory('flutter_build'),
@@ -92,7 +92,8 @@ class TvosBuilder {
     writeTvosDartPluginRegistrant(project);
 
     final Status status = globals.logger.startProgress(
-        'Building a tvOS application in $buildModeName mode for ${tvosBuildInfo.targetArch} target...');
+      'Building a tvOS application in $buildModeName mode for ${tvosBuildInfo.targetArch} target...',
+    );
     try {
       final BuildResult result = await globals.buildSystem.build(target, environment);
       if (!result.success) {

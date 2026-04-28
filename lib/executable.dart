@@ -7,14 +7,16 @@
 import 'dart:io';
 
 import 'package:flutter_tools/runner.dart' as runner;
+import 'package:flutter_tools/src/android/android_workflow.dart';
+import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/context.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/template.dart';
 import 'package:flutter_tools/src/build_system/build_targets.dart';
-import 'package:flutter_tools/src/isolated/build_targets.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/commands/assemble.dart';
 import 'package:flutter_tools/src/commands/config.dart';
 import 'package:flutter_tools/src/commands/doctor.dart';
 import 'package:flutter_tools/src/commands/emulators.dart';
@@ -23,16 +25,14 @@ import 'package:flutter_tools/src/commands/install.dart';
 import 'package:flutter_tools/src/commands/logs.dart';
 import 'package:flutter_tools/src/commands/screenshot.dart';
 import 'package:flutter_tools/src/commands/symbolize.dart';
-import 'package:flutter_tools/src/commands/assemble.dart';
-import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/isolated/build_targets.dart';
 import 'package:flutter_tools/src/isolated/mustache_template.dart';
-import 'package:flutter_tools/src/runner/flutter_command.dart';
-import 'package:flutter_tools/src/android/android_workflow.dart';
 import 'package:flutter_tools/src/macos/macos_workflow.dart';
+import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/windows/windows_workflow.dart';
 import 'package:path/path.dart';
 
@@ -54,14 +54,16 @@ import 'tvos_logger.dart';
 
 /// Main entry point for commands.
 ///
-/// Source: [flutter.main] in `executable.dart` (some commands and options were omitted)
+/// Source: `flutter.main` in `executable.dart` (some commands and options were omitted)
 Future<void> main(List<String> args) async {
   final bool veryVerbose = args.contains('-vv');
   final bool verbose = args.contains('-v') || args.contains('--verbose') || veryVerbose;
 
-  final bool doctor = (args.isNotEmpty && args.first == 'doctor') ||
+  final bool doctor =
+      (args.isNotEmpty && args.first == 'doctor') ||
       (args.length == 2 && verbose && args.last == 'doctor');
-  final bool help = args.contains('-h') ||
+  final bool help =
+      args.contains('-h') ||
       args.contains('--help') ||
       (args.isNotEmpty && args.first == 'help') ||
       (args.length == 1 && verbose);
@@ -90,10 +92,7 @@ Future<void> main(List<String> args) async {
         processManager: globals.processManager,
       ),
       InstallCommand(verboseHelp: verboseHelp),
-      LogsCommand(
-        sigint: ProcessSignal.sigint,
-        sigterm: ProcessSignal.sigterm,
-      ),
+      LogsCommand(sigint: ProcessSignal.sigint, sigterm: ProcessSignal.sigterm),
       ScreenshotCommand(fs: globals.fs),
       SymbolizeCommand(stdio: globals.stdio, fileSystem: globals.fs),
       AssembleCommand(verboseHelp: verboseHelp, buildSystem: globals.buildSystem),
@@ -146,75 +145,66 @@ Future<void> main(List<String> args) async {
       ApplicationPackageFactory: () => TvosApplicationPackageFactory(),
       BuildTargets: () => const BuildTargetsImpl(),
       Cache: () => TvosFlutterCache(
-            fileSystem: globals.fs,
-            logger: globals.logger,
-            platform: globals.platform,
-            osUtils: globals.os,
-            projectFactory: globals.projectFactory,
-            processManager: globals.processManager,
-          ),
+        fileSystem: globals.fs,
+        logger: globals.logger,
+        platform: globals.platform,
+        osUtils: globals.os,
+        projectFactory: globals.projectFactory,
+        processManager: globals.processManager,
+      ),
       TemplateRenderer: () => const MustacheTemplateRenderer(),
       Artifacts: () => TvosArtifacts(
-            fileSystem: globals.fs,
-            cache: globals.cache,
-            platform: globals.platform,
-            operatingSystemUtils: globals.os,
-          ),
+        fileSystem: globals.fs,
+        cache: globals.cache,
+        platform: globals.platform,
+        operatingSystemUtils: globals.os,
+      ),
       DoctorValidatorsProvider: () => TvosDoctorValidatorsProvider(),
-      TvosWorkflow: () => TvosWorkflow(
-            operatingSystemUtils: globals.os,
-          ),
+      TvosWorkflow: () => TvosWorkflow(operatingSystemUtils: globals.os),
       DeviceManager: () => TvosDeviceManager(
-            logger: globals.logger,
-            processManager: globals.processManager,
-            platform: globals.platform,
-            androidSdk: globals.androidSdk,
-            iosSimulatorUtils: globals.iosSimulatorUtils!,
-            featureFlags: featureFlags,
-            fileSystem: globals.fs,
-            iosWorkflow: globals.iosWorkflow!,
-            artifacts: globals.artifacts!,
-            flutterVersion: globals.flutterVersion,
-            androidWorkflow: AndroidWorkflow(
-              androidSdk: globals.androidSdk,
-              featureFlags: featureFlags,
-            ),
-            xcDevice: globals.xcdevice!,
-            userMessages: globals.userMessages,
-            windowsWorkflow: WindowsWorkflow(
-              featureFlags: featureFlags,
-              platform: globals.platform,
-            ),
-            macOSWorkflow: MacOSWorkflow(
-              platform: globals.platform,
-              featureFlags: featureFlags,
-            ),
-            operatingSystemUtils: globals.os,
-            customDevicesConfig: globals.customDevicesConfig,
-            nativeAssetsBuilder: globals.nativeAssetsBuilder,
-            tvosWorkflow: tvosWorkflow!,
-          ),
-      TvosValidator: () => TvosValidator(
-            processManager: globals.processManager,
-            userMessages: globals.userMessages,
-          ),
+        logger: globals.logger,
+        processManager: globals.processManager,
+        platform: globals.platform,
+        androidSdk: globals.androidSdk,
+        iosSimulatorUtils: globals.iosSimulatorUtils!,
+        featureFlags: featureFlags,
+        fileSystem: globals.fs,
+        iosWorkflow: globals.iosWorkflow!,
+        artifacts: globals.artifacts!,
+        flutterVersion: globals.flutterVersion,
+        androidWorkflow: AndroidWorkflow(
+          androidSdk: globals.androidSdk,
+          featureFlags: featureFlags,
+        ),
+        xcDevice: globals.xcdevice!,
+        userMessages: globals.userMessages,
+        windowsWorkflow: WindowsWorkflow(featureFlags: featureFlags, platform: globals.platform),
+        macOSWorkflow: MacOSWorkflow(platform: globals.platform, featureFlags: featureFlags),
+        operatingSystemUtils: globals.os,
+        customDevicesConfig: globals.customDevicesConfig,
+        nativeAssetsBuilder: globals.nativeAssetsBuilder,
+        tvosWorkflow: tvosWorkflow!,
+      ),
+      TvosValidator: () => TvosValidator(processManager: globals.processManager),
       // Always wrap the logger with TvosCategoryRewritingLogger so the
       // device list shows `(tv)` instead of `(mobile)` for tvOS devices.
       // The wrapper is a no-op on every other line. In verbose mode,
       // VerboseLogger sits inside ours so timestamps still apply.
       Logger: () => TvosCategoryRewritingLogger(
-            verbose && !muteCommandLogging
-                ? VerboseLogger(StdoutLogger(
-                    stdio: globals.stdio,
-                    terminal: globals.terminal,
-                    outputPreferences: globals.outputPreferences,
-                  ))
-                : StdoutLogger(
-                    stdio: globals.stdio,
-                    terminal: globals.terminal,
-                    outputPreferences: globals.outputPreferences,
-                  ),
-          ),
+        verbose && !muteCommandLogging
+            ? VerboseLogger(
+                StdoutLogger(
+                  stdio: globals.stdio,
+                  terminal: globals.terminal,
+                  outputPreferences: globals.outputPreferences,
+                ),
+              )
+            : StdoutLogger(
+                stdio: globals.stdio,
+                terminal: globals.terminal,
+                outputPreferences: globals.outputPreferences,
+              ),
+      ),
     },
     shutdownHooks: globals.shutdownHooks,
   );
@@ -223,8 +213,5 @@ Future<void> main(List<String> args) async {
 /// See: [Cache.defaultFlutterRoot] in `cache.dart`
 String get rootPath {
   final String scriptPath = Platform.script.toFilePath();
-  return normalize(join(
-    scriptPath,
-    scriptPath.endsWith('.snapshot') ? '../../..' : '../..',
-  ));
+  return normalize(join(scriptPath, scriptPath.endsWith('.snapshot') ? '../../..' : '../..'));
 }

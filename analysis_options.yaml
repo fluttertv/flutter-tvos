@@ -13,6 +13,10 @@ analyzer:
     - "flutter/packages/flutter_web_plugins/**"
     - "flutter/packages/fuchsia_remote_debug_protocol/**"
     - "flutter/packages/integration_test/**"
+    # `proxy_root/` contains symlinks pointing into `flutter/packages/...`. The
+    # globs above don't match through symlinks, so analyse-resolved paths still
+    # land in the SDK trees. Exclude the proxy tree explicitly.
+    - "proxy_root/**"
 
 linter:
   rules:

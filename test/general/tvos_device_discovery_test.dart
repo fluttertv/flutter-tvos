@@ -14,13 +14,10 @@ void main() {
   late TvosDeviceDiscovery discovery;
 
   setUp(() {
-    final TvosWorkflow workflow = TvosWorkflow(
+    final workflow = TvosWorkflow(
       operatingSystemUtils: FakeOperatingSystemUtils(hostPlatform: HostPlatform.darwin_arm64),
     );
-    discovery = TvosDeviceDiscovery(
-      tvosWorkflow: workflow,
-      logger: BufferLogger.test(),
-    );
+    discovery = TvosDeviceDiscovery(tvosWorkflow: workflow, logger: BufferLogger.test());
   });
 
   testWithoutContext('supportsPlatform reflects workflow capability', () {

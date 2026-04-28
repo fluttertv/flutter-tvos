@@ -41,22 +41,17 @@ class TvosDeviceManager extends FlutterDeviceManager {
 
   @override
   List<DeviceDiscovery> get deviceDiscoverers => <DeviceDiscovery>[
-        ...super.deviceDiscoverers,
-        TvosDeviceDiscovery(
-          tvosWorkflow: tvosWorkflow,
-          logger: globals.logger,
-        ),
-      ];
+    ...super.deviceDiscoverers,
+    TvosDeviceDiscovery(tvosWorkflow: tvosWorkflow, logger: globals.logger),
+  ];
 }
 
 /// Discovers tvOS devices and simulators via `xcrun simctl`.
 class TvosDeviceDiscovery extends PollingDeviceDiscovery {
-  TvosDeviceDiscovery({
-    required TvosWorkflow tvosWorkflow,
-    required Logger logger,
-  })  : _tvosWorkflow = tvosWorkflow,
-        _logger = logger,
-        super('tvOS devices');
+  TvosDeviceDiscovery({required TvosWorkflow tvosWorkflow, required Logger logger})
+    : _tvosWorkflow = tvosWorkflow,
+      _logger = logger,
+      super('tvOS devices');
 
   final TvosWorkflow _tvosWorkflow;
   final Logger _logger;
@@ -71,8 +66,11 @@ class TvosDeviceDiscovery extends PollingDeviceDiscovery {
   List<String> get wellKnownIds => const <String>[];
 
   @override
-  Future<List<Device>> pollingGetDevices({Duration? timeout, bool forWirelessDiscovery = false}) async {
-    final List<Device> devices = <Device>[];
+  Future<List<Device>> pollingGetDevices({
+    Duration? timeout,
+    bool forWirelessDiscovery = false,
+  }) async {
+    final devices = <Device>[];
 
     try {
       devices.addAll(await TvosEmulator.getConnectedSimulators(_logger));

@@ -2,19 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:flutter_tools/src/commands/create.dart';
-import 'package:flutter_tools/src/commands/create_base.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/cache.dart';
-import 'package:flutter_tools/src/ios/code_signing.dart';
-import 'package:flutter_tools/src/template.dart';
+import 'package:flutter_tools/src/commands/create.dart';
+import 'package:flutter_tools/src/commands/create_base.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/ios/code_signing.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_tools/src/template.dart';
 
 class TvosCreateCommand extends CreateCommand {
-  TvosCreateCommand({
-    required super.verboseHelp,
-  });
+  TvosCreateCommand({required super.verboseHelp});
 
   @override
   Future<FlutterCommandResult> runCommand() async {
@@ -66,7 +64,7 @@ class TvosCreateCommand extends CreateCommand {
       );
 
       globals.logger.printStatus('Generating tvOS application...');
-      final Template template = Template(
+      final template = Template(
         templateDir,
         templateDir,
         fileSystem: globals.fs,
@@ -74,28 +72,25 @@ class TvosCreateCommand extends CreateCommand {
         templateRenderer: globals.templateRenderer,
       );
 
-      template.render(
-        targetDir,
-        <String, Object>{
-          'organization': organization,
-          'projectName': name,
-          'titleCaseProjectName': name.substring(0, 1).toUpperCase() + name.substring(1),
-          'tvosIdentifier': tvosIdentifier,
-          'withRootModule': true,
-          'withPlatformChannelPluginHook': true,
-          'withPluginHook': true,
-          'withFfiPluginHook': true,
-          'withFfiPackage': true,
-          'withSwiftPackageManager': true,
-          'swiftPackageManagerEnabled': true,
-          'cocoapodsEnabled': true,
-          'pluginClass': 'DummyPlugin',
-          'pluginClassSnakeCase': 'dummy_plugin',
-          'pluginProjectName': 'dummy_plugin',
-          'hasTvosDevelopmentTeam': developmentTeam != null && developmentTeam.isNotEmpty,
-          'tvosDevelopmentTeam': developmentTeam ?? '',
-        },
-      );
+      template.render(targetDir, <String, Object>{
+        'organization': organization,
+        'projectName': name,
+        'titleCaseProjectName': name.substring(0, 1).toUpperCase() + name.substring(1),
+        'tvosIdentifier': tvosIdentifier,
+        'withRootModule': true,
+        'withPlatformChannelPluginHook': true,
+        'withPluginHook': true,
+        'withFfiPluginHook': true,
+        'withFfiPackage': true,
+        'withSwiftPackageManager': true,
+        'swiftPackageManagerEnabled': true,
+        'cocoapodsEnabled': true,
+        'pluginClass': 'DummyPlugin',
+        'pluginClassSnakeCase': 'dummy_plugin',
+        'pluginProjectName': 'dummy_plugin',
+        'hasTvosDevelopmentTeam': developmentTeam != null && developmentTeam.isNotEmpty,
+        'tvosDevelopmentTeam': developmentTeam ?? '',
+      });
 
       final File podfileSrc = templateDir.childFile('Podfile');
       if (podfileSrc.existsSync()) {
@@ -132,7 +127,7 @@ class TvosCreateCommand extends CreateCommand {
           .map((String part) => part.isEmpty ? '' : part[0].toUpperCase() + part.substring(1))
           .join();
 
-      final Template template = Template(
+      final template = Template(
         templateDir,
         templateDir,
         fileSystem: globals.fs,
@@ -140,14 +135,11 @@ class TvosCreateCommand extends CreateCommand {
         templateRenderer: globals.templateRenderer,
       );
 
-      template.render(
-        targetDir,
-        <String, Object>{
-          'projectName': name,
-          'pluginClass': pluginClass,
-          'description': 'A new Flutter tvOS plugin project.',
-        },
-      );
+      template.render(targetDir, <String, Object>{
+        'projectName': name,
+        'pluginClass': pluginClass,
+        'description': 'A new Flutter tvOS plugin project.',
+      });
     }
 
     // Patch pubspec.yaml to add tvOS platform declaration
@@ -158,11 +150,11 @@ class TvosCreateCommand extends CreateCommand {
 
   /// Adds tvOS platform entry to the plugin's pubspec.yaml.
   void _patchPluginPubspec(String projectDirPath, String name) {
-    final File pubspecFile = globals.fs.file(
-      globals.fs.path.join(projectDirPath, 'pubspec.yaml'),
-    );
+    final File pubspecFile = globals.fs.file(globals.fs.path.join(projectDirPath, 'pubspec.yaml'));
 
-    if (!pubspecFile.existsSync()) return;
+    if (!pubspecFile.existsSync()) {
+      return;
+    }
 
     String content = pubspecFile.readAsStringSync();
 
@@ -175,10 +167,11 @@ class TvosCreateCommand extends CreateCommand {
     // Add tvOS platform under flutter.plugin.platforms if not already present
     if (!content.contains('tvos:')) {
       // Find the platforms section and add tvOS
-      final RegExp platformsRegex = RegExp(r'(platforms:\s*\n)', multiLine: true);
+      final platformsRegex = RegExp(r'(platforms:\s*\n)', multiLine: true);
       final Match? match = platformsRegex.firstMatch(content);
       if (match != null) {
-        final String insertion = '${match.group(0)}'
+        final insertion =
+            '${match.group(0)}'
             '        tvos:\n'
             '          pluginClass: $pluginClass\n';
         content = content.replaceFirst(match.group(0)!, insertion);
@@ -188,4 +181,3 @@ class TvosCreateCommand extends CreateCommand {
     }
   }
 }
-

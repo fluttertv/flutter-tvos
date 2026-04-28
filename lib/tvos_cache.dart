@@ -41,9 +41,9 @@ Directory _localArtifactArchiveDirectory(FileSystem fileSystem) {
 mixin TvosRequiredArtifacts on FlutterCommand {
   @override
   Future<Set<DevelopmentArtifact>> get requiredArtifacts async => <DevelopmentArtifact>{
-        ...await super.requiredArtifacts,
-        TvosDevelopmentArtifact.tvos,
-      };
+    ...await super.requiredArtifacts,
+    TvosDevelopmentArtifact.tvos,
+  };
 }
 
 /// See: [DevelopmentArtifact] in `cache.dart`
@@ -53,8 +53,11 @@ class TvosDevelopmentArtifact implements DevelopmentArtifact {
   @override
   final String name;
 
+  // [DevelopmentArtifact] declares `feature` so we must override it. tvOS isn't
+  // gated behind a Flutter feature flag, so this is intentionally null and a
+  // getter (rather than a field initializer) keeps the class const-friendly.
   @override
-  final Feature? feature = null;
+  Feature? get feature => null;
 
   static const DevelopmentArtifact tvos = TvosDevelopmentArtifact._('tvos');
 }
@@ -69,12 +72,9 @@ class TvosFlutterCache extends FlutterCache {
     required super.projectFactory,
     required ProcessManager processManager,
   }) : super(logger: logger, platform: platform) {
-    registerArtifact(TvosEngineArtifacts(
-      this,
-      logger: logger,
-      platform: platform,
-      processManager: processManager,
-    ));
+    registerArtifact(
+      TvosEngineArtifacts(this, logger: logger, platform: platform, processManager: processManager),
+    );
   }
 }
 
@@ -93,14 +93,10 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     required Logger logger,
     required Platform platform,
     required ProcessManager processManager,
-  })  : _logger = logger,
-        _platform = platform,
-        _processUtils = ProcessUtils(processManager: processManager, logger: logger),
-        super(
-          kTvosEngineStampName,
-          cache,
-          TvosDevelopmentArtifact.tvos,
-        );
+  }) : _logger = logger,
+       _platform = platform,
+       _processUtils = ProcessUtils(processManager: processManager, logger: logger),
+       super(kTvosEngineStampName, cache, TvosDevelopmentArtifact.tvos);
 
   final Logger _logger;
   final Platform _platform;
@@ -148,18 +144,18 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
 
   /// Full download URL for a given zip file.
   String artifactDownloadUrl(String zipName) {
-    return '${engineBaseUrl}/$releaseTag/$zipName';
+    return '$engineBaseUrl/$releaseTag/$zipName';
   }
 
   @override
   List<List<String>> getBinaryDirs() => <List<String>>[
-        <String>['tvos_debug_arm64', ''],
-        <String>['tvos_debug_sim_arm64', ''],
-        <String>['tvos_profile_arm64', ''],
-        <String>['tvos_release_arm64', ''],
-        <String>['host_debug_unopt', ''],
-        <String>['host_release', ''],
-      ];
+    <String>['tvos_debug_arm64', ''],
+    <String>['tvos_debug_sim_arm64', ''],
+    <String>['tvos_profile_arm64', ''],
+    <String>['tvos_release_arm64', ''],
+    <String>['host_debug_unopt', ''],
+    <String>['host_release', ''],
+  ];
 
   @override
   List<String> getLicenseDirs() => const <String>[];
@@ -181,26 +177,23 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
         .toList();
 
     if (localZips.isNotEmpty) {
-      _logger.printStatus(
-        'Using local tvOS engine artifacts from ${localArchiveDir.path}...',
-      );
+      _logger.printStatus('Using local tvOS engine artifacts from ${localArchiveDir.path}...');
       await _extractZips(localZips, fileSystem, operatingSystemUtils);
       return;
     }
 
     // --- Strategy 2: download from GitHub Releases ---
     final String tag = releaseTag;
-    _logger.printStatus(
-      'Downloading tvOS engine artifacts ($tag) from GitHub Releases...',
-    );
+    _logger.printStatus('Downloading tvOS engine artifacts ($tag) from GitHub Releases...');
 
     if (location.existsSync()) {
       location.deleteSync(recursive: true);
     }
     location.createSync(recursive: true);
 
-    final Directory tempDir = fileSystem.systemTempDirectory
-        .createTempSync('flutter_tvos_artifacts.');
+    final Directory tempDir = fileSystem.systemTempDirectory.createTempSync(
+      'flutter_tvos_artifacts.',
+    );
 
     try {
       for (final String zipName in _artifactZipNames) {
@@ -211,8 +204,8 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
 
         final RunResult curlResult = await _processUtils.run(<String>[
           'curl',
-          '--location',        // follow redirects
-          '--fail',            // fail on HTTP errors (4xx, 5xx)
+          '--location', // follow redirects
+          '--fail', // fail on HTTP errors (4xx, 5xx)
           '--silent',
           '--show-error',
           '--output', tempZip.path,
@@ -231,13 +224,15 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
 
         _logger.printStatus('  Extracting $zipName...');
         final RunResult unzipResult = await _processUtils.run(<String>[
-          'unzip', '-q', tempZip.path, '-d', location.path,
+          'unzip',
+          '-q',
+          tempZip.path,
+          '-d',
+          location.path,
         ]);
 
         if (unzipResult.exitCode != 0) {
-          throwToolExit(
-            'Failed to extract $zipName.\n\n${unzipResult.stderr}',
-          );
+          throwToolExit('Failed to extract $zipName.\n\n${unzipResult.stderr}');
         }
       }
     } finally {
@@ -264,14 +259,16 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     }
     location.createSync(recursive: true);
 
-    for (final File zip in zips) {
+    for (final zip in zips) {
       final RunResult result = await _processUtils.run(<String>[
-        'unzip', '-q', zip.path, '-d', location.path,
+        'unzip',
+        '-q',
+        zip.path,
+        '-d',
+        location.path,
       ]);
       if (result.exitCode != 0) {
-        throwToolExit(
-          'Failed to extract ${zip.basename}.\n\n${result.stderr}',
-        );
+        throwToolExit('Failed to extract ${zip.basename}.\n\n${result.stderr}');
       }
     }
 

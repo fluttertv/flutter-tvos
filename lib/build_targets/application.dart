@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart' show Status;
@@ -10,7 +11,6 @@ import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
 import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
-import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 
@@ -22,7 +22,7 @@ import '../tvos_plugins.dart';
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with tvOS-
 /// aware plugin registrations, as a proper build target.
 ///
-/// This replaces Flutter's stock [DartPluginRegistrantTarget] in our build
+/// This replaces Flutter's stock `DartPluginRegistrantTarget` in our build
 /// graph (via [TvosKernelSnapshot]) so that the file the frontend-server
 /// reads via `--source=dart_plugin_registrant.dart` contains entries for
 /// plugins declared under `flutter.plugin.platforms.tvos` — not the iOS
@@ -40,21 +40,20 @@ class TvosDartPluginRegistrantTarget extends Target {
 
   @override
   List<Source> get inputs => const <Source>[
-        Source.pattern('{WORKSPACE_DIR}/.dart_tool/package_config.json'),
-      ];
+    Source.pattern('{WORKSPACE_DIR}/.dart_tool/package_config.json'),
+  ];
 
   @override
   List<Source> get outputs => const <Source>[
-        // Flutter's KernelCompiler reads this path when
-        // checkDartPluginRegistry is true. See
-        // `compile.dart:buildDir.parent.childFile('dart_plugin_registrant.dart')`.
-        Source.pattern('{BUILD_DIR}/../dart_plugin_registrant.dart'),
-      ];
+    // Flutter's KernelCompiler reads this path when
+    // checkDartPluginRegistry is true. See
+    // `compile.dart:buildDir.parent.childFile('dart_plugin_registrant.dart')`.
+    Source.pattern('{BUILD_DIR}/../dart_plugin_registrant.dart'),
+  ];
 
   @override
   Future<void> build(Environment environment) async {
-    final FlutterProject project =
-        FlutterProject.fromDirectory(environment.projectDir);
+    final FlutterProject project = FlutterProject.fromDirectory(environment.projectDir);
     writeTvosDartPluginRegistrant(project);
   }
 }
@@ -78,16 +77,16 @@ class TvosKernelSnapshot extends KernelSnapshot {
 
   @override
   List<Target> get dependencies => const <Target>[
-        GenerateLocalizationsTarget(),
-        TvosDartPluginRegistrantTarget(),
-      ];
+    GenerateLocalizationsTarget(),
+    TvosDartPluginRegistrantTarget(),
+  ];
 }
 
 /// [AotElfRelease] subclass that uses [TvosKernelSnapshot] instead of the
 /// stock [KernelSnapshot], so AOT release builds also link the tvOS
 /// registrant into the compiled kernel.
 class TvosAotElfRelease extends AotElfRelease {
-  const TvosAotElfRelease(TargetPlatform targetPlatform) : super(targetPlatform);
+  const TvosAotElfRelease(super.targetPlatform);
 
   @override
   List<Target> get dependencies => const <Target>[TvosKernelSnapshot()];
@@ -99,7 +98,7 @@ class TvosAotElfRelease extends AotElfRelease {
 /// This matters because `dependencies` is how the build graph reaches
 /// transitively-needed targets. If we left stock [CopyFlutterBundle] in the
 /// graph, its `dependencies` list would drag [KernelSnapshot] in — which in
-/// turn drags upstream [DartPluginRegistrantTarget] in — and THAT target
+/// turn drags upstream `DartPluginRegistrantTarget` in — and THAT target
 /// regenerates `dart_plugin_registrant.dart` from iOS-plugin data,
 /// overwriting our tvOS-correct file before frontend-server reads it.
 class TvosCopyFlutterBundle extends CopyFlutterBundle {
@@ -107,10 +106,10 @@ class TvosCopyFlutterBundle extends CopyFlutterBundle {
 
   @override
   List<Target> get dependencies => const <Target>[
-        DartBuildForNative(),
-        TvosKernelSnapshot(),
-        InstallCodeAssets(),
-      ];
+    DartBuildForNative(),
+    TvosKernelSnapshot(),
+    InstallCodeAssets(),
+  ];
 }
 
 class DebugTvosApplication extends Target {
@@ -122,10 +121,7 @@ class DebugTvosApplication extends Target {
   String get name => 'debug_tvos_application';
 
   @override
-  List<Target> get dependencies => const <Target>[
-        TvosKernelSnapshot(),
-        TvosCopyFlutterBundle(),
-      ];
+  List<Target> get dependencies => const <Target>[TvosKernelSnapshot(), TvosCopyFlutterBundle()];
 
   @override
   List<Source> get inputs => const <Source>[];
@@ -149,15 +145,15 @@ class ReleaseTvosApplication extends Target {
 
   @override
   List<Target> get dependencies => const <Target>[
-        // We do AOT compilation ourselves in NativeTvosBundle._compileAotSnapshot
-        // (gen_snapshot → assembly → clang → App.framework) because upstream
-        // AotElfRelease throws "Null check operator used on a null value" when
-        // TargetPlatform == ios but no darwinArch is plumbed through. Just
-        // depend on the kernel snapshot — the AOT step reads app.dill from the
-        // build output dir.
-        TvosKernelSnapshot(),
-        TvosCopyFlutterBundle(),
-      ];
+    // We do AOT compilation ourselves in NativeTvosBundle._compileAotSnapshot
+    // (gen_snapshot → assembly → clang → App.framework) because upstream
+    // AotElfRelease throws "Null check operator used on a null value" when
+    // TargetPlatform == ios but no darwinArch is plumbed through. Just
+    // depend on the kernel snapshot — the AOT step reads app.dill from the
+    // build output dir.
+    TvosKernelSnapshot(),
+    TvosCopyFlutterBundle(),
+  ];
 
   @override
   List<Source> get inputs => const <Source>[];
@@ -191,9 +187,9 @@ class NativeTvosBundle extends Target {
 
   @override
   List<Target> get dependencies => <Target>[
-        if (buildInfo.buildInfo.isDebug) DebugTvosApplication(buildInfo),
-        if (!buildInfo.buildInfo.isDebug) ReleaseTvosApplication(buildInfo),
-      ];
+    if (buildInfo.buildInfo.isDebug) DebugTvosApplication(buildInfo),
+    if (!buildInfo.buildInfo.isDebug) ReleaseTvosApplication(buildInfo),
+  ];
 
   @override
   List<Source> get inputs => const <Source>[];
@@ -245,10 +241,7 @@ class NativeTvosBundle extends Target {
         final ProcessResult podResult = await globals.processManager.run(
           <String>['pod', 'install'],
           workingDirectory: tvosProjectDir.path,
-          environment: <String, String>{
-            'LANG': 'en_US.UTF-8',
-            'LC_ALL': 'en_US.UTF-8',
-          },
+          environment: <String, String>{'LANG': 'en_US.UTF-8', 'LC_ALL': 'en_US.UTF-8'},
         );
         if (podResult.exitCode != 0) {
           throw Exception('pod install failed:\n${podResult.stderr}');
@@ -261,46 +254,37 @@ class NativeTvosBundle extends Target {
     // 7. Run xcodebuild — wrap in a Status spinner so the user sees the
     //    same "Running Xcode build... / Xcode build done." cadence stock
     //    `flutter run` for iOS produces.
-    globals.logger.printTrace(
-      'Executing xcodebuild for tvOS (${buildInfo.sdkName})...',
-    );
+    globals.logger.printTrace('Executing xcodebuild for tvOS (${buildInfo.sdkName})...');
 
-    final String configuration = buildInfo.buildInfo.isDebug ? 'Debug' : 'Release';
-    final String symroot = project.directory
-        .childDirectory('build')
-        .childDirectory('tvos')
-        .path;
+    final configuration = buildInfo.buildInfo.isDebug ? 'Debug' : 'Release';
+    final String symroot = project.directory.childDirectory('build').childDirectory('tvos').path;
 
     final bool hasWorkspace = tvosProjectDir.childDirectory('Runner.xcworkspace').existsSync();
 
     // Code signing settings for physical device builds
-    final List<String> signingArgs = await _resolveSigningArgs(
-      tvosProjectDir,
-      buildInfo.simulator,
-    );
+    final List<String> signingArgs = await _resolveSigningArgs(tvosProjectDir, buildInfo.simulator);
 
     final Status xcodeStatus = globals.logger.startProgress('Running Xcode build...');
     ProcessResult result;
     try {
-      result = await globals.processManager.run(
-        <String>[
-          'xcodebuild',
-          if (hasWorkspace) ...<String>[
-            '-workspace', 'Runner.xcworkspace',
-          ] else ...<String>[
-            '-project', 'Runner.xcodeproj',
-          ],
-          '-scheme', 'Runner',
-          '-configuration', configuration,
-          '-sdk', buildInfo.sdkName,
-          'SYMROOT=$symroot',
-          'COMPILER_INDEX_STORE_ENABLE=NO',
-          'ARCHS=arm64',
-          ...signingArgs,
-          'build',
+      result = await globals.processManager.run(<String>[
+        'xcodebuild',
+        if (hasWorkspace) ...<String>['-workspace', 'Runner.xcworkspace'] else ...<String>[
+          '-project',
+          'Runner.xcodeproj',
         ],
-        workingDirectory: tvosProjectDir.path,
-      );
+        '-scheme',
+        'Runner',
+        '-configuration',
+        configuration,
+        '-sdk',
+        buildInfo.sdkName,
+        'SYMROOT=$symroot',
+        'COMPILER_INDEX_STORE_ENABLE=NO',
+        'ARCHS=arm64',
+        ...signingArgs,
+        'build',
+      ], workingDirectory: tvosProjectDir.path);
     } finally {
       xcodeStatus.stop();
     }
@@ -313,7 +297,7 @@ class NativeTvosBundle extends Target {
     }
     globals.logger.printStatus('Xcode build done.');
 
-    final String platformSuffix = buildInfo.simulator
+    final platformSuffix = buildInfo.simulator
         ? '$configuration-appletvsimulator'
         : '$configuration-appletvos';
 
@@ -339,13 +323,14 @@ class NativeTvosBundle extends Target {
           destAppFramework.deleteSync(recursive: true);
         }
         // Use `cp -R` to preserve structure / symlinks.
-        final ProcessResult cpResult = await globals.processManager.run(
-          <String>['cp', '-R', generatedAppFramework.path, destFrameworks.path],
-        );
+        final ProcessResult cpResult = await globals.processManager.run(<String>[
+          'cp',
+          '-R',
+          generatedAppFramework.path,
+          destFrameworks.path,
+        ]);
         if (cpResult.exitCode != 0) {
-          throw Exception(
-            'Failed to embed App.framework into Runner.app: ${cpResult.stderr}',
-          );
+          throw Exception('Failed to embed App.framework into Runner.app: ${cpResult.stderr}');
         }
 
         // Codesign App.framework for device builds. The on-device installer
@@ -361,26 +346,27 @@ class NativeTvosBundle extends Target {
               .childFile('Flutter');
           String? identity;
           if (flutterBinary.existsSync()) {
-            final ProcessResult displayResult = await globals.processManager.run(
-              <String>['codesign', '-d', '--verbose=2', flutterBinary.path],
-            );
+            final ProcessResult displayResult = await globals.processManager.run(<String>[
+              'codesign',
+              '-d',
+              '--verbose=2',
+              flutterBinary.path,
+            ]);
             // codesign writes its display info to stderr.
-            final String info = '${displayResult.stdout}\n${displayResult.stderr}';
-            final Match? authorityMatch =
-                RegExp(r'Authority=(.+)').firstMatch(info);
+            final info = '${displayResult.stdout}\n${displayResult.stderr}';
+            final Match? authorityMatch = RegExp(r'Authority=(.+)').firstMatch(info);
             identity = authorityMatch?.group(1)?.trim();
           }
           identity ??= 'Apple Development';
-          final ProcessResult signResult = await globals.processManager.run(
-            <String>[
-              'codesign',
-              '--force',
-              '--sign', identity,
-              '--timestamp=none',
-              '--generate-entitlement-der',
-              destAppFramework.path,
-            ],
-          );
+          final ProcessResult signResult = await globals.processManager.run(<String>[
+            'codesign',
+            '--force',
+            '--sign',
+            identity,
+            '--timestamp=none',
+            '--generate-entitlement-der',
+            destAppFramework.path,
+          ]);
           if (signResult.exitCode != 0) {
             globals.logger.printError(
               'codesign App.framework failed (identity="$identity"): ${signResult.stderr}',
@@ -391,9 +377,7 @@ class NativeTvosBundle extends Target {
       }
     }
 
-    globals.logger.printTrace(
-      'tvOS application built: build/tvos/$platformSuffix/Runner.app',
-    );
+    globals.logger.printTrace('tvOS application built: build/tvos/$platformSuffix/Runner.app');
   }
 
   /// Resolves code signing arguments for xcodebuild.
@@ -405,10 +389,7 @@ class NativeTvosBundle extends Target {
   /// 3. First Apple Development identity in the keychain
   ///
   /// Returns xcodebuild arguments like `DEVELOPMENT_TEAM=...` and `CODE_SIGN_STYLE=Automatic`.
-  Future<List<String>> _resolveSigningArgs(
-    Directory tvosProjectDir,
-    bool isSimulator,
-  ) async {
+  Future<List<String>> _resolveSigningArgs(Directory tvosProjectDir, bool isSimulator) async {
     if (isSimulator) {
       return const <String>[];
     }
@@ -417,30 +398,21 @@ class NativeTvosBundle extends Target {
     final String? envTeam = globals.platform.environment['DEVELOPMENT_TEAM'];
     if (envTeam != null && envTeam.isNotEmpty) {
       globals.logger.printTrace('Using DEVELOPMENT_TEAM from environment: $envTeam');
-      return <String>[
-        'DEVELOPMENT_TEAM=$envTeam',
-        'CODE_SIGN_STYLE=Automatic',
-      ];
+      return <String>['DEVELOPMENT_TEAM=$envTeam', 'CODE_SIGN_STYLE=Automatic'];
     }
 
     // 2. Check if the Xcode project already has a development team configured
     final String? pbxprojTeam = _readTeamFromPbxproj(tvosProjectDir);
     if (pbxprojTeam != null) {
       globals.logger.printTrace('Using DEVELOPMENT_TEAM from project.pbxproj: $pbxprojTeam');
-      return <String>[
-        'DEVELOPMENT_TEAM=$pbxprojTeam',
-        'CODE_SIGN_STYLE=Automatic',
-      ];
+      return <String>['DEVELOPMENT_TEAM=$pbxprojTeam', 'CODE_SIGN_STYLE=Automatic'];
     }
 
     // 3. Try to discover from keychain
     final String? keychainTeam = await _discoverTeamFromKeychain();
     if (keychainTeam != null) {
       globals.logger.printTrace('Auto-detected development team: $keychainTeam');
-      return <String>[
-        'DEVELOPMENT_TEAM=$keychainTeam',
-        'CODE_SIGN_STYLE=Automatic',
-      ];
+      return <String>['DEVELOPMENT_TEAM=$keychainTeam', 'CODE_SIGN_STYLE=Automatic'];
     }
 
     // No signing identity found — warn the user
@@ -459,10 +431,12 @@ class NativeTvosBundle extends Target {
     final File pbxproj = tvosProjectDir
         .childDirectory('Runner.xcodeproj')
         .childFile('project.pbxproj');
-    if (!pbxproj.existsSync()) return null;
+    if (!pbxproj.existsSync()) {
+      return null;
+    }
 
     final String content = pbxproj.readAsStringSync();
-    final RegExp teamRegex = RegExp(r'DEVELOPMENT_TEAM\s*=\s*([A-Z0-9]{10});');
+    final teamRegex = RegExp(r'DEVELOPMENT_TEAM\s*=\s*([A-Z0-9]{10});');
     final Match? match = teamRegex.firstMatch(content);
     return match?.group(1);
   }
@@ -471,16 +445,20 @@ class NativeTvosBundle extends Target {
   /// signing identity in the login keychain.
   Future<String?> _discoverTeamFromKeychain() async {
     try {
-      final ProcessResult result = await globals.processManager.run(
-        <String>[
-          'security', 'find-identity', '-v', '-p', 'codesigning',
-        ],
-      );
-      if (result.exitCode != 0) return null;
+      final ProcessResult result = await globals.processManager.run(<String>[
+        'security',
+        'find-identity',
+        '-v',
+        '-p',
+        'codesigning',
+      ]);
+      if (result.exitCode != 0) {
+        return null;
+      }
 
-      final String output = result.stdout as String;
+      final output = result.stdout as String;
       // Look for: "Apple Development: Name (TEAM_ID)"
-      final RegExp identityRegex = RegExp(r'Apple Development:.*\(([A-Z0-9]{10})\)');
+      final identityRegex = RegExp(r'Apple Development:.*\(([A-Z0-9]{10})\)');
       final Match? match = identityRegex.firstMatch(output);
       return match?.group(1);
     } on Exception {
@@ -491,7 +469,7 @@ class NativeTvosBundle extends Target {
   /// Copies the pre-built Flutter.framework from engine_artifacts into the
   /// tvos project's Flutter/ directory.
   void _copyFlutterFramework(Directory tvosProjectDir) {
-    final TvosArtifacts tvosArtifacts = globals.artifacts! as TvosArtifacts;
+    final tvosArtifacts = globals.artifacts! as TvosArtifacts;
     final EnvironmentType envType = buildInfo.simulator
         ? EnvironmentType.simulator
         : EnvironmentType.physical;
@@ -513,13 +491,14 @@ class NativeTvosBundle extends Target {
       targetFramework.parent.createSync(recursive: true);
 
       globals.processManager.runSync(<String>[
-        'cp', '-R', sourceFramework.path, targetFramework.path,
+        'cp',
+        '-R',
+        sourceFramework.path,
+        targetFramework.path,
       ]);
       globals.logger.printTrace('Copied Flutter.framework to ${targetFramework.path}');
     } else {
-      globals.logger.printError(
-        'Flutter.framework not found at $frameworkPath',
-      );
+      globals.logger.printError('Flutter.framework not found at $frameworkPath');
       throw Exception('Flutter.framework not found. Run flutter-tvos precache first.');
     }
   }
@@ -546,9 +525,7 @@ class NativeTvosBundle extends Target {
         .childDirectory('tvos_metallibs');
 
     if (sourceDir.existsSync()) {
-      globals.processManager.runSync(<String>[
-        'cp', '-R', sourceDir.path, targetDir.path,
-      ]);
+      globals.processManager.runSync(<String>['cp', '-R', sourceDir.path, targetDir.path]);
       globals.logger.printTrace('Copied tvos_metallibs to ${targetDir.path}');
     } else {
       globals.logger.printTrace(
@@ -593,16 +570,12 @@ class NativeTvosBundle extends Target {
         if (entity is File) {
           entity.copySync(destPath);
         } else if (entity is Directory) {
-          globals.processManager.runSync(<String>[
-            'cp', '-R', entity.path, destPath,
-          ]);
+          globals.processManager.runSync(<String>['cp', '-R', entity.path, destPath]);
         }
       }
       globals.logger.printTrace('Copied flutter_assets to ${flutterAssetsTarget.path}');
     } else {
-      globals.logger.printTrace(
-        'flutter_assets not found in build output, skipping.',
-      );
+      globals.logger.printTrace('flutter_assets not found in build output, skipping.');
     }
   }
 
@@ -666,7 +639,7 @@ class NativeTvosBundle extends Target {
   ) async {
     globals.logger.printTrace('Compiling AOT snapshot for tvOS...');
 
-    final TvosArtifacts tvosArtifacts = globals.artifacts! as TvosArtifacts;
+    final tvosArtifacts = globals.artifacts! as TvosArtifacts;
     final String genSnapshotPath = tvosArtifacts.getGenSnapshotPath(buildInfo.buildInfo.mode);
 
     if (!globals.fs.file(genSnapshotPath).existsSync()) {
@@ -698,15 +671,13 @@ class NativeTvosBundle extends Target {
     final String assemblyPath = globals.fs.path.join(aotDir.path, 'snapshot_assembly.S');
 
     // Run gen_snapshot to produce assembly
-    final ProcessResult genSnapshotResult = await globals.processManager.run(
-      <String>[
-        genSnapshotPath,
-        '--deterministic',
-        '--snapshot_kind=app-aot-assembly',
-        '--assembly=$assemblyPath',
-        kernelSnapshot.path,
-      ],
-    );
+    final ProcessResult genSnapshotResult = await globals.processManager.run(<String>[
+      genSnapshotPath,
+      '--deterministic',
+      '--snapshot_kind=app-aot-assembly',
+      '--assembly=$assemblyPath',
+      kernelSnapshot.path,
+    ]);
 
     if (genSnapshotResult.exitCode != 0) {
       globals.logger.printError('gen_snapshot failed:');
@@ -716,15 +687,18 @@ class NativeTvosBundle extends Target {
 
     // Compile assembly to object file
     final String objectPath = globals.fs.path.join(aotDir.path, 'snapshot_assembly.o');
-    final ProcessResult ccResult = await globals.processManager.run(
-      <String>[
-        'xcrun', 'cc',
-        '-arch', 'arm64',
-        '-isysroot', await _sdkPath(buildInfo.sdkName),
-        '-c', assemblyPath,
-        '-o', objectPath,
-      ],
-    );
+    final ProcessResult ccResult = await globals.processManager.run(<String>[
+      'xcrun',
+      'cc',
+      '-arch',
+      'arm64',
+      '-isysroot',
+      await _sdkPath(buildInfo.sdkName),
+      '-c',
+      assemblyPath,
+      '-o',
+      objectPath,
+    ]);
 
     if (ccResult.exitCode != 0) {
       globals.logger.printError('Assembly compilation failed:');
@@ -739,19 +713,28 @@ class NativeTvosBundle extends Target {
     appFramework.createSync(recursive: true);
 
     final String appBinaryPath = globals.fs.path.join(appFramework.path, 'App');
-    final ProcessResult linkResult = await globals.processManager.run(
-      <String>[
-        'xcrun', 'clang',
-        '-arch', 'arm64',
-        '-isysroot', await _sdkPath(buildInfo.sdkName),
-        '-dynamiclib',
-        '-Xlinker', '-rpath', '-Xlinker', '@executable_path/Frameworks',
-        '-Xlinker', '-rpath', '-Xlinker', '@loader_path/Frameworks',
-        '-install_name', '@rpath/App.framework/App',
-        '-o', appBinaryPath,
-        objectPath,
-      ],
-    );
+    final ProcessResult linkResult = await globals.processManager.run(<String>[
+      'xcrun',
+      'clang',
+      '-arch',
+      'arm64',
+      '-isysroot',
+      await _sdkPath(buildInfo.sdkName),
+      '-dynamiclib',
+      '-Xlinker',
+      '-rpath',
+      '-Xlinker',
+      '@executable_path/Frameworks',
+      '-Xlinker',
+      '-rpath',
+      '-Xlinker',
+      '@loader_path/Frameworks',
+      '-install_name',
+      '@rpath/App.framework/App',
+      '-o',
+      appBinaryPath,
+      objectPath,
+    ]);
 
     if (linkResult.exitCode != 0) {
       globals.logger.printError('Linking App.framework failed:');
@@ -760,40 +743,45 @@ class NativeTvosBundle extends Target {
     }
 
     // Write Info.plist for App.framework
-    appFramework.childFile('Info.plist').writeAsStringSync(
-      '<?xml version="1.0" encoding="UTF-8"?>\n'
-      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-      '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-      '<plist version="1.0">\n'
-      '<dict>\n'
-      '\t<key>CFBundleDevelopmentRegion</key>\n'
-      '\t<string>en</string>\n'
-      '\t<key>CFBundleExecutable</key>\n'
-      '\t<string>App</string>\n'
-      '\t<key>CFBundleIdentifier</key>\n'
-      '\t<string>io.flutter.flutter.app</string>\n'
-      '\t<key>CFBundleInfoDictionaryVersion</key>\n'
-      '\t<string>6.0</string>\n'
-      '\t<key>CFBundleName</key>\n'
-      '\t<string>App</string>\n'
-      '\t<key>CFBundlePackageType</key>\n'
-      '\t<string>FMWK</string>\n'
-      '\t<key>CFBundleVersion</key>\n'
-      '\t<string>1.0</string>\n'
-      '\t<key>MinimumOSVersion</key>\n'
-      '\t<string>13.0</string>\n'
-      '</dict>\n'
-      '</plist>\n',
-    );
+    appFramework
+        .childFile('Info.plist')
+        .writeAsStringSync(
+          '<?xml version="1.0" encoding="UTF-8"?>\n'
+          '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+          '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+          '<plist version="1.0">\n'
+          '<dict>\n'
+          '\t<key>CFBundleDevelopmentRegion</key>\n'
+          '\t<string>en</string>\n'
+          '\t<key>CFBundleExecutable</key>\n'
+          '\t<string>App</string>\n'
+          '\t<key>CFBundleIdentifier</key>\n'
+          '\t<string>io.flutter.flutter.app</string>\n'
+          '\t<key>CFBundleInfoDictionaryVersion</key>\n'
+          '\t<string>6.0</string>\n'
+          '\t<key>CFBundleName</key>\n'
+          '\t<string>App</string>\n'
+          '\t<key>CFBundlePackageType</key>\n'
+          '\t<string>FMWK</string>\n'
+          '\t<key>CFBundleVersion</key>\n'
+          '\t<string>1.0</string>\n'
+          '\t<key>MinimumOSVersion</key>\n'
+          '\t<string>13.0</string>\n'
+          '</dict>\n'
+          '</plist>\n',
+        );
 
     globals.logger.printTrace('AOT compilation complete: ${appFramework.path}');
   }
 
   /// Returns the SDK path for the given SDK name.
   Future<String> _sdkPath(String sdkName) async {
-    final ProcessResult result = await globals.processManager.run(
-      <String>['xcrun', '--sdk', sdkName, '--show-sdk-path'],
-    );
+    final ProcessResult result = await globals.processManager.run(<String>[
+      'xcrun',
+      '--sdk',
+      sdkName,
+      '--show-sdk-path',
+    ]);
     if (result.exitCode != 0) {
       throw Exception(
         'Failed to resolve SDK path for "$sdkName" via xcrun '
@@ -808,15 +796,12 @@ class NativeTvosBundle extends Target {
   }
 
   /// Generates Generated.xcconfig, Debug.xcconfig, and Release.xcconfig.
-  void _generateXcconfigs(
-    FlutterProject project,
-    Directory tvosProjectDir,
-  ) {
+  void _generateXcconfigs(FlutterProject project, Directory tvosProjectDir) {
     final Directory flutterDir = tvosProjectDir.childDirectory('Flutter');
     flutterDir.createSync(recursive: true);
 
     // Generated.xcconfig
-    final StringBuffer xcconfig = StringBuffer();
+    final xcconfig = StringBuffer();
     xcconfig.writeln('FLUTTER_APPLICATION_PATH=${project.directory.path}');
     xcconfig.writeln('FLUTTER_TARGET=$targetFile');
     xcconfig.writeln('FLUTTER_BUILD_DIR=${project.directory.childDirectory('build').path}');
@@ -826,15 +811,19 @@ class NativeTvosBundle extends Target {
     flutterDir.childFile('Generated.xcconfig').writeAsStringSync(xcconfig.toString());
 
     // Debug.xcconfig — always write with Pods include so CocoaPods sandbox check passes.
-    flutterDir.childFile('Debug.xcconfig').writeAsStringSync(
-      '#include "Generated.xcconfig"\n'
-      '#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"\n',
-    );
+    flutterDir
+        .childFile('Debug.xcconfig')
+        .writeAsStringSync(
+          '#include "Generated.xcconfig"\n'
+          '#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"\n',
+        );
 
     // Release.xcconfig — same.
-    flutterDir.childFile('Release.xcconfig').writeAsStringSync(
-      '#include "Generated.xcconfig"\n'
-      '#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"\n',
-    );
+    flutterDir
+        .childFile('Release.xcconfig')
+        .writeAsStringSync(
+          '#include "Generated.xcconfig"\n'
+          '#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"\n',
+        );
   }
 }

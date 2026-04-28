@@ -5,7 +5,6 @@
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
-import 'package:flutter_tools/src/base/user_messages.dart';
 import 'package:flutter_tools/src/doctor_validator.dart';
 import 'package:flutter_tvos/tvos_doctor.dart';
 
@@ -19,12 +18,11 @@ import '../src/fakes.dart';
 // Layout mirrored by _engineFs below:
 //   /cli/bin/cache/flutter-tvos.snapshot  ← script
 //   /cli/engine_artifacts/tvos_debug_sim_arm64/
-FakePlatform _makePlatform() => FakePlatform(
-      script: Uri.file('/cli/bin/cache/flutter-tvos.snapshot'),
-    );
+FakePlatform _makePlatform() =>
+    FakePlatform(script: Uri.file('/cli/bin/cache/flutter-tvos.snapshot'));
 
 MemoryFileSystem _makeEngineFs({bool artifactsPresent = true}) {
-  final MemoryFileSystem fs = MemoryFileSystem.test();
+  final fs = MemoryFileSystem.test();
   if (artifactsPresent) {
     fs.directory('/cli/engine_artifacts/tvos_debug_sim_arm64').createSync(recursive: true);
   }
@@ -49,24 +47,22 @@ void main() {
         // tvOS SDK check
         const FakeCommand(
           command: <String>['xcrun', '--sdk', 'appletvos', '--show-sdk-path'],
-          stdout: '/Applications/Xcode.app/Contents/Developer/Platforms/AppleTVOS.platform/Developer/SDKs/AppleTVOS17.0.sdk',
+          stdout:
+              '/Applications/Xcode.app/Contents/Developer/Platforms/AppleTVOS.platform/Developer/SDKs/AppleTVOS17.0.sdk',
         ),
         // Simulator runtime check
         const FakeCommand(
           command: <String>['xcrun', 'simctl', 'list', 'runtimes', '--json'],
-          stdout: '{"runtimes":[{"name":"tvOS 17.0","identifier":"com.apple.CoreSimulator.SimRuntime.tvOS-17-0"}]}',
+          stdout:
+              '{"runtimes":[{"name":"tvOS 17.0","identifier":"com.apple.CoreSimulator.SimRuntime.tvOS-17-0"}]}',
         ),
         // CocoaPods check
-        const FakeCommand(
-          command: <String>['pod', '--version'],
-          stdout: '1.15.2',
-        ),
+        const FakeCommand(command: <String>['pod', '--version'], stdout: '1.15.2'),
       ]);
 
-      final TvosValidator validator = TvosValidator(
+      final validator = TvosValidator(
         processManager: processManager,
-        userMessages: UserMessages(),
-        fileSystem: _makeEngineFs(artifactsPresent: true),
+        fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
       );
 
@@ -85,14 +81,12 @@ void main() {
     });
 
     testWithoutContext('reports missing when Xcode is not installed', () async {
-      processManager.addCommand(const FakeCommand(
-        command: <String>['xcodebuild', '-version'],
-        exitCode: 1,
-      ));
+      processManager.addCommand(
+        const FakeCommand(command: <String>['xcodebuild', '-version'], exitCode: 1),
+      );
 
-      final TvosValidator validator = TvosValidator(
+      final validator = TvosValidator(
         processManager: processManager,
-        userMessages: UserMessages(),
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
       );
@@ -116,15 +110,11 @@ void main() {
           command: <String>['xcrun', 'simctl', 'list', 'runtimes', '--json'],
           stdout: '{"runtimes":[{"name":"tvOS 17.0"}]}',
         ),
-        const FakeCommand(
-          command: <String>['pod', '--version'],
-          stdout: '1.15.2',
-        ),
+        const FakeCommand(command: <String>['pod', '--version'], stdout: '1.15.2'),
       ]);
 
-      final TvosValidator validator = TvosValidator(
+      final validator = TvosValidator(
         processManager: processManager,
-        userMessages: UserMessages(),
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
       );
@@ -150,17 +140,14 @@ void main() {
         // No tvOS runtime
         const FakeCommand(
           command: <String>['xcrun', 'simctl', 'list', 'runtimes', '--json'],
-          stdout: '{"runtimes":[{"name":"iOS 17.0","identifier":"com.apple.CoreSimulator.SimRuntime.iOS-17-0"}]}',
+          stdout:
+              '{"runtimes":[{"name":"iOS 17.0","identifier":"com.apple.CoreSimulator.SimRuntime.iOS-17-0"}]}',
         ),
-        const FakeCommand(
-          command: <String>['pod', '--version'],
-          stdout: '1.15.2',
-        ),
+        const FakeCommand(command: <String>['pod', '--version'], stdout: '1.15.2'),
       ]);
 
-      final TvosValidator validator = TvosValidator(
+      final validator = TvosValidator(
         processManager: processManager,
-        userMessages: UserMessages(),
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
       );
@@ -187,15 +174,11 @@ void main() {
           command: <String>['xcrun', 'simctl', 'list', 'runtimes', '--json'],
           stdout: '{"runtimes":[{"name":"tvOS 17.0"}]}',
         ),
-        const FakeCommand(
-          command: <String>['pod', '--version'],
-          exitCode: 1,
-        ),
+        const FakeCommand(command: <String>['pod', '--version'], exitCode: 1),
       ]);
 
-      final TvosValidator validator = TvosValidator(
+      final validator = TvosValidator(
         processManager: processManager,
-        userMessages: UserMessages(),
         fileSystem: _makeEngineFs(),
         platform: _makePlatform(),
       );
@@ -223,15 +206,11 @@ void main() {
           command: <String>['xcrun', 'simctl', 'list', 'runtimes', '--json'],
           stdout: '{"runtimes":[{"name":"tvOS 17.0"}]}',
         ),
-        const FakeCommand(
-          command: <String>['pod', '--version'],
-          stdout: '1.15.2',
-        ),
+        const FakeCommand(command: <String>['pod', '--version'], stdout: '1.15.2'),
       ]);
 
-      final TvosValidator validator = TvosValidator(
+      final validator = TvosValidator(
         processManager: processManager,
-        userMessages: UserMessages(),
         fileSystem: _makeEngineFs(artifactsPresent: false),
         platform: _makePlatform(),
       );
@@ -248,7 +227,7 @@ void main() {
 
   group('TvosWorkflow', () {
     testWithoutContext('appliesToHostPlatform returns true on macOS', () {
-      final TvosWorkflow workflow = TvosWorkflow(
+      final workflow = TvosWorkflow(
         operatingSystemUtils: FakeOperatingSystemUtils(hostPlatform: HostPlatform.darwin_arm64),
       );
       expect(workflow.appliesToHostPlatform, isTrue);

@@ -5,10 +5,12 @@
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/terminal.dart';
 
+import 'tvos_device.dart' show TvosDevice;
+
 /// A [Logger] decorator that rewrites the device-list category column from
 /// `(mobile)` to `(tv)` on lines describing tvOS devices.
 ///
-/// Why this exists: Flutter's [Device.descriptions] hard-codes the line as
+/// Why this exists: Flutter's `Device.descriptions` hard-codes the line as
 /// `'${device.displayName} (${device.category})'` and `Category` is a sealed
 /// `enum { web, desktop, mobile }` we can't extend without forking the SDK
 /// (which the project explicitly forbids — see the "Flutter SDK is never
@@ -28,7 +30,9 @@ class TvosCategoryRewritingLogger extends DelegatingLogger {
   static final RegExp _tvosLine = RegExp(r'•\s*tvos\s*•');
 
   String _rewrite(String message) {
-    if (!_tvosLine.hasMatch(message)) return message;
+    if (!_tvosLine.hasMatch(message)) {
+      return message;
+    }
     // Replace only the FIRST `(mobile)` — that's the category column. Any
     // later occurrence (e.g. inside a device name) is preserved. Pad with
     // trailing spaces so the next column stays vertically aligned with

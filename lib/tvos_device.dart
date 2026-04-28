@@ -8,7 +8,6 @@ import 'dart:io' show Process;
 
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/application_package.dart';
-import 'package:meta/meta.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
@@ -20,6 +19,7 @@ import 'package:flutter_tools/src/mdns_discovery.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/protocol_discovery.dart';
 import 'package:flutter_tools/src/vmservice.dart';
+import 'package:meta/meta.dart';
 
 import 'tvos_application_package.dart';
 import 'tvos_build_info.dart';
@@ -43,8 +43,7 @@ class TvosPhysicalDeviceLogReader implements DeviceLogReader {
   final Logger? _logger;
   Logger get _log => _logger ?? globals.logger;
 
-  final StreamController<String> _linesController =
-      StreamController<String>.broadcast();
+  final StreamController<String> _linesController = StreamController<String>.broadcast();
 
   Process? _logProcess;
 
@@ -64,17 +63,15 @@ class TvosPhysicalDeviceLogReader implements DeviceLogReader {
       // The bundle ID will be set separately when launching
     ]);
 
-    _logProcess!.stdout
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((String line) {
+    _logProcess!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
+      String line,
+    ) {
       _processLine(line);
     });
 
-    _logProcess!.stderr
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((String line) {
+    _logProcess!.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((
+      String line,
+    ) {
       _processLine(line);
     });
   }
@@ -91,7 +88,7 @@ class TvosPhysicalDeviceLogReader implements DeviceLogReader {
     // Wrap in `script -t 0 /dev/null` to convince devicectl it has a TTY and
     // forward child stdout. `--console` blocks the process until the app
     // exits, which is exactly what we want for a persistent log stream.
-    final List<String> cmd = <String>[
+    final cmd = <String>[
       'script', '-t', '0', '/dev/null',
       'xcrun', 'devicectl', 'device', 'process', 'launch',
       '--device', deviceId,
@@ -112,17 +109,15 @@ class TvosPhysicalDeviceLogReader implements DeviceLogReader {
     ];
     _logProcess = await globals.processManager.start(cmd);
 
-    _logProcess!.stdout
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((String line) {
+    _logProcess!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
+      String line,
+    ) {
       _processLine(line);
     });
 
-    _logProcess!.stderr
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((String line) {
+    _logProcess!.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((
+      String line,
+    ) {
       _processLine(line);
     });
   }
@@ -137,10 +132,10 @@ class TvosPhysicalDeviceLogReader implements DeviceLogReader {
   // and surrounding `script -t 0` adds "Script started/done" wrappers.
   // System log lines look like "2026-04-25 07:49:03.225578+0200 Runner[...]"
   // followed by a bracketed subsystem tag we want to drop.
-  static final RegExp _devicectlProgress =
-      RegExp(r'^\d{2}:\d{2}:\d{2}\s+(Acquired|Enabling|Establishing|Resolved|Granted)');
-  static final RegExp _scriptWrapper =
-      RegExp(r'^Script (started|done), output file');
+  static final RegExp _devicectlProgress = RegExp(
+    r'^\d{2}:\d{2}:\d{2}\s+(Acquired|Enabling|Establishing|Resolved|Granted)',
+  );
+  static final RegExp _scriptWrapper = RegExp(r'^Script (started|done), output file');
   static final RegExp _systemNoise = RegExp(
     r'\[(Scene|Storyboard|UIFocus|MetalLibInterposer|UIKitCore|FocusOverlay|FocusEffect)\]',
   );
@@ -152,18 +147,30 @@ class TvosPhysicalDeviceLogReader implements DeviceLogReader {
 
   bool _isNoise(String line) {
     final String trimmed = line.trim();
-    if (trimmed.isEmpty) return true;
-    if (_devicectlProgress.hasMatch(trimmed)) return true;
-    if (_scriptWrapper.hasMatch(trimmed)) return true;
-    if (_systemNoise.hasMatch(line)) return true;
+    if (trimmed.isEmpty) {
+      return true;
+    }
+    if (_devicectlProgress.hasMatch(trimmed)) {
+      return true;
+    }
+    if (_scriptWrapper.hasMatch(trimmed)) {
+      return true;
+    }
+    if (_systemNoise.hasMatch(line)) {
+      return true;
+    }
     for (final String n in _verbatimNoise) {
-      if (line.contains(n)) return true;
+      if (line.contains(n)) {
+        return true;
+      }
     }
     return false;
   }
 
   void _processLine(String line) {
-    if (_linesController.isClosed) return;
+    if (_linesController.isClosed) {
+      return;
+    }
     if (_isNoise(line)) {
       _log.printTrace(line);
       return;
@@ -194,8 +201,7 @@ class TvosPhysicalDeviceLogReader implements DeviceLogReader {
 class TvosSimulatorLogReader implements DeviceLogReader {
   TvosSimulatorLogReader(this.name);
 
-  final StreamController<String> _linesController =
-      StreamController<String>.broadcast();
+  final StreamController<String> _linesController = StreamController<String>.broadcast();
 
   Process? _logProcess;
 
@@ -209,24 +215,30 @@ class TvosSimulatorLogReader implements DeviceLogReader {
   Future<void> startLogStream(String deviceId) async {
     // Only capture logs from the Flutter framework. This gives us the VM service
     // URL and Dart print() output without all the system framework noise.
-    const String predicate = 'senderImagePath ENDSWITH "/Flutter"';
+    const predicate = 'senderImagePath ENDSWITH "/Flutter"';
 
     _logProcess = await globals.processManager.start(<String>[
-      'xcrun', 'simctl', 'spawn', deviceId,
-      'log', 'stream', '--style', 'json', '--predicate', predicate,
+      'xcrun',
+      'simctl',
+      'spawn',
+      deviceId,
+      'log',
+      'stream',
+      '--style',
+      'json',
+      '--predicate',
+      predicate,
     ]);
 
-    _logProcess!.stdout
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((String line) {
+    _logProcess!.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((
+      String line,
+    ) {
       _onUnifiedLoggingLine(line);
     });
 
-    _logProcess!.stderr
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((String line) {
+    _logProcess!.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((
+      String line,
+    ) {
       _onUnifiedLoggingLine(line);
     });
   }
@@ -277,10 +289,11 @@ class TvosDevice extends Device {
     required this.isSimulator,
     this.osVersion,
   }) : super(
-            category: Category.mobile,
-            platformType: PlatformType.custom,
-            ephemeral: true,
-            logger: logger);
+         category: Category.mobile,
+         platformType: PlatformType.custom,
+         ephemeral: true,
+         logger: logger,
+       );
 
   @override
   final String name;
@@ -323,14 +336,15 @@ class TvosDevice extends Device {
   bool supportsRuntimeMode(BuildMode buildMode) => buildMode != BuildMode.jitRelease;
 
   @override
-  Future<bool> isAppInstalled(covariant ApplicationPackage app, {String? userIdentifier}) async => false;
+  Future<bool> isAppInstalled(covariant ApplicationPackage app, {String? userIdentifier}) async =>
+      false;
 
   @override
   Future<bool> isLatestBuildInstalled(covariant ApplicationPackage app) async => false;
 
   @override
   Future<bool> installApp(covariant ApplicationPackage app, {String? userIdentifier}) async {
-    final TvosApp tvosApp = app as TvosApp;
+    final tvosApp = app as TvosApp;
 
     // Prefer Release bundle if present (device/release builds); fall back to Debug.
     String appPath = tvosApp.bundlePath(BuildMode.release, isSimulator: isSimulator);
@@ -340,7 +354,11 @@ class TvosDevice extends Device {
 
     if (isSimulator) {
       final RunResult result = await globals.processUtils.run(<String>[
-        'xcrun', 'simctl', 'install', id, appPath,
+        'xcrun',
+        'simctl',
+        'install',
+        id,
+        appPath,
       ]);
       if (result.exitCode != 0) {
         logger.printError('simctl install failed:\n${result.stderr}');
@@ -353,8 +371,13 @@ class TvosDevice extends Device {
     logger.printTrace('Installing on physical Apple TV ($id)...');
 
     final RunResult result = await globals.processUtils.run(<String>[
-      'xcrun', 'devicectl', 'device', 'install', 'app',
-      '--device', id,
+      'xcrun',
+      'devicectl',
+      'device',
+      'install',
+      'app',
+      '--device',
+      id,
       appPath,
     ]);
 
@@ -369,15 +392,24 @@ class TvosDevice extends Device {
   Future<bool> uninstallApp(covariant ApplicationPackage app, {String? userIdentifier}) async {
     if (isSimulator) {
       final RunResult result = await globals.processUtils.run(<String>[
-        'xcrun', 'simctl', 'uninstall', id, app.id,
+        'xcrun',
+        'simctl',
+        'uninstall',
+        id,
+        app.id,
       ]);
       return result.exitCode == 0;
     }
 
     // Physical device: use devicectl to uninstall
     final RunResult result = await globals.processUtils.run(<String>[
-      'xcrun', 'devicectl', 'device', 'uninstall', 'app',
-      '--device', id,
+      'xcrun',
+      'devicectl',
+      'device',
+      'uninstall',
+      'app',
+      '--device',
+      id,
       app.id,
     ]);
     return result.exitCode == 0;
@@ -397,7 +429,7 @@ class TvosDevice extends Device {
 
     // 1. Build the tvOS app (unless prebuilt)
     if (!prebuiltApplication) {
-      final TvosBuildInfo tvosBuildInfo = TvosBuildInfo(
+      final tvosBuildInfo = TvosBuildInfo(
         debuggingOptions.buildInfo,
         targetArch: 'arm64',
         simulator: isSimulator,
@@ -424,10 +456,11 @@ class TvosDevice extends Device {
     DebuggingOptions debuggingOptions,
   ) async {
     // 2. Determine app bundle path
-    final String configuration = debuggingOptions.buildInfo.isDebug ? 'Debug' : 'Release';
+    final configuration = debuggingOptions.buildInfo.isDebug ? 'Debug' : 'Release';
     final String appPath = globals.fs.path.join(
       project.directory.path,
-      'build', 'tvos',
+      'build',
+      'tvos',
       '$configuration-appletvsimulator',
       'Runner.app',
     );
@@ -445,7 +478,11 @@ class TvosDevice extends Device {
     logger.printStatus('Installing and launching...');
     logger.printTrace('Installing on Apple TV simulator ($id)...');
     final RunResult installResult = await globals.processUtils.run(<String>[
-      'xcrun', 'simctl', 'install', id, appPath,
+      'xcrun',
+      'simctl',
+      'install',
+      id,
+      appPath,
     ]);
     if (installResult.exitCode != 0) {
       logger.printError('simctl install failed: ${installResult.stderr}');
@@ -457,13 +494,16 @@ class TvosDevice extends Device {
 
     // 6. Start log stream BEFORE launching so we don't miss the VM service URL
     logger.printTrace('Launching $bundleId on Apple TV...');
-    final TvosSimulatorLogReader logReader =
-        (_logReader ??= TvosSimulatorLogReader(name)) as TvosSimulatorLogReader;
+    final logReader = (_logReader ??= TvosSimulatorLogReader(name)) as TvosSimulatorLogReader;
     await logReader.startLogStream(id);
 
     // 7. Launch the app
     final RunResult launchResult = await globals.processUtils.run(<String>[
-      'xcrun', 'simctl', 'launch', id, bundleId,
+      'xcrun',
+      'simctl',
+      'launch',
+      id,
+      bundleId,
     ]);
     if (launchResult.exitCode != 0) {
       logger.printError('simctl launch failed: ${launchResult.stderr}');
@@ -471,11 +511,7 @@ class TvosDevice extends Device {
     }
 
     // 8. Discover VM service URI from unified log stream
-    final ProtocolDiscovery discovery = ProtocolDiscovery.vmService(
-      logReader,
-      ipv6: false,
-      logger: logger,
-    );
+    final discovery = ProtocolDiscovery.vmService(logReader, ipv6: false, logger: logger);
 
     final Uri? vmServiceUri = await discovery.uri.timeout(
       const Duration(seconds: 30),
@@ -500,10 +536,11 @@ class TvosDevice extends Device {
     DebuggingOptions debuggingOptions,
   ) async {
     // 2. Determine app bundle path
-    final String configuration = debuggingOptions.buildInfo.isDebug ? 'Debug' : 'Release';
+    final configuration = debuggingOptions.buildInfo.isDebug ? 'Debug' : 'Release';
     final String appPath = globals.fs.path.join(
       project.directory.path,
-      'build', 'tvos',
+      'build',
+      'tvos',
       '$configuration-appletvos',
       'Runner.app',
     );
@@ -517,8 +554,13 @@ class TvosDevice extends Device {
     logger.printStatus('Installing and launching...');
     logger.printTrace('Installing on Apple TV ($id)...');
     final RunResult installResult = await globals.processUtils.run(<String>[
-      'xcrun', 'devicectl', 'device', 'install', 'app',
-      '--device', id,
+      'xcrun',
+      'devicectl',
+      'device',
+      'install',
+      'app',
+      '--device',
+      id,
       appPath,
     ]);
     logger.printTrace(installResult.stdout);
@@ -552,13 +594,9 @@ class TvosDevice extends Device {
     // Xcode does) and resume the process.
     final bool needsDebugger = debuggingOptions.buildInfo.isDebug;
     logger.printTrace('Launching $bundleId on Apple TV...');
-    final TvosPhysicalDeviceLogReader logReader =
+    final logReader =
         (_logReader ??= TvosPhysicalDeviceLogReader(name)) as TvosPhysicalDeviceLogReader;
-    await logReader.startLogStreamForBundle(
-      id,
-      bundleId,
-      startStopped: needsDebugger,
-    );
+    await logReader.startLogStreamForBundle(id, bundleId, startStopped: needsDebugger);
 
     if (needsDebugger) {
       final int? pid = await _findAppPid(id, bundleId);
@@ -574,10 +612,7 @@ class TvosDevice extends Device {
       lldbForwarder.logLines.listen((String line) {
         logger.printTrace('[lldb] $line');
       });
-      final LLDB lldb = _lldb ??= LLDB(
-        logger: logger,
-        processUtils: globals.processUtils,
-      );
+      final LLDB lldb = _lldb ??= LLDB(logger: logger, processUtils: globals.processUtils);
       final bool attached = await lldb.attachAndStart(
         deviceId: id,
         appProcessId: pid,
@@ -599,11 +634,7 @@ class TvosDevice extends Device {
     //       the launch line, this URL IS reachable from the Mac.
     //    We prefer (b). If mDNS fails but (a) succeeded, we substitute the
     //    device IP we resolved separately so DevTools can still connect.
-    final ProtocolDiscovery discovery = ProtocolDiscovery.vmService(
-      logReader,
-      ipv6: false,
-      logger: logger,
-    );
+    final discovery = ProtocolDiscovery.vmService(logReader, ipv6: false, logger: logger);
 
     Uri? vmServiceUri = await discovery.uri.timeout(
       const Duration(seconds: 30),
@@ -621,13 +652,20 @@ class TvosDevice extends Device {
       final int devicePort = vmServiceUri.port;
       final String authPath = vmServiceUri.path;
       try {
+        // `queryForLaunch` is annotated `@visibleForTesting` upstream, but it
+        // is the only iOS-mDNS code path that handles paired-but-LAN-resolved
+        // Apple TVs (where devicectl reports the loopback URL but the host
+        // can only reach the device by its `*.coredevice.local` Bonjour name).
+        // Stock Flutter's iOS device manager calls it the same way for the
+        // physical device flow.
         final MDnsVmServiceDiscoveryResult? result =
+            // ignore: invalid_use_of_visible_for_testing_member
             await MDnsVmServiceDiscovery.instance!.queryForLaunch(
-          applicationId: bundleId,
-          deviceVmservicePort: devicePort,
-          useDeviceIPAsHost: true,
-          timeout: const Duration(seconds: 10),
-        );
+              applicationId: bundleId,
+              deviceVmservicePort: devicePort,
+              useDeviceIPAsHost: true,
+              timeout: const Duration(seconds: 10),
+            );
         if (result != null && result.ipAddress != null) {
           vmServiceUri = Uri(
             scheme: 'http',
@@ -666,27 +704,39 @@ class TvosDevice extends Device {
     try {
       final File out = tmp.childFile('device.json');
       final RunResult r = await globals.processUtils.run(<String>[
-        'xcrun', 'devicectl', 'list', 'devices',
-        '--json-output', out.path,
+        'xcrun',
+        'devicectl',
+        'list',
+        'devices',
+        '--json-output',
+        out.path,
       ]);
-      if (r.exitCode != 0 || !out.existsSync()) return null;
+      if (r.exitCode != 0 || !out.existsSync()) {
+        return null;
+      }
       try {
         final dynamic decoded = jsonDecode(out.readAsStringSync());
         final dynamic devices = (decoded is Map && decoded['result'] is Map)
             ? (decoded['result'] as Map)['devices']
             : null;
-        if (devices is! List) return null;
-        for (final dynamic d in devices) {
-          if (d is! Map) continue;
+        if (devices is! List) {
+          return null;
+        }
+        for (final Object? d in devices) {
+          if (d is! Map) {
+            continue;
+          }
           final dynamic hp = d['hardwareProperties'];
           final dynamic identifier = d['identifier'];
-          if (identifier != deviceId) continue;
+          if (identifier != deviceId) {
+            continue;
+          }
           final dynamic conn = d['connectionProperties'];
           if (conn is Map) {
             // Prefer numeric IPv4 from networkAddresses if present.
             final dynamic netAddrs = conn['networkAddresses'];
             if (netAddrs is List) {
-              for (final dynamic a in netAddrs) {
+              for (final Object? a in netAddrs) {
                 if (a is String && RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(a)) {
                   return a;
                 }
@@ -699,29 +749,45 @@ class TvosDevice extends Device {
             final dynamic hostnames = conn['potentialHostnames'];
             if (hostnames is List) {
               String? best;
-              for (final dynamic h in hostnames) {
-                if (h is! String) continue;
-                if (!h.endsWith('.coredevice.local')) continue;
-                if (best == null || h.length < best.length) best = h;
+              for (final Object? h in hostnames) {
+                if (h is! String) {
+                  continue;
+                }
+                if (!h.endsWith('.coredevice.local')) {
+                  continue;
+                }
+                if (best == null || h.length < best.length) {
+                  best = h;
+                }
               }
-              if (best != null) return best;
+              if (best != null) {
+                return best;
+              }
             }
             // localHostnames as a last resort.
             final dynamic addrs = conn['localHostnames'];
             if (addrs is List && addrs.isNotEmpty) {
-              for (final dynamic h in addrs) {
-                if (h is String && h.endsWith('.local')) return h;
+              for (final Object? h in addrs) {
+                if (h is String && h.endsWith('.local')) {
+                  return h;
+                }
               }
             }
           }
-          if (hp is Map && hp['address'] is String) return hp['address'] as String;
+          if (hp is Map && hp['address'] is String) {
+            return hp['address'] as String;
+          }
         }
       } on FormatException {
         return null;
       }
       return null;
     } finally {
-      try { tmp.deleteSync(recursive: true); } on FileSystemException {/* ignore */}
+      try {
+        tmp.deleteSync(recursive: true);
+      } on FileSystemException {
+        /* ignore */
+      }
     }
   }
 
@@ -742,9 +808,15 @@ class TvosDevice extends Device {
       try {
         final File out = tmp.childFile('apps.json');
         final RunResult r = await globals.processUtils.run(<String>[
-          'xcrun', 'devicectl', 'device', 'info', 'apps',
-          '--device', deviceId,
-          '--json-output', out.path,
+          'xcrun',
+          'devicectl',
+          'device',
+          'info',
+          'apps',
+          '--device',
+          deviceId,
+          '--json-output',
+          out.path,
         ]);
         if (r.exitCode == 0 && out.existsSync()) {
           try {
@@ -753,32 +825,50 @@ class TvosDevice extends Device {
                 ? (decoded['result'] as Map)['apps']
                 : null;
             if (apps is List) {
-              for (final dynamic a in apps) {
+              for (final Object? a in apps) {
                 if (a is Map && a['bundleIdentifier'] == bundleId) {
                   final dynamic u = a['url'];
-                  if (u is String) installUrl = u;
+                  if (u is String) {
+                    installUrl = u;
+                  }
                   break;
                 }
               }
             }
-          } on FormatException {/* ignore */}
+          } on FormatException {
+            /* ignore */
+          }
         }
       } finally {
-        try { tmp.deleteSync(recursive: true); } on FileSystemException {/* ignore */}
+        try {
+          tmp.deleteSync(recursive: true);
+        } on FileSystemException {
+          /* ignore */
+        }
       }
     }
-    if (installUrl == null) return null;
+    if (installUrl == null) {
+      return null;
+    }
 
-    final Stopwatch sw = Stopwatch()..start();
+    final sw = Stopwatch()..start();
     final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_ps.');
     try {
       while (sw.elapsed < timeout) {
         final File out = tmp.childFile('ps.json');
-        if (out.existsSync()) out.deleteSync();
+        if (out.existsSync()) {
+          out.deleteSync();
+        }
         final RunResult r = await globals.processUtils.run(<String>[
-          'xcrun', 'devicectl', 'device', 'info', 'processes',
-          '--device', deviceId,
-          '--json-output', out.path,
+          'xcrun',
+          'devicectl',
+          'device',
+          'info',
+          'processes',
+          '--device',
+          deviceId,
+          '--json-output',
+          out.path,
         ]);
         if (r.exitCode == 0 && out.existsSync()) {
           try {
@@ -787,23 +877,31 @@ class TvosDevice extends Device {
                 ? (decoded['result'] as Map)['runningProcesses']
                 : null;
             if (procs is List) {
-              for (final dynamic p in procs) {
+              for (final Object? p in procs) {
                 if (p is Map) {
                   final dynamic exe = p['executable'];
                   final dynamic pid = p['processIdentifier'];
-                  if (exe is String && pid is int && exe.contains(installUrl!.replaceFirst('file://', ''))) {
+                  if (exe is String &&
+                      pid is int &&
+                      exe.contains(installUrl.replaceFirst('file://', ''))) {
                     return pid;
                   }
                 }
               }
             }
-          } on FormatException {/* ignore */}
+          } on FormatException {
+            /* ignore */
+          }
         }
         await Future<void>.delayed(pollInterval);
       }
       return null;
     } finally {
-      try { tmp.deleteSync(recursive: true); } on FileSystemException {/* ignore */}
+      try {
+        tmp.deleteSync(recursive: true);
+      } on FileSystemException {
+        /* ignore */
+      }
     }
   }
 
@@ -818,20 +916,26 @@ class TvosDevice extends Device {
     Duration timeout = const Duration(seconds: 15),
     Duration pollInterval = const Duration(seconds: 1),
   }) async {
-    final Stopwatch sw = Stopwatch()..start();
-    int attempts = 0;
+    final sw = Stopwatch()..start();
+    var attempts = 0;
     final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_apps.');
     try {
       while (sw.elapsed < timeout) {
         attempts++;
         final File jsonOut = tmp.childFile('apps_$attempts.json');
         final RunResult result = await globals.processUtils.run(<String>[
-          'xcrun', 'devicectl', 'device', 'info', 'apps',
-          '--device', deviceId,
-          '--json-output', jsonOut.path,
+          'xcrun',
+          'devicectl',
+          'device',
+          'info',
+          'apps',
+          '--device',
+          deviceId,
+          '--json-output',
+          jsonOut.path,
         ]);
-        bool found = false;
-        int bodyLen = -1;
+        var found = false;
+        var bodyLen = -1;
         final bool fileExists = jsonOut.existsSync();
         if (fileExists) {
           final String body = jsonOut.readAsStringSync();
@@ -842,7 +946,7 @@ class TvosDevice extends Device {
                 ? (decoded['result'] as Map)['apps']
                 : null;
             if (apps is List) {
-              for (final dynamic app in apps) {
+              for (final Object? app in apps) {
                 if (app is Map && app['bundleIdentifier'] == bundleId) {
                   found = true;
                   break;
@@ -858,7 +962,9 @@ class TvosDevice extends Device {
           'fileExists=$fileExists bodyLen=$bodyLen found=$found '
           'jsonPath=${jsonOut.path}',
         );
-        if (found) return true;
+        if (found) {
+          return true;
+        }
         await Future<void>.delayed(pollInterval);
       }
       return false;
@@ -874,12 +980,15 @@ class TvosDevice extends Device {
   /// Reads PRODUCT_BUNDLE_IDENTIFIER from the tvOS project.pbxproj.
   String _readBundleId(FlutterProject project) {
     final String pbxprojPath = globals.fs.path.join(
-      project.directory.path, 'tvos', 'Runner.xcodeproj', 'project.pbxproj',
+      project.directory.path,
+      'tvos',
+      'Runner.xcodeproj',
+      'project.pbxproj',
     );
-    final file = globals.fs.file(pbxprojPath);
+    final File file = globals.fs.file(pbxprojPath);
     if (file.existsSync()) {
       final String content = file.readAsStringSync();
-      final RegExp regex = RegExp(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*(.*?);');
+      final regex = RegExp(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*(.*?);');
       final Match? match = regex.firstMatch(content);
       if (match != null) {
         String? id = match.group(1)?.trim();
@@ -896,7 +1005,9 @@ class TvosDevice extends Device {
 
   @override
   Future<bool> stopApp(covariant ApplicationPackage? app, {String? userIdentifier}) async {
-    if (app == null) return false;
+    if (app == null) {
+      return false;
+    }
 
     _logReader?.dispose();
     _logReader = null;
@@ -907,7 +1018,11 @@ class TvosDevice extends Device {
 
     if (isSimulator) {
       final RunResult result = await globals.processUtils.run(<String>[
-        'xcrun', 'simctl', 'terminate', id, app.id,
+        'xcrun',
+        'simctl',
+        'terminate',
+        id,
+        app.id,
       ]);
       return result.exitCode == 0;
     }

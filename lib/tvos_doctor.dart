@@ -8,7 +8,6 @@ import 'package:file/file.dart';
 import 'package:flutter_tools/src/base/context.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
-import 'package:flutter_tools/src/base/user_messages.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/doctor_validator.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
@@ -17,36 +16,30 @@ import 'package:process/process.dart';
 TvosWorkflow? get tvosWorkflow => context.get<TvosWorkflow>();
 TvosValidator? get tvosValidator => context.get<TvosValidator>();
 
-/// See: [_DefaultDoctorValidatorsProvider] in `doctor.dart`
+/// See: `_DefaultDoctorValidatorsProvider` in `doctor.dart`
 class TvosDoctorValidatorsProvider implements DoctorValidatorsProvider {
   @override
   List<DoctorValidator> get validators {
-    final List<DoctorValidator> validators =
-        DoctorValidatorsProvider.defaultInstance.validators;
-    return <DoctorValidator>[
-      validators.first,
-      tvosValidator!,
-      ...validators.sublist(1)
-    ];
+    final List<DoctorValidator> validators = DoctorValidatorsProvider.defaultInstance.validators;
+    return <DoctorValidator>[validators.first, tvosValidator!, ...validators.sublist(1)];
   }
 
   @override
   List<Workflow> get workflows => <Workflow>[
-        ...DoctorValidatorsProvider.defaultInstance.workflows,
-        tvosWorkflow!,
-      ];
+    ...DoctorValidatorsProvider.defaultInstance.workflows,
+    tvosWorkflow!,
+  ];
 }
 
 class TvosValidator extends DoctorValidator {
   TvosValidator({
     required ProcessManager processManager,
-    required UserMessages userMessages,
     FileSystem? fileSystem,
     Platform? platform,
-  })  : _processManager = processManager,
-        _fileSystem = fileSystem,
-        _platform = platform,
-        super('tvOS toolchain - develop for Apple tvOS devices');
+  }) : _processManager = processManager,
+       _fileSystem = fileSystem,
+       _platform = platform,
+       super('tvOS toolchain - develop for Apple tvOS devices');
 
   final ProcessManager _processManager;
   final FileSystem? _fileSystem;
@@ -55,7 +48,7 @@ class TvosValidator extends DoctorValidator {
   @override
   Future<ValidationResult> validate() async {
     ValidationType validationType = ValidationType.success;
-    final List<ValidationMessage> messages = <ValidationMessage>[];
+    final messages = <ValidationMessage>[];
 
     // 1. Check Xcode installation
     final bool xcodeOk = await _checkXcode(messages);
@@ -77,10 +70,10 @@ class TvosValidator extends DoctorValidator {
 
     // Determine overall status from messages
     final bool hasErrors = messages.any(
-      (ValidationMessage m) => m.type == ValidationMessage.error('').type,
+      (ValidationMessage m) => m.type == const ValidationMessage.error('').type,
     );
     final bool hasHints = messages.any(
-      (ValidationMessage m) => m.type == ValidationMessage.hint('').type,
+      (ValidationMessage m) => m.type == const ValidationMessage.hint('').type,
     );
 
     if (hasErrors) {
@@ -95,9 +88,7 @@ class TvosValidator extends DoctorValidator {
   /// Checks that Xcode is installed and reports its version.
   Future<bool> _checkXcode(List<ValidationMessage> messages) async {
     try {
-      final ProcessResult result = await _processManager.run(<String>[
-        'xcodebuild', '-version',
-      ]);
+      final ProcessResult result = await _processManager.run(<String>['xcodebuild', '-version']);
       if (result.exitCode == 0) {
         final String version = (result.stdout as String).split('\n').first;
         messages.add(ValidationMessage('Xcode installed ($version)'));
@@ -107,10 +98,12 @@ class TvosValidator extends DoctorValidator {
       // ignore
     }
 
-    messages.add(const ValidationMessage.error(
-      'Xcode is not installed. Install it from the Mac App Store.\n'
-      'Xcode is required for tvOS development.',
-    ));
+    messages.add(
+      const ValidationMessage.error(
+        'Xcode is not installed. Install it from the Mac App Store.\n'
+        'Xcode is required for tvOS development.',
+      ),
+    );
     return false;
   }
 
@@ -118,14 +111,17 @@ class TvosValidator extends DoctorValidator {
   Future<void> _checkTvosSdk(List<ValidationMessage> messages) async {
     try {
       final ProcessResult result = await _processManager.run(<String>[
-        'xcrun', '--sdk', 'appletvos', '--show-sdk-path',
+        'xcrun',
+        '--sdk',
+        'appletvos',
+        '--show-sdk-path',
       ]);
       if (result.exitCode == 0) {
         final String sdkPath = (result.stdout as String).trim();
         // Extract version from path like .../AppleTVOS17.0.sdk
-        final RegExp versionRegex = RegExp(r'AppleTVOS(\d+\.\d+)\.sdk');
+        final versionRegex = RegExp(r'AppleTVOS(\d+\.\d+)\.sdk');
         final Match? match = versionRegex.firstMatch(sdkPath);
-        final String version = match != null ? ' ${match.group(1)}' : '';
+        final version = match != null ? ' ${match.group(1)}' : '';
         messages.add(ValidationMessage('tvOS SDK$version installed'));
         return;
       }
@@ -133,23 +129,29 @@ class TvosValidator extends DoctorValidator {
       // ignore
     }
 
-    messages.add(const ValidationMessage.error(
-      'tvOS SDK not found. Open Xcode → Settings → Platforms → download tvOS.',
-    ));
+    messages.add(
+      const ValidationMessage.error(
+        'tvOS SDK not found. Open Xcode → Settings → Platforms → download tvOS.',
+      ),
+    );
   }
 
   /// Checks that at least one tvOS Simulator runtime is installed.
   Future<void> _checkSimulatorRuntime(List<ValidationMessage> messages) async {
     try {
       final ProcessResult result = await _processManager.run(<String>[
-        'xcrun', 'simctl', 'list', 'runtimes', '--json',
+        'xcrun',
+        'simctl',
+        'list',
+        'runtimes',
+        '--json',
       ]);
       if (result.exitCode == 0) {
-        final String stdout = result.stdout as String;
+        final stdout = result.stdout as String;
         // Simple check: look for tvOS in the runtime list
         if (stdout.contains('tvOS') || stdout.contains('com.apple.CoreSimulator.SimRuntime.tvOS')) {
           // Extract latest tvOS version
-          final RegExp versionRegex = RegExp(r'"name"\s*:\s*"tvOS (\d+\.\d+)"');
+          final versionRegex = RegExp(r'"name"\s*:\s*"tvOS (\d+\.\d+)"');
           final Iterable<Match> matches = versionRegex.allMatches(stdout);
           if (matches.isNotEmpty) {
             final String latest = matches.last.group(1)!;
@@ -164,17 +166,17 @@ class TvosValidator extends DoctorValidator {
       // ignore
     }
 
-    messages.add(const ValidationMessage.error(
-      'No tvOS Simulator runtime found. Open Xcode → Settings → Platforms → download tvOS Simulator.',
-    ));
+    messages.add(
+      const ValidationMessage.error(
+        'No tvOS Simulator runtime found. Open Xcode → Settings → Platforms → download tvOS Simulator.',
+      ),
+    );
   }
 
   /// Checks that CocoaPods is installed (needed for plugin support).
   Future<void> _checkCocoaPods(List<ValidationMessage> messages) async {
     try {
-      final ProcessResult result = await _processManager.run(<String>[
-        'pod', '--version',
-      ]);
+      final ProcessResult result = await _processManager.run(<String>['pod', '--version']);
       if (result.exitCode == 0) {
         final String version = (result.stdout as String).trim();
         messages.add(ValidationMessage('CocoaPods $version'));
@@ -184,10 +186,12 @@ class TvosValidator extends DoctorValidator {
       // ignore
     }
 
-    messages.add(const ValidationMessage.hint(
-      'CocoaPods not installed. Install with: brew install cocoapods\n'
-      'CocoaPods is required for plugins with native tvOS code.',
-    ));
+    messages.add(
+      const ValidationMessage.hint(
+        'CocoaPods not installed. Install with: brew install cocoapods\n'
+        'CocoaPods is required for plugins with native tvOS code.',
+      ),
+    );
   }
 
   /// Checks that tvOS engine artifacts are present.
@@ -199,20 +203,16 @@ class TvosValidator extends DoctorValidator {
     // not the caller's cwd.
     final String scriptPath = fs.path.fromUri(platform.script);
     // bin/cache/flutter-tvos.snapshot → CLI root is two dirs up.
-    final String cliRoot = fs.path.dirname(
-      fs.path.dirname(fs.path.dirname(scriptPath)),
-    );
-    final String artifactDir = fs.path.join(
-      cliRoot, 'engine_artifacts', 'tvos_debug_sim_arm64',
-    );
+    final String cliRoot = fs.path.dirname(fs.path.dirname(fs.path.dirname(scriptPath)));
+    final String artifactDir = fs.path.join(cliRoot, 'engine_artifacts', 'tvos_debug_sim_arm64');
     if (fs.directory(artifactDir).existsSync()) {
       messages.add(const ValidationMessage('tvOS engine artifacts present'));
       return;
     }
 
-    messages.add(const ValidationMessage.hint(
-      'tvOS engine artifacts not found. Run: flutter-tvos precache',
-    ));
+    messages.add(
+      const ValidationMessage.hint('tvOS engine artifacts not found. Run: flutter-tvos precache'),
+    );
   }
 
   @override
@@ -223,9 +223,8 @@ class TvosValidator extends DoctorValidator {
 
 /// The tvOS-specific implementation of a [Workflow].
 class TvosWorkflow extends Workflow {
-  TvosWorkflow({
-    required OperatingSystemUtils operatingSystemUtils,
-  }) : _operatingSystemUtils = operatingSystemUtils;
+  TvosWorkflow({required OperatingSystemUtils operatingSystemUtils})
+    : _operatingSystemUtils = operatingSystemUtils;
 
   final OperatingSystemUtils _operatingSystemUtils;
 
