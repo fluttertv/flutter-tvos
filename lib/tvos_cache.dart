@@ -177,14 +177,12 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
         .toList();
 
     if (localZips.isNotEmpty) {
-      _logger.printStatus('Using local tvOS engine artifacts from ${localArchiveDir.path}...');
       await _extractZips(localZips, fileSystem, operatingSystemUtils);
       return;
     }
 
     // --- Strategy 2: download from GitHub Releases ---
     final String tag = releaseTag;
-    _logger.printStatus('Downloading tvOS engine artifacts ($tag) from GitHub Releases...');
 
     if (location.existsSync()) {
       location.deleteSync(recursive: true);
@@ -199,40 +197,48 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
       for (final String zipName in _artifactZipNames) {
         final String url = artifactDownloadUrl(zipName);
         final File tempZip = tempDir.childFile(zipName);
+        // Format mirrors stock Flutter cache:
+        //   `Downloading <name> tools...                     1,339ms`
+        // The Status object writes the elapsed time on stop().
+        final Status status = _logger.startProgress(
+          'Downloading ${_friendlyName(zipName)} tools...',
+        );
+        try {
+          final RunResult curlResult = await _processUtils.run(<String>[
+            'curl',
+            '--location', // follow redirects
+            '--fail', // fail on HTTP errors (4xx, 5xx)
+            '--silent',
+            '--show-error',
+            '--output', tempZip.path,
+            url,
+          ]);
 
-        _logger.printStatus('  Downloading $zipName...');
+          if (curlResult.exitCode != 0) {
+            status.cancel();
+            throwToolExit(
+              'Failed to download $zipName from $url.\n\n${curlResult.stderr}\n\n'
+              'Check that the release tag "$tag" exists at:\n'
+              '  https://github.com/fluttertv/engine-artifacts/releases\n\n'
+              'You can also override the download URL with the '
+              'TVOS_ENGINE_BASE_URL environment variable.',
+            );
+          }
 
-        final RunResult curlResult = await _processUtils.run(<String>[
-          'curl',
-          '--location', // follow redirects
-          '--fail', // fail on HTTP errors (4xx, 5xx)
-          '--silent',
-          '--show-error',
-          '--output', tempZip.path,
-          url,
-        ]);
+          final RunResult unzipResult = await _processUtils.run(<String>[
+            'unzip',
+            '-q',
+            tempZip.path,
+            '-d',
+            location.path,
+          ]);
 
-        if (curlResult.exitCode != 0) {
-          throwToolExit(
-            'Failed to download $zipName from $url.\n\n${curlResult.stderr}\n\n'
-            'Check that the release tag "$tag" exists at:\n'
-            '  https://github.com/fluttertv/engine-artifacts/releases\n\n'
-            'You can also override the download URL with the '
-            'TVOS_ENGINE_BASE_URL environment variable.',
-          );
-        }
-
-        _logger.printStatus('  Extracting $zipName...');
-        final RunResult unzipResult = await _processUtils.run(<String>[
-          'unzip',
-          '-q',
-          tempZip.path,
-          '-d',
-          location.path,
-        ]);
-
-        if (unzipResult.exitCode != 0) {
-          throwToolExit('Failed to extract $zipName.\n\n${unzipResult.stderr}');
+          if (unzipResult.exitCode != 0) {
+            status.cancel();
+            throwToolExit('Failed to extract $zipName.\n\n${unzipResult.stderr}');
+          }
+        } finally {
+          status.stop();
         }
       }
     } finally {
@@ -245,7 +251,6 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
       macOsMetaDir.deleteSync(recursive: true);
     }
 
-    _logger.printStatus('tvOS engine artifacts downloaded successfully!');
     _makeFilesExecutable(location, operatingSystemUtils);
   }
 
@@ -260,15 +265,23 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     location.createSync(recursive: true);
 
     for (final zip in zips) {
-      final RunResult result = await _processUtils.run(<String>[
-        'unzip',
-        '-q',
-        zip.path,
-        '-d',
-        location.path,
-      ]);
-      if (result.exitCode != 0) {
-        throwToolExit('Failed to extract ${zip.basename}.\n\n${result.stderr}');
+      final Status status = _logger.startProgress(
+        'Extracting ${_friendlyName(zip.basename)} tools...',
+      );
+      try {
+        final RunResult result = await _processUtils.run(<String>[
+          'unzip',
+          '-q',
+          zip.path,
+          '-d',
+          location.path,
+        ]);
+        if (result.exitCode != 0) {
+          status.cancel();
+          throwToolExit('Failed to extract ${zip.basename}.\n\n${result.stderr}');
+        }
+      } finally {
+        status.stop();
       }
     }
 
@@ -277,8 +290,30 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
       macOsMetaDir.deleteSync(recursive: true);
     }
 
-    _logger.printStatus('tvOS engine artifacts extracted successfully!');
     _makeFilesExecutable(location, operatingSystemUtils);
+  }
+
+  /// Converts a zip filename to the human-readable label that goes into the
+  /// `Downloading … tools...` line. Mirrors stock Flutter's `<target>/<host>`
+  /// format using hyphens.
+  ///
+  /// Examples:
+  ///   tvos_debug_sim_arm64.zip → tvos-debug-sim-arm64
+  ///   tvos_release_arm64.zip   → tvos-release-arm64
+  ///   host_debug_unopt.zip     → tvos-host-debug-unopt
+  ///   host_release.zip         → tvos-host-release
+  ///
+  /// Host builds are prefixed `tvos-host-…` so they don't collide with the
+  /// `host-debug` / `host-release` artifacts the parent FlutterCache fetches.
+  String _friendlyName(String zipName) {
+    final String stem = zipName.endsWith('.zip')
+        ? zipName.substring(0, zipName.length - 4)
+        : zipName;
+    final String dashed = stem.replaceAll('_', '-');
+    if (dashed.startsWith('host-')) {
+      return 'tvos-$dashed';
+    }
+    return dashed;
   }
 
   void _makeFilesExecutable(Directory dir, OperatingSystemUtils operatingSystemUtils) {
