@@ -137,12 +137,47 @@ class TvosPhysicalDeviceLogReader implements DeviceLogReader {
   );
   static final RegExp _scriptWrapper = RegExp(r'^Script (started|done), output file');
   static final RegExp _systemNoise = RegExp(
-    r'\[(Scene|Storyboard|UIFocus|MetalLibInterposer|UIKitCore|FocusOverlay|FocusEffect)\]',
+    r'\[(Scene|Storyboard|UIFocus|MetalLibInterposer|UIKitCore|FocusOverlay|'
+    r'FocusEffect|PreviewsAgentExecutorLibrary)\]',
+  );
+  // The OS hang tracker self-suppresses while the debugger is attached, but
+  // still emits a one-line breadcrumb. Drop the breadcrumb — if there were a
+  // genuine hang the user wants to see, it would be reported (no debugger
+  // attached → different message without this suffix).
+  static final RegExp _benignHangDetected = RegExp(
+    r'Hang detected:.*\(debugger attached, not reporting\)',
+  );
+  // BackBoardServices asks the app for a snapshot when it goes to background
+  // (used for the app switcher thumbnail / suspended-state preview).
+  // Flutter apps don't expose a synchronous UIKit view hierarchy for BBS to
+  // snapshot, so the request always fails with `response-not-possible`. The
+  // failure is harmless — the app continues to run and the OS just shows a
+  // generic placeholder thumbnail. Logged on every background transition.
+  static final RegExp _backboardSnapshotFailure = RegExp(
+    r'\[Common\] Snapshot request 0x[0-9a-fA-F]+ complete with error:.*'
+    r'BSActionErrorDomain.*response-not-possible',
   );
   static final List<String> _verbatimNoise = <String>[
     'Launched application with',
     'Waiting for the application to terminate',
     'CLIENT OF UIKIT REQUIRES UPDATE',
+    // tvOS state-restoration trying to write a marker for an app that doesn't
+    // explicitly opt into restoration. Self-recoverable and cosmetic.
+    'Unable to create restoration in progress marker file',
+    // System cache layer (asset/font cache) not finding its data file on
+    // first launch and rebuilding it. The "Invalidating cache..." line is
+    // the recovery, not a failure.
+    'fopen failed for data file:',
+    'Errors found! Invalidating cache...',
+    // Apple's GameController.framework misreads the Siri Remote axis
+    // descriptor on every launch. Bug present in every tvOS app, including
+    // Apple's own — we just don't want it in the user's terminal.
+    'Axis min is a CFBoolean but expected a CFNumber',
+    // Companion line the kernel emits before/after the hang breadcrumb
+    // we already filter via _benignHangDetected. Same self-suppress
+    // signal — fires on every launch, hot reload, and hot restart while
+    // the debugger is attached.
+    'App is being debugged, do not track this hang',
   ];
 
   bool _isNoise(String line) {
@@ -157,6 +192,12 @@ class TvosPhysicalDeviceLogReader implements DeviceLogReader {
       return true;
     }
     if (_systemNoise.hasMatch(line)) {
+      return true;
+    }
+    if (_benignHangDetected.hasMatch(line)) {
+      return true;
+    }
+    if (_backboardSnapshotFailure.hasMatch(line)) {
       return true;
     }
     for (final String n in _verbatimNoise) {

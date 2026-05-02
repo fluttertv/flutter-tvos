@@ -270,6 +270,140 @@ void main() {
 
       reader.dispose();
     });
+
+    testWithoutContext('suppresses Xcode/tvOS framework launch noise', () async {
+      final testLogger = BufferLogger.test();
+      final reader = TvosPhysicalDeviceLogReader('test', logger: testLogger);
+      final lines = <String>[];
+      reader.logLines.listen(lines.add);
+
+      // Xcode 16 SwiftUI Previews probing the debug dylib at launch.
+      reader.processLogLine(
+        '2026-05-02 11:21:47.987046+0200 Runner[2936:1497883] '
+        '[PreviewsAgentExecutorLibrary] Looking up debug dylib relative path',
+      );
+      reader.processLogLine(
+        '2026-05-02 11:21:47.987800+0200 Runner[2936:1497883] '
+        '[PreviewsAgentExecutorLibrary] Opening debug dylib with `@rpath/Runner.debug.dylib`',
+      );
+      // tvOS state-restoration marker that the app never explicitly creates.
+      reader.processLogLine(
+        '2026-05-02 11:21:48.891334+0200 Runner[2936:1497883] '
+        'Warning: Unable to create restoration in progress marker file',
+      );
+      // System cache layer rebuilding itself on first launch.
+      reader.processLogLine(
+        '2026-05-02 11:21:49.030171+0200 Runner[2936:1497883] '
+        'fopen failed for data file: errno = 2 (No such file or directory)',
+      );
+      reader.processLogLine(
+        '2026-05-02 11:21:49.030179+0200 Runner[2936:1497883] '
+        'Errors found! Invalidating cache...',
+      );
+      // GameController.framework misreading the Siri Remote axis descriptor.
+      reader.processLogLine('Axis min is a CFBoolean but expected a CFNumber');
+      // OS hang tracker self-suppressing while the debugger is attached
+      // — both the breadcrumb and its companion "do not track" notice.
+      reader.processLogLine(
+        '2026-05-02 11:21:54.413893+0200 Runner[2936:1497883] [] '
+        'App is being debugged, do not track this hang',
+      );
+      reader.processLogLine(
+        '2026-05-02 11:21:54.413893+0200 Runner[2936:1497883] [] '
+        'Hang detected: 3.05s (debugger attached, not reporting)',
+      );
+
+      // Real flutter output should still pass through unfiltered.
+      reader.processLogLine('flutter: hello world');
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(lines, hasLength(1));
+      expect(lines.first, contains('hello world'));
+
+      reader.dispose();
+    });
+
+    testWithoutContext(
+      'suppresses BackBoardServices snapshot-on-background errors',
+      () async {
+        final testLogger = BufferLogger.test();
+        final reader = TvosPhysicalDeviceLogReader('test', logger: testLogger);
+        final lines = <String>[];
+        reader.logLines.listen(lines.add);
+
+        // Two snapshots — one when the app first goes to background, another
+        // when the OS retries on a later transition. The hex pointers and the
+        // surrounding NSError formatting vary between OS versions.
+        reader.processLogLine(
+          '2026-05-02 11:31:59.884006+0200 Runner[2956:1500908] [Common] '
+          'Snapshot request 0x3001eed60 complete with error: '
+          '<NSError: 0x3001df870; domain: BSActionErrorDomain; code: 1 ("response-not-possible")>',
+        );
+        reader.processLogLine(
+          '2026-05-02 11:32:13.107011+0200 Runner[2956:1501032] [Common] '
+          'Snapshot request 0x3001a1ef0 complete with error: '
+          '<NSError: 0x3001ef900; domain: BSActionErrorDomain; code: 1 ("response-not-possible")>',
+        );
+
+        // Real flutter output should still pass through.
+        reader.processLogLine('flutter: backgrounded');
+
+        await Future<void>.delayed(Duration.zero);
+
+        expect(lines, hasLength(1));
+        expect(lines.first, contains('backgrounded'));
+
+        reader.dispose();
+      },
+    );
+
+    testWithoutContext(
+      'does not swallow other BackBoardServices errors',
+      () async {
+        final testLogger = BufferLogger.test();
+        final reader = TvosPhysicalDeviceLogReader('test', logger: testLogger);
+        final lines = <String>[];
+        reader.logLines.listen(lines.add);
+
+        // Only the specific `response-not-possible` snapshot failure is
+        // benign. Other BSActionErrorDomain failures (different code or
+        // different action class) are signal — pass them through.
+        reader.processLogLine(
+          '2026-05-02 11:31:59.884006+0200 Runner[2956:1500908] [Common] '
+          'Snapshot request 0x3001eed60 complete with error: '
+          '<NSError: 0x3001df870; domain: BSActionErrorDomain; code: 5 ("denied")>',
+        );
+
+        await Future<void>.delayed(Duration.zero);
+
+        expect(lines, hasLength(1));
+        expect(lines.first, contains('denied'));
+
+        reader.dispose();
+      },
+    );
+
+    testWithoutContext('does not swallow non-debugger hang detections', () async {
+      final testLogger = BufferLogger.test();
+      final reader = TvosPhysicalDeviceLogReader('test', logger: testLogger);
+      final lines = <String>[];
+      reader.logLines.listen(lines.add);
+
+      // Real hangs lack the "(debugger attached, not reporting)" suffix and
+      // should still reach the user — that's a signal, not noise.
+      reader.processLogLine(
+        '2026-05-02 11:21:54.413893+0200 Runner[2936:1497883] [] '
+        'Hang detected: 12.5s (always-reporting telemetry)',
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(lines, hasLength(1));
+      expect(lines.first, contains('Hang detected'));
+
+      reader.dispose();
+    });
   });
 
   group('TvosDevice physical properties', () {
