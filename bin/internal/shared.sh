@@ -57,8 +57,13 @@ function update_flutter() {
   local tag="$(sed -n 2p "$ROOT_DIR/bin/internal/flutter.version")"
 
   # Clone flutter repo if not installed.
+  #
+  # `--quiet` suppresses the "Cloning into ..." preamble and the in-place
+  # "Updating files: 36% (...)" progress line. Without a tty (e.g. piping
+  # through `tee`) those CR-driven progress updates collapse into one
+  # extremely long unreadable line, so quieting them is a UX win.
   if [[ ! -d "$FLUTTER_DIR" ]]; then
-    git clone --depth=1 "$FLUTTER_REPO" "$FLUTTER_DIR" -b "$tag"
+    git clone --depth=1 --quiet "$FLUTTER_REPO" "$FLUTTER_DIR" -b "$tag"
   fi
 
   # GIT_DIR and GIT_WORK_TREE are used in the git command.
@@ -67,10 +72,15 @@ function update_flutter() {
 
   # Update flutter repo if needed.
   if [[ "$version" != "$(git rev-parse HEAD)" ]]; then
-    git reset --hard
-    git clean -xdf
-    git fetch --depth=1 "$FLUTTER_REPO" "$version" --tags
-    git checkout FETCH_HEAD
+    git reset --hard --quiet
+    git clean -xdf --quiet
+    # `--tags` is required so `git describe --tags` can resolve the
+    # Flutter version (otherwise `flutter doctor` reports
+    # `0.0.0-unknown` and prompts the user to reinstall). Pair it with
+    # `--quiet` so we don't print the ~1100-line `* [new tag] X.Y.Z`
+    # listing the bare command emits on a fresh install.
+    git fetch --depth=1 --quiet --tags "$FLUTTER_REPO" "$version"
+    git checkout --quiet FETCH_HEAD
 
     # Invalidate the cache.
     rm -fr "$ROOT_DIR/bin/cache"
@@ -94,14 +104,39 @@ function update_flutter() {
   # Invalidate the flutter cache.
   local stamp_path="$FLUTTER_DIR/bin/cache/flutter_tools.stamp"
   if [[ ! -f "$stamp_path" ]]; then
-    "$FLUTTER_EXE" --version
+    bootstrap_flutter_tool
   else
     local v="$(cat "$stamp_path")"
     v="${v%%:*}"
     if [[ "$version" != "$v" ]]; then
-      "$FLUTTER_EXE" --version
+      bootstrap_flutter_tool
     fi
   fi
+}
+
+# Triggers Flutter to download the bundled Dart SDK and compile its own
+# tool snapshot, capturing the noisy underlying output so the user sees a
+# single line of progress instead of:
+#   - curl progress bytes mangled into one line by `tee`-style log capture
+#     ("Downloading Darwin arm64 Dart SDK from Flutter engine ...")
+#   - the "Failed to decode advisories for archive from https://pub.dev"
+#     stack-trace pair (a Dart SDK 3.11 / pub.dev quirk that pub recovers
+#     from internally — every `pub upgrade` since the bug landed dumps
+#     ~40 lines of asynchronous-gap traces and then prints `Got
+#     dependencies.` regardless).
+# On failure we echo back everything that was captured so genuine errors
+# remain debuggable.
+function bootstrap_flutter_tool() {
+  local log_file
+  log_file="$(mktemp -t flutter-tvos-bootstrap.XXXXXX)"
+  echo "Bootstrapping Flutter SDK (one-time setup, this may take a few minutes)..."
+  if ! "$FLUTTER_EXE" --version >"$log_file" 2>&1; then
+    echo "Flutter SDK bootstrap failed. Captured output:" >&2
+    cat "$log_file" >&2
+    rm -f "$log_file"
+    exit 1
+  fi
+  rm -f "$log_file"
 }
 
 function setup_proxy_root() {
