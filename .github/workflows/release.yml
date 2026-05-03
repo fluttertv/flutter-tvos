@@ -27,6 +27,13 @@ jobs:
         run: flutter/bin/dart pub get
 
       - name: Run tests
+        # PUB_OFFLINE=1 avoids a flaky pub.dev advisory race in Dart SDK
+        # 3.11.1 (`Bad state: Attempting to send request on closed
+        # client`) that `dart test` can otherwise trigger via its
+        # implicit `Entrypoint.ensureUpToDate`. Deps are already cached
+        # from the previous step.
+        env:
+          PUB_OFFLINE: "1"
         run: flutter/bin/dart test test/
 
       - name: Run dart analyze

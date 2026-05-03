@@ -21,7 +21,24 @@ jobs:
           git fetch --depth=1 origin "$FLUTTER_COMMIT"
           git checkout "$FLUTTER_COMMIT"
 
+      # Resolve dependencies before running tests. Without an explicit
+      # `pub get` step, `dart test` triggers `Entrypoint.ensureUpToDate`
+      # internally, which fetches pub.dev security advisories. The Dart
+      # SDK 3.11.1 advisory-fetching code has a race ("Bad state:
+      # Attempting to send request on closed client" / "FormatException:
+      # advisoriesUpdated must be a String") that intermittently fails
+      # the run. Resolving deps explicitly first warms the pub cache and
+      # the lockfile so the test step can use --offline below.
+      - name: Resolve dependencies
+        run: flutter/bin/dart pub get
+
       - name: Run unit tests
+        # PUB_OFFLINE=1 tells pub to skip the advisory fetch in
+        # `dart test`'s implicit ensureUpToDate. The deps are already
+        # cached from the previous step, so the test still has
+        # everything it needs.
+        env:
+          PUB_OFFLINE: "1"
         run: flutter/bin/dart test test/
 
   analyze:

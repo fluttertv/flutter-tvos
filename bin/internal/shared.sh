@@ -62,7 +62,16 @@ function update_flutter() {
   # "Updating files: 36% (...)" progress line. Without a tty (e.g. piping
   # through `tee`) those CR-driven progress updates collapse into one
   # extremely long unreadable line, so quieting them is a UX win.
+  #
+  # Print a single line BEFORE the clone so the user knows the command is
+  # working — a fresh clone takes 10–30s depending on connection, and any
+  # output before this point would have been the user's first feedback
+  # (which used to be "Cloning into ..." plus a CR-mangled progress bar,
+  # silenced by `--quiet`). This is now the FIRST line the user sees on
+  # any fresh install.
   if [[ ! -d "$FLUTTER_DIR" ]]; then
+    echo "Setting up flutter-tvos (first run)..."
+    echo "Downloading Flutter SDK source..."
     git clone --depth=1 --quiet "$FLUTTER_REPO" "$FLUTTER_DIR" -b "$tag"
   fi
 
@@ -72,6 +81,7 @@ function update_flutter() {
 
   # Update flutter repo if needed.
   if [[ "$version" != "$(git rev-parse HEAD)" ]]; then
+    echo "Updating Flutter SDK to pinned revision..."
     git reset --hard --quiet
     git clean -xdf --quiet
     # `--tags` is required so `git describe --tags` can resolve the
