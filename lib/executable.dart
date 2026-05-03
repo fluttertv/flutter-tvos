@@ -42,6 +42,7 @@ import 'commands/clean.dart';
 import 'commands/create.dart';
 import 'commands/devices.dart';
 import 'commands/drive.dart';
+import 'commands/plugin.dart';
 import 'commands/precache.dart';
 import 'commands/run.dart';
 import 'commands/test.dart';
@@ -127,6 +128,7 @@ Future<void> main(List<String> args) async {
         terminal: globals.terminal,
         outputPreferences: globals.outputPreferences,
       ),
+      TvosPluginCommand(verboseHelp: verboseHelp),
       TvosPrecacheCommand(
         verboseHelp: verboseHelp,
         cache: globals.cache,
