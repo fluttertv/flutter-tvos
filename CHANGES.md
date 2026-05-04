@@ -35,8 +35,7 @@ pattern.
   VC migration, touch normalization with zero-size view, `sendKey`
   keymap selection, and the full `FlutterTvKeyRepeater` state machine.
   (The `ios_test_flutter` target is currently disabled for tvOS builds;
-  tests will land as part of re-enabling that target — coordinate with
-  Mehmet.)
+  tests will land as part of re-enabling that target.)
 - **`FlutterEngine.mm`:** plugin created alongside
   `FlutterPlatformPlugin` inside `setUpChannels`. Accessor on
   `FlutterEngine_Internal.h`. `setViewController:` now attaches/detaches
