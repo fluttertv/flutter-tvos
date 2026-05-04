@@ -154,23 +154,18 @@ flutter:
           reason: 'podspec must not depend on the Flutter pod, which lacks tvOS support');
       expect(podspec, contains('FRAMEWORK_SEARCH_PATHS'));
 
-      // Swift stub references the plugin class name from the source pubspec.
+      // Phase 2: the real iOS source from the fixture is copied verbatim.
+      // The Phase-1 stub is only emitted as a fallback when the source has
+      // no native files at all (covered by a separate test below).
       final String swift = outputDir
           .childDirectory('tvos')
           .childDirectory('Classes')
           .childFile('URLLauncherPlugin.swift')
           .readAsStringSync();
-      expect(swift, contains('public class URLLauncherPlugin'));
-      expect(swift, contains('register(with registrar:'));
-
-      // Bridging header is the same basename + -Bridging-Header.h.
       expect(
-        outputDir
-            .childDirectory('tvos')
-            .childDirectory('Classes')
-            .childFile('URLLauncherPlugin-Bridging-Header.h')
-            .existsSync(),
-        isTrue,
+        swift,
+        equals(_kRealisticSwiftSource),
+        reason: 'Swift source should be copied verbatim from <ios>/Classes/',
       );
 
       // Dart entry uses the dartPluginClass and the platform interface package.
@@ -262,6 +257,121 @@ flutter:
       expect(outputDir.childFile('pubspec.yaml').existsSync(), isTrue);
     });
 
+    testWithoutContext('copies Objective-C sources verbatim', () {
+      final Directory sourceDir = _createIosPlugin(fs, name: 'audio_session', objc: true);
+      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
+      final Directory outputDir = fs.directory('/out/audio_session_tvos');
+
+      Scaffolder(
+        fileSystem: fs,
+        logger: BufferLogger.test(),
+        licenseHolder: 'Test',
+      ).scaffold(source: source, outputDirectory: outputDir);
+
+      // Both .h and .m land in tvos/Classes/ unchanged.
+      final Directory tvosClasses = outputDir.childDirectory('tvos').childDirectory('Classes');
+      expect(tvosClasses.childFile('URLLauncherPlugin.h').readAsStringSync(), _kRealisticObjcHeader);
+      expect(tvosClasses.childFile('URLLauncherPlugin.m').readAsStringSync(), _kRealisticObjcImpl);
+
+      // No Swift stub written when ObjC sources are present.
+      expect(tvosClasses.childFile('URLLauncherPlugin.swift').existsSync(), isFalse);
+    });
+
+    testWithoutContext('preserves subdirectory structure under Classes/', () {
+      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      // Add a nested helper file.
+      sourceDir
+          .childDirectory('ios')
+          .childDirectory('Classes')
+          .childDirectory('Helpers')
+          .childFile('UrlValidator.swift')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('// helper');
+      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
+      final Directory outputDir = fs.directory('/out/url_launcher_tvos');
+
+      Scaffolder(
+        fileSystem: fs,
+        logger: BufferLogger.test(),
+        licenseHolder: 'Test',
+      ).scaffold(source: source, outputDirectory: outputDir);
+
+      // Helper landed at tvos/Classes/Helpers/UrlValidator.swift, not flattened.
+      expect(
+        outputDir
+            .childDirectory('tvos')
+            .childDirectory('Classes')
+            .childDirectory('Helpers')
+            .childFile('UrlValidator.swift')
+            .readAsStringSync(),
+        '// helper',
+      );
+    });
+
+    testWithoutContext('copies <platform>/Resources/ when present', () {
+      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      sourceDir
+          .childDirectory('ios')
+          .childDirectory('Resources')
+          .childFile('Localizable.strings')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('"key" = "value";');
+      sourceDir
+          .childDirectory('ios')
+          .childDirectory('Resources')
+          .childDirectory('Assets.xcassets')
+          .childFile('Contents.json')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('{"info": {"version": 1}}');
+      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
+      final Directory outputDir = fs.directory('/out/url_launcher_tvos');
+
+      Scaffolder(
+        fileSystem: fs,
+        logger: BufferLogger.test(),
+        licenseHolder: 'Test',
+      ).scaffold(source: source, outputDirectory: outputDir);
+
+      final Directory tvosResources = outputDir.childDirectory('tvos').childDirectory('Resources');
+      expect(tvosResources.childFile('Localizable.strings').readAsStringSync(), '"key" = "value";');
+      expect(
+        tvosResources.childDirectory('Assets.xcassets').childFile('Contents.json').readAsStringSync(),
+        '{"info": {"version": 1}}',
+      );
+    });
+
+    testWithoutContext('falls back to Swift stub when source has no native files', () {
+      final Directory dir = fs.directory('/p')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: empty_native_plugin
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: EmptyNativePlugin
+        dartPluginClass: EmptyNativePluginIOS
+''');
+      // Note: no ios/Classes/ files at all.
+      dir.childDirectory('ios').childDirectory('Classes').createSync(recursive: true);
+      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(dir);
+      final Directory outputDir = fs.directory('/out/empty_native_plugin_tvos');
+
+      Scaffolder(
+        fileSystem: fs,
+        logger: BufferLogger.test(),
+        licenseHolder: 'Test',
+      ).scaffold(source: source, outputDirectory: outputDir);
+
+      final Directory tvosClasses = outputDir.childDirectory('tvos').childDirectory('Classes');
+      // Stub Swift class is emitted with the plugin class name from pubspec.
+      expect(
+        tvosClasses.childFile('EmptyNativePlugin.swift').readAsStringSync(),
+        contains('public class EmptyNativePlugin'),
+      );
+      // Bridging header companion is also written in stub mode.
+      expect(tvosClasses.childFile('EmptyNativePlugin-Bridging-Header.h').existsSync(), isTrue);
+    });
+
     testWithoutContext('copies LICENSE from source when present', () {
       final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
       sourceDir.childFile('LICENSE').writeAsStringSync('BSD-3 license body');
@@ -311,10 +421,49 @@ flutter:
   final Directory classes = dir.childDirectory('ios').childDirectory('Classes')
     ..createSync(recursive: true);
   if (objc) {
-    classes.childFile('URLLauncherPlugin.h').writeAsStringSync('// header');
-    classes.childFile('URLLauncherPlugin.m').writeAsStringSync('// impl');
+    classes.childFile('URLLauncherPlugin.h').writeAsStringSync(_kRealisticObjcHeader);
+    classes.childFile('URLLauncherPlugin.m').writeAsStringSync(_kRealisticObjcImpl);
   } else {
-    classes.childFile('URLLauncherPlugin.swift').writeAsStringSync('// stub');
+    classes.childFile('URLLauncherPlugin.swift').writeAsStringSync(_kRealisticSwiftSource);
   }
   return dir;
 }
+
+/// A trimmed-down Swift implementation that looks enough like a real plugin
+/// for "copied verbatim" tests to be meaningful. Keep this in sync with the
+/// expected-content checks in tests above.
+const String _kRealisticSwiftSource = '''
+import Flutter
+import UIKit
+
+public class URLLauncherPlugin: NSObject, FlutterPlugin {
+  public static func register(with registrar: FlutterPluginRegistrar) {
+    let channel = FlutterMethodChannel(
+      name: "plugins.flutter.io/url_launcher_ios",
+      binaryMessenger: registrar.messenger())
+    let instance = URLLauncherPlugin()
+    registrar.addMethodCallDelegate(instance, channel: channel)
+  }
+
+  public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    result(FlutterMethodNotImplemented)
+  }
+}
+''';
+
+const String _kRealisticObjcHeader = '''
+#import <Flutter/Flutter.h>
+
+@interface URLLauncherPlugin : NSObject <FlutterPlugin>
+@end
+''';
+
+const String _kRealisticObjcImpl = '''
+#import "URLLauncherPlugin.h"
+
+@implementation URLLauncherPlugin
++ (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {
+  // Intentionally empty for the test fixture.
+}
+@end
+''';
