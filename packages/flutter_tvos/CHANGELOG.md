@@ -1,4 +1,8 @@
-## 1.1.0
+## 1.0.1
+
+- Changelog corrected and metadata updated for publication on pub.dev (removed incorrect 1.1.0 header and merged entries under 1.0.0).
+
+## 1.0.0
 
 ### Remote Control (RCU)
 
@@ -31,8 +35,6 @@
 - **Touches channel no longer spams** "message discarded" warnings
   when no `addRawListener` is registered — engine installs a no-op
   drain, transparently replaced by Dart handler on attach.
-
-## 1.0.0
 
 - Initial release
 - Platform detection: `isTvOS`, `isSimulator`

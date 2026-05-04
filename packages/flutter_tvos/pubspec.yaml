@@ -1,6 +1,6 @@
 name: flutter_tvos
 description: Platform detection and utilities for Flutter apps running on Apple TV (tvOS). Provides runtime checks for tvOS, device info, and capability queries.
-version: 1.0.0
+version: 1.0.1
 homepage: https://fluttertv.dev
 repository: https://github.com/fluttertv/flutter-tvos
 
