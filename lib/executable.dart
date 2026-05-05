@@ -17,14 +17,23 @@ import 'package:flutter_tools/src/base/template.dart';
 import 'package:flutter_tools/src/build_system/build_targets.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/assemble.dart';
+import 'package:flutter_tools/src/commands/channel.dart';
 import 'package:flutter_tools/src/commands/config.dart';
+import 'package:flutter_tools/src/commands/daemon.dart';
+import 'package:flutter_tools/src/commands/debug_adapter.dart';
 import 'package:flutter_tools/src/commands/doctor.dart';
+import 'package:flutter_tools/src/commands/downgrade.dart';
 import 'package:flutter_tools/src/commands/emulators.dart';
+import 'package:flutter_tools/src/commands/generate.dart';
 import 'package:flutter_tools/src/commands/generate_localizations.dart';
 import 'package:flutter_tools/src/commands/install.dart';
 import 'package:flutter_tools/src/commands/logs.dart';
+import 'package:flutter_tools/src/commands/packages.dart';
 import 'package:flutter_tools/src/commands/screenshot.dart';
+import 'package:flutter_tools/src/commands/shell_completion.dart';
 import 'package:flutter_tools/src/commands/symbolize.dart';
+import 'package:flutter_tools/src/commands/update_packages.dart';
+import 'package:flutter_tools/src/commands/upgrade.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/features.dart';
@@ -81,10 +90,19 @@ Future<void> main(List<String> args) async {
   await runner.run(
     args,
     () => <FlutterCommand>[
-      // Commands directly from flutter_tools.
+      // Commands forwarded directly from flutter_tools — these have no
+      // tvOS-specific behaviour, so we register them as-is. Anything we
+      // do NOT register here would print "Could not find a command named
+      // X" on `flutter-tvos X`, even though plain `flutter X` works.
+      AssembleCommand(verboseHelp: verboseHelp, buildSystem: globals.buildSystem),
+      ChannelCommand(verboseHelp: verboseHelp),
       ConfigCommand(verboseHelp: verboseHelp),
+      DaemonCommand(hidden: !verboseHelp),
+      DebugAdapterCommand(verboseHelp: verboseHelp),
       DoctorCommand(verbose: verbose),
+      DowngradeCommand(verboseHelp: verboseHelp, logger: globals.logger),
       EmulatorsCommand(),
+      GenerateCommand(),
       GenerateLocalizationsCommand(
         fileSystem: globals.fs,
         logger: globals.logger,
@@ -93,9 +111,19 @@ Future<void> main(List<String> args) async {
       ),
       InstallCommand(verboseHelp: verboseHelp),
       LogsCommand(sigint: ProcessSignal.sigint, sigterm: ProcessSignal.sigterm),
+      // Upstream `pub` (and its alias `packages`) — registers `pub get`,
+      // `pub upgrade`, `pub add`, `pub remove`, `pub publish`, `pub
+      // outdated`, `pub deps`, `pub cache`, `pub run`, `pub global`,
+      // `pub token`. Without this, `flutter-tvos pub get` fails with
+      // "Could not find a command named 'pub'" — an invisible regression
+      // because the `flutter test` / `flutter run` pre-step runs pub-get
+      // internally, so users only notice when they invoke pub directly.
+      PackagesCommand(),
       ScreenshotCommand(fs: globals.fs),
+      ShellCompletionCommand(),
       SymbolizeCommand(stdio: globals.stdio, fileSystem: globals.fs),
-      AssembleCommand(verboseHelp: verboseHelp, buildSystem: globals.buildSystem),
+      UpdatePackagesCommand(verboseHelp: verboseHelp),
+      UpgradeCommand(verboseHelp: verboseHelp),
       // Commands extended for tvOS.
       TvosAttachCommand(
         verboseHelp: verboseHelp,
