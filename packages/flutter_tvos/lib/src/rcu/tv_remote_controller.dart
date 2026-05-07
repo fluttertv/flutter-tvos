@@ -5,8 +5,7 @@
 import 'dart:async' show unawaited;
 
 import 'package:flutter/foundation.dart'
-    show ErrorDescription, FlutterError, FlutterErrorDetails, visibleForTesting;
-import 'package:flutter/widgets.dart' show Widget, WidgetsFlutterBinding, runApp;
+  show ErrorDescription, FlutterError, FlutterErrorDetails, visibleForTesting;
 
 import '../platform_extension.dart' show FlutterTvosPlatform;
 import 'swipe_detector.dart';
@@ -18,8 +17,9 @@ import 'tv_remote_protocol.dart';
 /// All tuning is shipped to the native plugin when [config] is assigned
 /// (and once at [init]) via the `configure` method on the
 /// [TvRemoteChannels.button] channel. Mutations take effect on the next
-/// input event. On iOS / Android `config` is a no-op — [runTvApp] does
-/// not call [init] there.
+/// input event. On iOS / Android `config` is a no-op. On tvOS the
+/// controller now initializes lazily the first time you use [config],
+/// [addRawListener], or [addSwipeListener].
 class TvRemoteConfig {
   const TvRemoteConfig({
     this.shortSwipeThreshold = 0.3,
@@ -148,8 +148,9 @@ typedef SwipeListener = void Function(SwipeEvent event);
 ///   - fan-outs raw touchpad events to [addRawListener] consumers
 ///     (video scrubbers, custom swipe zones).
 ///
-/// Initialize at app start via [runTvApp] or by calling
-/// `TvRemoteController.instance.init()`.
+/// The controller initializes lazily the first time you use [config],
+/// [addRawListener], or [addSwipeListener] on tvOS, so plain `runApp`
+/// is enough for apps that only need the controller API.
 class TvRemoteController {
   TvRemoteController._();
 
@@ -162,7 +163,8 @@ class TvRemoteController {
   TvRemoteConfig get config => _config;
   set config(TvRemoteConfig next) {
     _config = next;
-    _cachedSwipe = null;  // force rebuild of the raw-listener detector
+    _cachedSwipe = null;
+    _ensureInitialized();
     if (_initialized) {
       _pushConfig();
     }
@@ -188,7 +190,13 @@ class TvRemoteController {
   /// Wire up channel handlers. Idempotent — subsequent calls are no-ops.
   /// Does nothing if not running on tvOS.
   void init() {
-    if (!FlutterTvosPlatform.isTvos) return;
+    _ensureInitialized();
+  }
+
+  void _ensureInitialized() {
+    if (!FlutterTvosPlatform.isTvos) {
+      return;
+    }
     _attachChannelHandlers();
   }
 
@@ -209,7 +217,9 @@ class TvRemoteController {
   }
 
   void _attachChannelHandlers() {
-    if (_initialized) return;
+    if (_initialized) {
+      return;
+    }
     TvRemoteChannels.touches.setMessageHandler(_onTouchMessage);
     _initialized = true;
     _pushConfig();
@@ -228,6 +238,7 @@ class TvRemoteController {
 
   /// Register a listener that receives every raw touchpad event.
   void addRawListener(TvRemoteTouchListener listener) {
+    _ensureInitialized();
     _rawListeners.add(listener);
   }
 
@@ -247,6 +258,7 @@ class TvRemoteController {
   /// Use this for high-level gesture handling (video scrub, custom
   /// swipe zones) where focus-navigation arrow keys aren't enough.
   void addSwipeListener(SwipeListener listener) {
+    _ensureInitialized();
     _swipeListeners.add(listener);
   }
 
@@ -256,13 +268,17 @@ class TvRemoteController {
   }
 
   Future<dynamic> _onTouchMessage(dynamic message) async {
-    if (message is! Map) return null;
+    if (message is! Map) {
+      return null;
+    }
     final typeStr = message['type'];
     final x = (message['x'] as num?)?.toDouble() ?? 0.0;
     final y = (message['y'] as num?)?.toDouble() ?? 0.0;
 
     final phase = _phaseFromString(typeStr);
-    if (phase == null) return null;
+    if (phase == null) {
+      return null;
+    }
 
     if (_rawListeners.isNotEmpty) {
       final event = TvRemoteTouchEvent(phase: phase, x: x, y: y);
@@ -311,7 +327,9 @@ class TvRemoteController {
   }
 
   void _dispatchSwipe(SwipeEvent event) {
-    if (_swipeListeners.isEmpty) return;
+    if (_swipeListeners.isEmpty) {
+      return;
+    }
     // Iterate over a snapshot — see _onTouchMessage for rationale.
     // Wrap each listener in try/catch so one bad subscriber cannot
     // poison the rest.
@@ -328,41 +346,6 @@ class TvRemoteController {
       }
     }
   }
-}
-
-/// Entry point equivalent to [runApp] with RCU initialization on tvOS.
-/// On iOS / Android / other platforms this is a straight passthrough.
-///
-/// ```dart
-/// void main() => runTvApp(const MyApp());
-/// ```
-///
-/// **Custom `WidgetsBinding` subclasses.** `runTvApp` force-installs the
-/// concrete `WidgetsFlutterBinding`. If your app uses a custom binding
-/// subclass (e.g. for analytics observers), initialize it first and then
-/// wire up RCU manually:
-///
-/// ```dart
-/// void main() {
-///   MyCustomBinding.ensureInitialized();
-///   if (FlutterTvosPlatform.isTvos) {
-///     TvRemoteController.instance.init();
-///   }
-///   runApp(const MyApp());
-/// }
-/// ```
-///
-/// **Hot restart.** On hot restart the Dart VM re-initializes static
-/// state: `TvRemoteController.instance._initialized` resets to `false`
-/// and its channel handlers disappear. `runTvApp` is not re-invoked —
-/// only cold restart re-registers the RCU listeners. If the Remote
-/// appears dead after a hot restart, do a cold restart.
-void runTvApp(Widget app) {
-  WidgetsFlutterBinding.ensureInitialized();
-  if (FlutterTvosPlatform.isTvos) {
-    TvRemoteController.instance.init();
-  }
-  runApp(app);
 }
 
 TvRemoteTouchPhase? _phaseFromString(dynamic type) {

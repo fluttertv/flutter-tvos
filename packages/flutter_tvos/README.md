@@ -18,7 +18,7 @@ Add `flutter_tvos` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_tvos: ^1.0.0
+  flutter_tvos: ^1.0.2
 ```
 
 ## Usage
@@ -69,16 +69,7 @@ system. Swipes and button presses become keyboard events
 `Focus`/`Shortcuts`/`Actions` exactly like arrow keys on a physical
 keyboard would.
 
-**One-line setup:** use `runTvApp` in place of `runApp`:
-
-```dart
-import 'package:flutter_tvos/flutter_tvos.dart';
-
-void main() => runTvApp(const MyApp());
-```
-
-On iOS/Android `runTvApp` is a plain passthrough — the same `main.dart`
-works across all platforms.
+**Setup:** use normal `runApp`. The tvOS remote controller initializes lazily the first time you use `TvRemoteController` (for example via `config`, `addRawListener`, or `addSwipeListener`).
 
 ### What works out of the box
 
@@ -105,17 +96,46 @@ engine plugin (via a method-channel call); mutations take effect on
 the next input event.
 
 ```dart
+// Early config (when you must push config before widgets are built)
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   TvRemoteController.instance.config = const TvRemoteConfig(
-    shortSwipeThreshold: 0.4,                         // raw-listener swipe threshold
-    fastSwipeThreshold: 0.6,                          // "fast" flag threshold
-    dpadDeadZone: 0.6,                                // off-center distance for click bias
-    continuousSwipeMoveThreshold: 4,                  // consecutive moves before auto-repeat
+    shortSwipeThreshold: 0.4,
+    fastSwipeThreshold: 0.6,
+    dpadDeadZone: 0.6,
+    continuousSwipeMoveThreshold: 4,
     keyRepeatInitialDelay: Duration(milliseconds: 450),
     keyRepeatInterval: Duration(milliseconds: 100),
   );
-  runTvApp(const MyApp());
+  runApp(const MyApp());
+}
+
+// Safer default: configure from widget lifecycle (recommended)
+class MyApp extends StatefulWidget {
+  const MyApp({super.key});
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  @override
+  void initState() {
+    super.initState();
+
+    // Configure the controller from the widget lifecycle. This avoids
+    // early native initialization before the widget tree exists.
+    TvRemoteController.instance.config = const TvRemoteConfig(
+      shortSwipeThreshold: 0.4,
+      fastSwipeThreshold: 0.6,
+      dpadDeadZone: 0.6,
+      continuousSwipeMoveThreshold: 4,
+      keyRepeatInitialDelay: Duration(milliseconds: 450),
+      keyRepeatInterval: Duration(milliseconds: 100),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox();
 }
 ```
 
