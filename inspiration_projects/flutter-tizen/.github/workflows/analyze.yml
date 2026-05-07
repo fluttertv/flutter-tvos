@@ -1,0 +1,34 @@
+# Copyright 2025 Samsung Electronics Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+name: Analyze
+
+on: [push, pull_request]
+
+jobs:
+  dart:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: Fetch Flutter SDK
+        run: |
+          git clone https://github.com/flutter/flutter.git
+          cd flutter
+          git checkout $(cat ../bin/internal/flutter.version)
+      - name: Install pub dependencies
+        run: flutter/bin/flutter pub get
+      - name: Verify formatting
+        run: flutter/bin/dart format --output=none --set-exit-if-changed lib test packages
+      - name: Analyze project source
+        run: flutter/bin/dart analyze --fatal-infos lib test
+
+  csharp:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-dotnet@v2
+        with:
+          dotnet-version: "6.0.x"
+      - name: Verify formatting
+        run: dotnet format --verify-no-changes embedding/csharp

@@ -1,0 +1,16 @@
+PODS:
+  - shared_preferences_tvos (0.1.0)
+
+DEPENDENCIES:
+  - shared_preferences_tvos (from `/Users/aliustaoglu/Developer/playground/flutter_tvos_engine_monorepo/plugins/packages/shared_preferences_tvos/tvos`)
+
+EXTERNAL SOURCES:
+  shared_preferences_tvos:
+    :path: "/Users/aliustaoglu/Developer/playground/flutter_tvos_engine_monorepo/plugins/packages/shared_preferences_tvos/tvos"
+
+SPEC CHECKSUMS:
+  shared_preferences_tvos: d923908a75b9f6a6672e86e7b2ca1e1e257fb49d
+
+PODFILE CHECKSUM: d6a38b20a8c4fec14bc904320a7f8abd2a116641
+
+COCOAPODS: 1.16.2

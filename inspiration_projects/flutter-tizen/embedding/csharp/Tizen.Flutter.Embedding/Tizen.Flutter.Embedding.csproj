@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>library</OutputType>
+    <TargetFrameworks>netstandard2.0;tizen40;tizen80;tizen90</TargetFrameworks>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>Tizen.Flutter.Embedding</PackageId>
+    <Version>1.2.2</Version>
+    <Authors>Samsung Electronics</Authors>
+    <Description>Provides APIs for embedding Flutter into Tizen apps.</Description>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/flutter-tizen</PackageProjectUrl>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Tizen.Flutter.Embedding.targets" PackagePath="build" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Tizen.NET" Version="9.0.0.16760" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'tizen40' Or '$(TargetFramework)' == 'tizen80'">
+    <Compile Remove="NUIFlutterView.cs" />
+  </ItemGroup>
+
+</Project>

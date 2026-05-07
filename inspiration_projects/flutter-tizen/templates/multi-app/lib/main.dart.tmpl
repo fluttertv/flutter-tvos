@@ -1,0 +1,131 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:messageport_tizen/messageport_tizen.dart';
+import 'package:tizen_app_control/tizen_app_control.dart';
+import 'package:tizen_app_manager/tizen_app_manager.dart';
+
+const String _kAppId = '{{tizenIdentifier}}';
+const String _kServiceAppId = '{{tizenIdentifier}}_service';
+const String _kPortName = 'port_name';
+
+// UI and service applications share the same Dart code but have different
+// entry points. This is the main entry point for your UI application.
+void main() {
+  runApp(const MyApp());
+}
+
+// This is the main entry point for your service application.
+// @pragma('vm:entry-point') prevents this function from being optimized out
+// (tree-shaken) during AOT compilation.
+@pragma('vm:entry-point')
+void serviceMain() {
+  // This call is necessary for setting up internal platform channels.
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // UI and service applications are run as separate processes and do not
+  // share memory. They can communicate with each other in various ways,
+  // such as inter-process communication through message ports, networking,
+  // or even simple file I/O (applications in a package share the same data
+  // directory).
+  // In this example, we use Tizen's Message Port API (messageport_tizen) to
+  // send serialized messages from the service application to the UI
+  // application. Modify this with your own logic.
+  RemotePort.connect(_kAppId, _kPortName).then((RemotePort remotePort) async {
+    while (true) {
+      if (await remotePort.check()) {
+        await remotePort.send('text message');
+      } else {
+        break;
+      }
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+  }).whenComplete(() async {
+    // Close the application if the connection has failed or ended.
+    await SystemNavigator.pop();
+  });
+}
+
+class MyApp extends StatefulWidget {
+  const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  LocalPort? _localPort;
+  int _messagesCount = 0;
+  bool _isServiceStarted = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // The UI application receives messages from the service application
+    // through this local message port.
+    LocalPort.create(_kPortName).then((LocalPort value) {
+      _localPort = value;
+      _localPort?.register((dynamic message, [RemotePort? remotePort]) {
+        setState(() {
+          _messagesCount++;
+        });
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+
+    _localPort?.unregister();
+  }
+
+  Future<void> _launchService() async {
+    await AppControl(appId: _kServiceAppId).sendLaunchRequest();
+    setState(() {
+      _isServiceStarted = true;
+    });
+  }
+
+  void _terminateService() {
+    AppRunningContext(appId: _kServiceAppId).terminate(background: true);
+    setState(() {
+      _isServiceStarted = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(
+          title: const Text('Tizen Multi App Demo'),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (_isServiceStarted)
+                ElevatedButton(
+                  onPressed: _terminateService,
+                  style: ElevatedButton.styleFrom(
+                    foregroundColor: Colors.redAccent,
+                  ),
+                  child: const Text('Terminate service'),
+                )
+              else
+                ElevatedButton(
+                  onPressed: _launchService,
+                  child: const Text('Launch service'),
+                ),
+              const SizedBox(height: 10),
+              Text('Received messages: $_messagesCount'),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

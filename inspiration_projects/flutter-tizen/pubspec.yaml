@@ -1,0 +1,35 @@
+name: flutter_tizen
+description: Flutter application build tools for Tizen devices.
+homepage: https://github.com/flutter-tizen/flutter-tizen
+publish_to: "none"
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  analyzer:
+  archive:
+  fake_async:
+  flutter_tools:
+    path: flutter/packages/flutter_tools
+  file:
+  http:
+  meta:
+  package_config:
+  path:
+  process:
+  unified_analytics:
+  vm_service:
+  xml:
+  yaml:
+
+dev_dependencies:
+  args:
+  file_testing:
+  flutter_test:
+    sdk: flutter
+  pubspec_parse:
+  test:
+
+dependency_overrides:
+  meta: ^1.17.0

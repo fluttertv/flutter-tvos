@@ -1,0 +1,27 @@
+name: url_launcher_tvos
+description: tvOS implementation of the url_launcher plugin, backed by UIApplication.open.
+version: 0.1.0
+homepage: https://github.com/fluttertv/plugins/tree/main/packages/url_launcher_tvos
+repository: https://github.com/fluttertv/plugins
+issue_tracker: https://github.com/fluttertv/plugins/issues
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.3.0"
+
+flutter:
+  plugin:
+    implements: url_launcher
+    platforms:
+      tvos:
+        pluginClass: UrlLauncherTvosPlugin
+        dartPluginClass: UrlLauncherTvos
+
+dependencies:
+  flutter:
+    sdk: flutter
+  url_launcher_platform_interface: ^2.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

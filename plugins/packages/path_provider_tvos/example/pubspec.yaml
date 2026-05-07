@@ -1,0 +1,29 @@
+name: path_provider_example
+description: Demonstrates how to use the path_provider plugin on tvOS.
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+  flutter: ">=3.35.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Upstream plugin from pub.dev. Vendored example code is unchanged from
+  # the official flutter/packages repo; only the platform implementation
+  # dependencies differ.
+  path_provider: ^2.1.0
+  # The tvOS federated implementation under test.
+  path_provider_tvos:
+    path: ../
+  path_provider_platform_interface: ^2.1.0
+
+dev_dependencies:
+  build_runner: ^2.1.10
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

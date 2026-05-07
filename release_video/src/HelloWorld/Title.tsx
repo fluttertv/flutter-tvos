@@ -1,0 +1,71 @@
+import React from "react";
+import { spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { FONT_FAMILY } from "./constants";
+
+const title: React.CSSProperties = {
+  fontFamily: FONT_FAMILY,
+  fontWeight: "bold",
+  fontSize: 100,
+  textAlign: "center",
+  position: "absolute",
+  top: 160,
+  width: "100%",
+};
+
+const word: React.CSSProperties = {
+  marginLeft: 10,
+  marginRight: 10,
+  display: "inline-block",
+};
+
+export const Title: React.FC<{
+  readonly titleText: string;
+  readonly titleColor: string;
+}> = ({ titleText, titleColor }) => {
+  const videoConfig = useVideoConfig();
+  const frame = useCurrentFrame();
+
+  const words = titleText.split(" ");
+
+  return (
+    <h1 style={title}>
+      {words.map((t, i) => {
+        const delay = i * 5;
+
+        const scale = spring({
+          fps: videoConfig.fps,
+          frame: frame - delay,
+          config: {
+            damping: 200,
+          },
+        });
+
+        // Highlight -tvos part
+        let displayNode: React.ReactNode = t;
+        if (t === "flutter-tvos") {
+          displayNode = (
+            <>
+              <span style={{ color: "#0175C2" }}>flutter</span>
+              <span style={{ color: "#FF453A" }}>-tvos</span>
+            </>
+          );
+        } else if (t === "flutter") {
+           displayNode = <span style={{ color: "#0175C2" }}>flutter</span>;
+        }
+
+        return (
+          <span
+            key={t}
+            style={{
+              ...word,
+              color: titleColor,
+              transform: `scale(${scale})`,
+            }}
+          >
+            {displayNode}
+          </span>
+        );
+      })}
+    </h1>
+  );
+};

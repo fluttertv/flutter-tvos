@@ -1,0 +1,94 @@
+# Copyright 2025 Samsung Electronics Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  tool:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Fetch Flutter SDK
+        run: |
+          git clone https://github.com/flutter/flutter.git
+          cd flutter
+          git checkout $(cat ../bin/internal/flutter.version)
+      - name: Run tests
+        run: flutter/bin/flutter test --coverage
+      - name: Report coverage
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt update
+          sudo apt install -y lcov
+          lcov --summary coverage/lcov.info
+          lcov --list coverage/lcov.info
+
+  embedding:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-dotnet@v2
+        with:
+          dotnet-version: "6.0.x"
+      - name: Run tests
+        run: dotnet test embedding/csharp
+
+  e2e:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          path: flutter-tizen
+      - name: Install Tizen Studio
+        run: |
+          sudo add-apt-repository ppa:deadsnakes/ppa
+          sudo apt update
+          sudo apt install -y libncurses5 python3.8 libpython3.8 gettext \
+            libkf5itemmodels5 libkf5kiowidgets5 libkchart2 dbus-x11 gnome-keyring
+          curl https://download.tizen.org/sdk/Installer/tizen-sdk_10.0/web-cli_Tizen_SDK_10.0_ubuntu-64.bin -o install.bin
+          chmod a+x install.bin
+          ./install.bin --accept-license $HOME/tizen-studio
+          rm install.bin
+      - name: Install Tizen Studio packages
+        run: |
+          $HOME/tizen-studio/package-manager/package-manager-cli.bin install \
+            NativeToolchain-Gcc-9.2 \
+            IOT-Headed-6.0-NativeAppDevelopment-CLI
+      - name: Create a Tizen certificate profile
+        run: |
+          export PATH=$PATH:$HOME/tizen-studio/tools/ide/bin
+          dbus-run-session -- bash -c "
+          echo tizen | gnome-keyring-daemon --unlock &&
+          tizen certificate -a tizen -p tizen -f tizen &&
+          tizen security-profiles add \
+            -n tizen \
+            -a $HOME/tizen-studio-data/keystore/author/tizen.p12 \
+            -p tizen
+          "
+      - name: Set up flutter-tizen
+        run: |
+          export PATH=`pwd`/flutter-tizen/bin:$PATH
+          echo $PATH >> $GITHUB_PATH
+          flutter-tizen doctor -v
+      - name: Build native TPK
+        run: |
+          flutter-tizen create --tizen-language cpp native_app
+          cd native_app
+          dbus-run-session -- bash -c "
+          echo tizen | gnome-keyring-daemon --unlock &&
+          flutter-tizen build tpk -pcommon --debug
+          "
+      - name: Build .NET TPK
+        run: |
+          flutter-tizen create --tizen-language csharp dotnet_app
+          cd dotnet_app
+          dbus-run-session -- bash -c "
+          echo tizen | gnome-keyring-daemon --unlock &&
+          flutter-tizen build tpk -pcommon --debug
+          "

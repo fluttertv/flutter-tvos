@@ -1,0 +1,12 @@
+diff --git a/packages/flutter_tools/templates/module/common/.gitignore.tmpl b/packages/flutter_tools/templates/module/common/.gitignore.tmpl
+index 5d88593fb3b..12e37795175 100644
+--- a/packages/flutter_tools/templates/module/common/.gitignore.tmpl
++++ b/packages/flutter_tools/templates/module/common/.gitignore.tmpl
+@@ -39,6 +39,7 @@ Icon?
+ build/
+ .android/
+ .ios/
++.tizen/
+ .flutter-plugins-dependencies
+ 
+ # Symbolication related

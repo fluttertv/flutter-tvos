@@ -1,0 +1,172 @@
+name: Build tvOS Engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      variants:
+        description: 'Build variants (space-separated: debug_sim debug profile release all)'
+        required: false
+        default: 'all'
+      flutter_version:
+        description: 'Flutter engine version tag (e.g., 3.41.4)'
+        required: false
+        default: '3.41.4'
+  push:
+    tags:
+      - 'v*'
+
+env:
+  ENGINE_DIR: flutter_upstream_3414
+
+jobs:
+  build:
+    runs-on: macos-14  # Apple Silicon runner
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - debug_sim
+          - debug
+          - profile
+          - release
+        include:
+          - variant: debug_sim
+            artifact_name: tvos_debug_sim_arm64
+          - variant: debug
+            artifact_name: tvos_debug_arm64
+          - variant: profile
+            artifact_name: tvos_profile_arm64
+          - variant: release
+            artifact_name: tvos_release_arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install depot_tools
+        run: |
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          echo "$GITHUB_WORKSPACE/depot_tools" >> $GITHUB_PATH
+
+      - name: Cache gclient sync
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ENGINE_DIR }}/engine/src
+          key: gclient-${{ runner.os }}-${{ hashFiles(format('{0}/DEPS', env.ENGINE_DIR)) }}
+          restore-keys: |
+            gclient-${{ runner.os }}-
+
+      - name: gclient sync
+        working-directory: ${{ env.ENGINE_DIR }}
+        run: |
+          if [ ! -f engine/src/.gclient_entries ]; then
+            gclient sync --no-history
+          else
+            echo "Using cached gclient sync"
+          fi
+
+      - name: Apply tvOS patches
+        working-directory: ${{ env.ENGINE_DIR }}
+        run: |
+          ./tvos_patches/apply_patches.sh
+
+      - name: Build ${{ matrix.variant }}
+        working-directory: ${{ env.ENGINE_DIR }}
+        run: |
+          ./build_tvos_engine.sh ${{ matrix.variant }}
+
+      - name: Package ${{ matrix.variant }}
+        working-directory: ${{ env.ENGINE_DIR }}
+        run: |
+          ./package_artifacts.sh "$GITHUB_WORKSPACE/artifacts"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/${{ matrix.artifact_name }}.zip
+          retention-days: 30
+
+  build-host:
+    runs-on: macos-14
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        variant:
+          - host_debug
+          - host_release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install depot_tools
+        run: |
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          echo "$GITHUB_WORKSPACE/depot_tools" >> $GITHUB_PATH
+
+      - name: Cache gclient sync
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ENGINE_DIR }}/engine/src
+          key: gclient-${{ runner.os }}-${{ hashFiles(format('{0}/DEPS', env.ENGINE_DIR)) }}
+          restore-keys: |
+            gclient-${{ runner.os }}-
+
+      - name: gclient sync
+        working-directory: ${{ env.ENGINE_DIR }}
+        run: |
+          if [ ! -f engine/src/.gclient_entries ]; then
+            gclient sync --no-history
+          else
+            echo "Using cached gclient sync"
+          fi
+
+      - name: Build ${{ matrix.variant }}
+        working-directory: ${{ env.ENGINE_DIR }}
+        run: |
+          ./build_tvos_engine.sh ${{ matrix.variant }}
+
+      - name: Package ${{ matrix.variant }}
+        working-directory: ${{ env.ENGINE_DIR }}
+        run: |
+          ./package_artifacts.sh "$GITHUB_WORKSPACE/artifacts"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.variant }}
+          path: artifacts/${{ matrix.variant }}.zip
+          retention-days: 30
+
+  release:
+    needs: [build, build-host]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false

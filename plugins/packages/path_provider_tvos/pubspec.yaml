@@ -1,0 +1,27 @@
+name: path_provider_tvos
+description: tvOS implementation of the path_provider plugin, backed by NSFileManager.
+version: 0.1.0
+homepage: https://github.com/fluttertv/plugins/tree/main/packages/path_provider_tvos
+repository: https://github.com/fluttertv/plugins
+issue_tracker: https://github.com/fluttertv/plugins/issues
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.3.0"
+
+flutter:
+  plugin:
+    implements: path_provider
+    platforms:
+      tvos:
+        pluginClass: PathProviderTvosPlugin
+        dartPluginClass: PathProviderTvos
+
+dependencies:
+  flutter:
+    sdk: flutter
+  path_provider_platform_interface: ^2.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
