@@ -1,8 +1,8 @@
 ## 1.0.2
 
 - Removed the `runTvApp` helper from the public API; apps should use normal `runApp`.
-- `TvRemoteController` now initializes lazily on first controller use (`config`, `addRawListener`, `addSwipeListener`) on tvOS.
-- Updated README setup/tuning guidance to reflect lazy initialization and current usage patterns.
+- `TvRemoteController.instance.init()` now initializes Flutter bindings if needed, attaches Dart touch handlers explicitly, and remains a no-op off tvOS.
+- Updated README setup/tuning guidance to reflect explicit initialization and current usage patterns.
 
 ## 1.0.1
 

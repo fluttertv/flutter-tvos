@@ -5,7 +5,8 @@
 import 'dart:async' show unawaited;
 
 import 'package:flutter/foundation.dart'
-  show ErrorDescription, FlutterError, FlutterErrorDetails, visibleForTesting;
+    show ErrorDescription, FlutterError, FlutterErrorDetails, visibleForTesting;
+import 'package:flutter/widgets.dart' show WidgetsFlutterBinding;
 
 import '../platform_extension.dart' show FlutterTvosPlatform;
 import 'swipe_detector.dart';
@@ -17,9 +18,9 @@ import 'tv_remote_protocol.dart';
 /// All tuning is shipped to the native plugin when [config] is assigned
 /// (and once at [init]) via the `configure` method on the
 /// [TvRemoteChannels.button] channel. Mutations take effect on the next
-/// input event. On iOS / Android `config` is a no-op. On tvOS the
-/// controller now initializes lazily the first time you use [config],
-/// [addRawListener], or [addSwipeListener].
+/// input event. Before [TvRemoteController.init] runs, `config` is stored
+/// locally and pushed once during initialization. On iOS / Android `config`
+/// is a no-op.
 class TvRemoteConfig {
   const TvRemoteConfig({
     this.shortSwipeThreshold = 0.3,
@@ -28,8 +29,7 @@ class TvRemoteConfig {
     this.continuousSwipeMoveThreshold = 3,
     this.keyRepeatInitialDelay = const Duration(milliseconds: 400),
     this.keyRepeatInterval = const Duration(milliseconds: 80),
-  })  : assert(shortSwipeThreshold > 0,
-            'shortSwipeThreshold must be positive'),
+  })  : assert(shortSwipeThreshold > 0, 'shortSwipeThreshold must be positive'),
         assert(fastSwipeThreshold >= shortSwipeThreshold,
             'fastSwipeThreshold must be >= shortSwipeThreshold'),
         assert(dpadDeadZone > 0,
@@ -99,8 +99,7 @@ class TvRemoteTouchEvent {
   final double y;
 
   @override
-  String toString() =>
-      'TvRemoteTouchEvent($phase, ${x.toStringAsFixed(2)}, '
+  String toString() => 'TvRemoteTouchEvent($phase, ${x.toStringAsFixed(2)}, '
       '${y.toStringAsFixed(2)})';
 }
 
@@ -148,14 +147,17 @@ typedef SwipeListener = void Function(SwipeEvent event);
 ///   - fan-outs raw touchpad events to [addRawListener] consumers
 ///     (video scrubbers, custom swipe zones).
 ///
-/// The controller initializes lazily the first time you use [config],
-/// [addRawListener], or [addSwipeListener] on tvOS, so plain `runApp`
-/// is enough for apps that only need the controller API.
+/// Initialize once at app startup with `TvRemoteController.instance.init()`
+/// before registering listeners or relying on remote input. This keeps
+/// initialization order explicit and easy to debug.
 class TvRemoteController {
   TvRemoteController._();
 
   /// Process-wide singleton.
   static final TvRemoteController instance = TvRemoteController._();
+
+  @visibleForTesting
+  static bool debugForceTvosForTesting = false;
 
   TvRemoteConfig _config = const TvRemoteConfig();
 
@@ -164,7 +166,6 @@ class TvRemoteController {
   set config(TvRemoteConfig next) {
     _config = next;
     _cachedSwipe = null;
-    _ensureInitialized();
     if (_initialized) {
       _pushConfig();
     }
@@ -188,13 +189,15 @@ class TvRemoteController {
   bool _initialized = false;
 
   /// Wire up channel handlers. Idempotent — subsequent calls are no-ops.
+  /// Ensures Flutter bindings are initialized before touching channels.
   /// Does nothing if not running on tvOS.
   void init() {
+    WidgetsFlutterBinding.ensureInitialized();
     _ensureInitialized();
   }
 
   void _ensureInitialized() {
-    if (!FlutterTvosPlatform.isTvos) {
+    if (!FlutterTvosPlatform.isTvos && !debugForceTvosForTesting) {
       return;
     }
     _attachChannelHandlers();
@@ -238,7 +241,6 @@ class TvRemoteController {
 
   /// Register a listener that receives every raw touchpad event.
   void addRawListener(TvRemoteTouchListener listener) {
-    _ensureInitialized();
     _rawListeners.add(listener);
   }
 
@@ -258,7 +260,6 @@ class TvRemoteController {
   /// Use this for high-level gesture handling (video scrub, custom
   /// swipe zones) where focus-navigation arrow keys aren't enough.
   void addSwipeListener(SwipeListener listener) {
-    _ensureInitialized();
     _swipeListeners.add(listener);
   }
 

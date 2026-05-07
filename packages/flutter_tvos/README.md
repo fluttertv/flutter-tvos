@@ -69,7 +69,25 @@ system. Swipes and button presses become keyboard events
 `Focus`/`Shortcuts`/`Actions` exactly like arrow keys on a physical
 keyboard would.
 
-**Setup:** use normal `runApp`. The tvOS remote controller initializes lazily the first time you use `TvRemoteController` (for example via `config`, `addRawListener`, or `addSwipeListener`).
+Basic remote navigation works through Flutter's normal key/focus system. If
+your app only uses `Focus`, `Shortcuts`, `Actions`, buttons, lists, and other
+standard focusable widgets, no Dart listener setup is required.
+
+Call `TvRemoteController.instance.init()` once in `main()` when you use
+`TvRemoteController` APIs such as `config`, `addRawListener`, or
+`addSwipeListener`. `init()` is idempotent, initializes Flutter bindings if
+needed, attaches the Dart touch channel on tvOS, and is a no-op on other
+platforms.
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:flutter_tvos/flutter_tvos.dart';
+
+void main() {
+  TvRemoteController.instance.init();
+  runApp(const MyApp());
+}
+```
 
 ### What works out of the box
 
@@ -90,15 +108,15 @@ keyboard would.
 
 ### Tuning
 
-All tuning lives on `TvRemoteConfig`. Assigning a new config to
-`TvRemoteController.instance.config` ships the values to the native
-engine plugin (via a method-channel call); mutations take effect on
-the next input event.
+All tuning lives on `TvRemoteConfig`. Assigning a new config after
+initialization ships the values to the native engine plugin (via a
+method-channel call); mutations take effect on the next input event.
+Assigning config before `init()` is also supported: the value is stored
+locally and pushed once when `init()` runs.
 
 ```dart
 // Early config (when you must push config before widgets are built)
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
   TvRemoteController.instance.config = const TvRemoteConfig(
     shortSwipeThreshold: 0.4,
     fastSwipeThreshold: 0.6,
@@ -107,42 +125,21 @@ void main() {
     keyRepeatInitialDelay: Duration(milliseconds: 450),
     keyRepeatInterval: Duration(milliseconds: 100),
   );
+  TvRemoteController.instance.init();
   runApp(const MyApp());
 }
-
-// Safer default: configure from widget lifecycle (recommended)
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  @override
-  void initState() {
-    super.initState();
-
-    // Configure the controller from the widget lifecycle. This avoids
-    // early native initialization before the widget tree exists.
-    TvRemoteController.instance.config = const TvRemoteConfig(
-      shortSwipeThreshold: 0.4,
-      fastSwipeThreshold: 0.6,
-      dpadDeadZone: 0.6,
-      continuousSwipeMoveThreshold: 4,
-      keyRepeatInitialDelay: Duration(milliseconds: 450),
-      keyRepeatInterval: Duration(milliseconds: 100),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) => const SizedBox();
-}
 ```
+
+You can also assign `config` later, such as from `initState`, if the values
+depend on app state; after initialization, changes are pushed to native
+immediately.
 
 All fields have sensible defaults so apps that never touch `config`
 behave identically to the stock configuration.
 
 ### Raw touch listener (video players, custom swipe zones)
+
+Requires `TvRemoteController.instance.init()` in `main()`.
 
 ```dart
 TvRemoteController.instance.addRawListener((event) {
@@ -153,6 +150,8 @@ TvRemoteController.instance.addRawListener((event) {
 ```
 
 ### Swipe listener (high-level direction + magnitude)
+
+Requires `TvRemoteController.instance.init()` in `main()`.
 
 For consumers that just want "user swiped left/right/up/down" without
 hand-rolling a detector, subscribe at the swipe-event level:

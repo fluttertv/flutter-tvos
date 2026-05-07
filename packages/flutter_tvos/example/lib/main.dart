@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_tvos/flutter_tvos.dart';
 
-void main() => runApp(const FlutterTvosExampleApp());
+void main() {
+  TvRemoteController.instance.init();
+  runApp(const FlutterTvosExampleApp());
+}
 
 class FlutterTvosExampleApp extends StatelessWidget {
   const FlutterTvosExampleApp({super.key});
