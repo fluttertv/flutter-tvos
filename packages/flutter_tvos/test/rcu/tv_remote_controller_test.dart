@@ -274,6 +274,30 @@ void main() {
     });
   });
 
+  group('TvRemoteController platform guard', () {
+    test('init is a no-op when not running on tvOS', () async {
+      final configureCalls = <Map<String, Object?>>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(TvRemoteChannels.button,
+              (MethodCall call) async {
+        if (call.method == 'configure') {
+          configureCalls.add(Map<String, Object?>.from(call.arguments as Map));
+        }
+        return null;
+      });
+
+      try {
+        TvRemoteController.instance.init();
+        await Future<void>.delayed(Duration.zero);
+
+        expect(configureCalls, isEmpty);
+      } finally {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(TvRemoteChannels.button, null);
+      }
+    });
+  });
+
   group('TvRemoteController initialization regression tests', () {
     final configureCalls = <Map<String, Object?>>[];
 

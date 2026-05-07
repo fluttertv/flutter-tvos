@@ -89,6 +89,9 @@ void main() {
 }
 ```
 
+If your app uses a custom `WidgetsBinding` subclass, initialize that binding
+before calling `TvRemoteController.instance.init()`.
+
 ### What works out of the box
 
 - Swipes Up/Down/Left/Right on Siri Remote → arrow keys

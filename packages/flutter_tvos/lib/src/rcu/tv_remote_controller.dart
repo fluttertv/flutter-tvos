@@ -189,17 +189,13 @@ class TvRemoteController {
   bool _initialized = false;
 
   /// Wire up channel handlers. Idempotent — subsequent calls are no-ops.
-  /// Ensures Flutter bindings are initialized before touching channels.
-  /// Does nothing if not running on tvOS.
+  /// Does nothing if not running on tvOS. On tvOS, ensures Flutter bindings
+  /// are initialized before touching channels.
   void init() {
-    WidgetsFlutterBinding.ensureInitialized();
-    _ensureInitialized();
-  }
-
-  void _ensureInitialized() {
     if (!FlutterTvosPlatform.isTvos && !debugForceTvosForTesting) {
       return;
     }
+    WidgetsFlutterBinding.ensureInitialized();
     _attachChannelHandlers();
   }
 
