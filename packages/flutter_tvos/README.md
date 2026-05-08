@@ -75,9 +75,8 @@ standard focusable widgets, no Dart listener setup is required.
 
 Call `TvRemoteController.instance.init()` once in `main()` when you use
 `TvRemoteController` APIs such as `config`, `addRawListener`, or
-`addSwipeListener`. `init()` is idempotent, initializes Flutter bindings if
-needed, attaches the Dart touch channel on tvOS, and is a no-op on other
-platforms.
+`addSwipeListener`. `init()` is idempotent, attaches the Dart touch channel
+on tvOS, and is a no-op on other platforms.
 
 ```dart
 import 'package:flutter/material.dart';
@@ -88,9 +87,6 @@ void main() {
   runApp(const MyApp());
 }
 ```
-
-If your app uses a custom `WidgetsBinding` subclass, initialize that binding
-before calling `TvRemoteController.instance.init()`.
 
 ### What works out of the box
 
@@ -118,7 +114,7 @@ Assigning config before `init()` is also supported: the value is stored
 locally and pushed once when `init()` runs.
 
 ```dart
-// Early config (when you must push config before widgets are built)
+// Tuning before init (applied on initialization)
 void main() {
   TvRemoteController.instance.config = const TvRemoteConfig(
     shortSwipeThreshold: 0.4,
