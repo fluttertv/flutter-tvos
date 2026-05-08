@@ -6,7 +6,6 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/foundation.dart'
     show ErrorDescription, FlutterError, FlutterErrorDetails, visibleForTesting;
-import 'package:flutter/widgets.dart' show WidgetsFlutterBinding;
 
 import '../platform_extension.dart' show FlutterTvosPlatform;
 import 'swipe_detector.dart';
@@ -189,13 +188,11 @@ class TvRemoteController {
   bool _initialized = false;
 
   /// Wire up channel handlers. Idempotent — subsequent calls are no-ops.
-  /// Does nothing if not running on tvOS. On tvOS, ensures Flutter bindings
-  /// are initialized before touching channels.
+  /// Does nothing if not running on tvOS.
   void init() {
     if (!FlutterTvosPlatform.isTvos && !debugForceTvosForTesting) {
       return;
     }
-    WidgetsFlutterBinding.ensureInitialized();
     _attachChannelHandlers();
   }
 
