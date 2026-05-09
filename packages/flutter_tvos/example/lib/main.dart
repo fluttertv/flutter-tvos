@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_tvos/flutter_tvos.dart';
 
-void main() => runTvApp(const FlutterTvosExampleApp());
+void main() {
+  TvRemoteController.instance.init();
+  runApp(const FlutterTvosExampleApp());
+}
 
 class FlutterTvosExampleApp extends StatelessWidget {
   const FlutterTvosExampleApp({super.key});
@@ -151,7 +154,8 @@ class _InfoTile extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              style:
+                  const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           Text(value, style: const TextStyle(fontSize: 14)),
         ],
       ),
