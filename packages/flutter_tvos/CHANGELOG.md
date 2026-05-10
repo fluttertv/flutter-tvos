@@ -1,3 +1,8 @@
+## 1.0.3
+
+- Example: call `WidgetsFlutterBinding.ensureInitialized()` before `TvRemoteController.instance.init()` so the Flutter binding is ready when the platform channel attaches.
+- pubspec: added `issue_tracker` link so GitHub issues surface on pub.dev.
+
 ## 1.0.2
 
 - Removed the `runTvApp` helper from the public API; apps should use normal `runApp`.

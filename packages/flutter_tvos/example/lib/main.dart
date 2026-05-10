@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_tvos/flutter_tvos.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   TvRemoteController.instance.init();
   runApp(const FlutterTvosExampleApp());
 }
