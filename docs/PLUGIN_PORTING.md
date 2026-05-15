@@ -3,9 +3,14 @@
 This document is the canonical spec the implementation follows. It is split into
 phases; each phase is independently shippable and testable.
 
-> **Status snapshot**: Phase 1 (scaffolding only) implemented. Phases 2–7 follow
-> the staging in §10. Anything in this doc that is contradicted by the code on
-> `main` should be treated as the doc being out of date — fix the doc.
+> **Status snapshot**: Phases 1–3 implemented — scaffolding, verbatim native
+> copy, and the Swift transformer (compatibility database, import stripping,
+> method-handler stubbing) with `PORTING_REPORT.md` generation and the
+> `--no-report` flag. Phases 4–7 follow the staging in §10. One deviation
+> from §6.1: header-comment regeneration (§6.1.6) is **not** yet implemented
+> — the porter preserves the source header verbatim. Anything else in this
+> doc that is contradicted by the code on `main` should be treated as the
+> doc being out of date — fix the doc.
 
 ---
 

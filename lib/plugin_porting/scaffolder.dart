@@ -5,7 +5,9 @@
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 
+import 'report_emitter.dart';
 import 'source_analyzer.dart';
+import 'swift_porter.dart';
 import 'templates.dart' as tmpl;
 
 /// Writes the on-disk scaffolding for a `*_tvos` plugin package given an
@@ -38,13 +40,17 @@ class Scaffolder {
   /// Generates [source]'s tvOS scaffold into [outputDirectory].
   ///
   /// When [dryRun] is true no files are written; the call still produces a
-  /// [ScaffoldResult] reporting which paths *would* have been written. When
-  /// [overwrite] is false and [outputDirectory] already exists, throws.
+  /// [ScaffoldResult] reporting which paths *would* have been written and
+  /// the findings the Swift porter detected (so `--dry-run` can preview the
+  /// report). When [overwrite] is false and [outputDirectory] already
+  /// exists, throws. When [emitReport] is false, `PORTING_REPORT.md` is not
+  /// written (the `--no-report` flag) — the code transform still runs.
   ScaffoldResult scaffold({
     required PluginSource source,
     required Directory outputDirectory,
     bool overwrite = false,
     bool dryRun = false,
+    bool emitReport = true,
   }) {
     if (outputDirectory.existsSync() && !dryRun) {
       if (!overwrite) {
@@ -97,12 +103,38 @@ class Scaffolder {
       ),
     ];
 
-    // Phase 2: copy native sources verbatim from the source plugin's
-    // <platform>/Classes/ into the output's tvos/Classes/. Falls back to
-    // the Phase-1 stub when the source has no native files at all.
+    // Native sources from the source plugin's <platform>/Classes/ go into
+    // the output's tvos/Classes/. Phase 3: Swift files run through
+    // [SwiftPorter] (iOS-only imports stripped, unsupported method handlers
+    // stubbed); .h/.m/.mm are still copied verbatim (Phase 4 ports ObjC).
+    // Falls back to the Phase-1 stub when the source has no native files.
     final Directory tvosClassesDir = outputDirectory.childDirectory('tvos').childDirectory('Classes');
-    final List<_NativeCopy> nativeCopies = _collectNativeCopies(source, tvosClassesDir);
-    if (nativeCopies.isEmpty) {
+    final List<_NativeCopy> allNative = _collectNativeCopies(source, tvosClassesDir);
+    final List<_NativeCopy> nativeCopies = <_NativeCopy>[
+      for (final _NativeCopy c in allNative)
+        if (_fs.path.extension(c.source.path).toLowerCase() != '.swift') c,
+    ];
+    final List<_SwiftPort> swiftPorts = <_SwiftPort>[];
+    final List<SwiftPortingResult> portResults = <SwiftPortingResult>[];
+    final SwiftPorter porter = SwiftPorter();
+    for (final _NativeCopy c in allNative) {
+      if (_fs.path.extension(c.source.path).toLowerCase() != '.swift') {
+        continue;
+      }
+      final String relInPackage =
+          _fs.path.relative(c.destinationPath, from: outputDirectory.path);
+      final SwiftPortingResult r = porter.port(
+        c.source.readAsStringSync(),
+        fileRelativePath: relInPackage,
+      );
+      portResults.add(r);
+      swiftPorts.add(_SwiftPort(
+        destinationPath: c.destinationPath,
+        contents: r.transformed,
+      ));
+    }
+
+    if (allNative.isEmpty) {
       // No copyable sources — emit the Phase-1 stubs so the package still
       // builds and the user has something to paste their iOS code into.
       plan.add(_Plan(
@@ -130,11 +162,25 @@ class Scaffolder {
       copiedLicense = outputDirectory.childFile('LICENSE');
     }
 
+    // Phase 3: the porting report is generated alongside the package on
+    // every run unless `--no-report` is passed. It is rendered from the
+    // findings collected above so `--dry-run` can preview it too.
+    final File? reportFile =
+        emitReport ? outputDirectory.childFile('PORTING_REPORT.md') : null;
+    final String? reportContents = reportFile == null
+        ? null
+        : const ReportEmitter().render(source: source, results: portResults);
+
     if (!dryRun) {
       for (final p in plan) {
         final File f = _fs.file(p.path)..parent.createSync(recursive: true);
         f.writeAsStringSync(p.contents);
         _log.printTrace('  wrote ${p.path}');
+      }
+      for (final s in swiftPorts) {
+        final File f = _fs.file(s.destinationPath)..parent.createSync(recursive: true);
+        f.writeAsStringSync(s.contents);
+        _log.printTrace('  ported ${s.destinationPath}');
       }
       for (final c in <_NativeCopy>[...nativeCopies, ...resourceCopies]) {
         final File dst = _fs.file(c.destinationPath)..parent.createSync(recursive: true);
@@ -146,16 +192,27 @@ class Scaffolder {
         source.licenseFile!.copySync(copiedLicense.path);
         _log.printTrace('  copied LICENSE from ${source.licenseFile!.path}');
       }
+      if (reportFile != null && reportContents != null) {
+        reportFile.parent.createSync(recursive: true);
+        reportFile.writeAsStringSync(reportContents);
+        _log.printTrace('  wrote ${reportFile.path}');
+      }
     }
 
     return ScaffoldResult(
       outputDirectory: outputDirectory,
       writtenPaths: <String>[
         for (final _Plan p in plan) p.path,
+        for (final _SwiftPort s in swiftPorts) s.destinationPath,
         for (final _NativeCopy c in nativeCopies) c.destinationPath,
         for (final _NativeCopy c in resourceCopies) c.destinationPath,
         if (copiedLicense != null) copiedLicense.path,
+        if (reportFile != null) reportFile.path,
       ],
+      findings: <PortingFinding>[
+        for (final SwiftPortingResult r in portResults) ...r.findings,
+      ],
+      reportPath: reportFile?.path,
       dryRun: dryRun,
     );
   }
@@ -230,11 +287,24 @@ class ScaffoldResult {
   ScaffoldResult({
     required this.outputDirectory,
     required this.writtenPaths,
+    required this.findings,
+    required this.reportPath,
     required this.dryRun,
   });
 
   final Directory outputDirectory;
   final List<String> writtenPaths;
+
+  /// Every [PortingFinding] the Swift porter produced across all ported
+  /// sources. Empty when nothing tvOS-incompatible was detected. The
+  /// command uses this to decide whether to print the "manual review
+  /// required" banner.
+  final List<PortingFinding> findings;
+
+  /// Absolute path of the generated `PORTING_REPORT.md`, or `null` when
+  /// `--no-report` suppressed it.
+  final String? reportPath;
+
   final bool dryRun;
 }
 
@@ -262,4 +332,13 @@ class _NativeCopy {
   _NativeCopy({required this.source, required this.destinationPath});
   final File source;
   final String destinationPath;
+}
+
+/// A Swift source that was run through [SwiftPorter]. Unlike [_NativeCopy]
+/// the bytes written are the *transformed* content, not a verbatim copy —
+/// so the verbose log can say "ported X" rather than "copied X".
+class _SwiftPort {
+  _SwiftPort({required this.destinationPath, required this.contents});
+  final String destinationPath;
+  final String contents;
 }

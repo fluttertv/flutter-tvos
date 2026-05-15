@@ -296,7 +296,10 @@ flutter:
         licenseHolder: 'Test',
       ).scaffold(source: source, outputDirectory: outputDir);
 
-      // Helper landed at tvos/Classes/Helpers/UrlValidator.swift, not flattened.
+      // Helper landed at tvos/Classes/Helpers/UrlValidator.swift, not
+      // flattened. Phase 3: Swift files flow through SwiftPorter, which
+      // normalises the file to end with exactly one trailing newline — so
+      // the content is the source plus a `\n`, not a byte-for-byte copy.
       expect(
         outputDir
             .childDirectory('tvos')
@@ -304,7 +307,7 @@ flutter:
             .childDirectory('Helpers')
             .childFile('UrlValidator.swift')
             .readAsStringSync(),
-        '// helper',
+        '// helper\n',
       );
     });
 
