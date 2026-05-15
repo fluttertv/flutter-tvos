@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_tvos/src/rcu/swipe_detector.dart';
 import 'package:flutter_tvos/src/rcu/tv_remote_channels.dart';
@@ -23,8 +23,14 @@ Future<void> _sendTouch(Map<String, dynamic> message) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() => TvRemoteController.instance.debugReset());
-  tearDown(() => TvRemoteController.instance.debugReset());
+  setUp(() {
+    TvRemoteController.debugForceTvosForTesting = false;
+    TvRemoteController.instance.debugReset();
+  });
+  tearDown(() {
+    TvRemoteController.debugForceTvosForTesting = false;
+    TvRemoteController.instance.debugReset();
+  });
 
   group('TvRemoteController raw touch fan-out', () {
     test('raw listeners receive every touch event', () async {
@@ -132,7 +138,8 @@ void main() {
 
         await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
         expect(tailEvents.length, 1, reason: 'tail listener still runs');
-        expect(errors.length, 1, reason: 'first listener reported via FlutterError');
+        expect(errors.length, 1,
+            reason: 'first listener reported via FlutterError');
       } finally {
         FlutterError.onError = previousOnError;
       }
@@ -170,16 +177,16 @@ void main() {
 
   group('TvRemoteConfig validation', () {
     test('rejects non-positive shortSwipeThreshold', () {
-      expect(() => TvRemoteConfig(shortSwipeThreshold: 0),
-          throwsAssertionError);
+      expect(
+          () => TvRemoteConfig(shortSwipeThreshold: 0), throwsAssertionError);
       expect(() => TvRemoteConfig(shortSwipeThreshold: -0.1),
           throwsAssertionError);
     });
 
     test('requires fastSwipeThreshold >= shortSwipeThreshold', () {
       expect(
-          () => TvRemoteConfig(
-              shortSwipeThreshold: 0.5, fastSwipeThreshold: 0.3),
+          () =>
+              TvRemoteConfig(shortSwipeThreshold: 0.5, fastSwipeThreshold: 0.3),
           throwsAssertionError);
     });
 
@@ -194,8 +201,7 @@ void main() {
     });
 
     test('accepts sentinel dpadDeadZone > 1.0 to disable bias', () {
-      expect(() => const TvRemoteConfig(dpadDeadZone: 2.0),
-          returnsNormally);
+      expect(() => const TvRemoteConfig(dpadDeadZone: 2.0), returnsNormally);
     });
 
     test('toMap serializes every field', () {
@@ -229,8 +235,7 @@ void main() {
           .setMockMethodCallHandler(TvRemoteChannels.button,
               (MethodCall call) async {
         if (call.method == 'configure') {
-          configureCalls.add(
-              Map<String, Object?>.from(call.arguments as Map));
+          configureCalls.add(Map<String, Object?>.from(call.arguments as Map));
         }
         return null;
       });
@@ -252,7 +257,7 @@ void main() {
       expect(configureCalls.length, greaterThanOrEqualTo(1));
       final last = configureCalls.last;
       expect(last['shortSwipeThreshold'], 0.4);
-      expect(last['dpadDeadZone'], 0.5);  // default preserved
+      expect(last['dpadDeadZone'], 0.5); // default preserved
     });
 
     test('config reassignment pushes updated values', () async {
@@ -269,6 +274,174 @@ void main() {
     });
   });
 
+  group('TvRemoteController platform guard', () {
+    test('init is a no-op when not running on tvOS', () async {
+      final configureCalls = <Map<String, Object?>>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(TvRemoteChannels.button,
+              (MethodCall call) async {
+        if (call.method == 'configure') {
+          configureCalls.add(Map<String, Object?>.from(call.arguments as Map));
+        }
+        return null;
+      });
+
+      try {
+        TvRemoteController.instance.init();
+        await Future<void>.delayed(Duration.zero);
+
+        expect(configureCalls, isEmpty);
+      } finally {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(TvRemoteChannels.button, null);
+      }
+    });
+  });
+
+  group('TvRemoteController initialization regression tests', () {
+    final configureCalls = <Map<String, Object?>>[];
+
+    setUp(() {
+      TvRemoteController.debugForceTvosForTesting = true;
+      configureCalls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(TvRemoteChannels.button,
+              (MethodCall call) async {
+        if (call.method == 'configure') {
+          configureCalls.add(Map<String, Object?>.from(call.arguments as Map));
+        }
+        return null;
+      });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(TvRemoteChannels.button, null);
+    });
+
+    test('adding a raw listener does not implicitly initialize', () async {
+      final events = <TvRemoteTouchEvent>[];
+      final controller = TvRemoteController.instance;
+
+      controller.addRawListener(events.add);
+      await Future<void>.delayed(Duration.zero);
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+
+      expect(configureCalls, isEmpty,
+          reason: 'listener registration should not attach native channels');
+      expect(events, isEmpty,
+          reason: 'touch events should wait for explicit init()');
+
+      controller.init();
+      await Future<void>.delayed(Duration.zero);
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+
+      expect(configureCalls.length, 1);
+      expect(events.length, 1);
+    });
+
+    test('init is binding-safe for app entrypoints', () async {
+      TvRemoteController.instance.init();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(WidgetsBinding.instance, isNotNull);
+      expect(configureCalls.length, 1);
+    });
+
+    test('first input before explicit init is not handled implicitly',
+        () async {
+      final events = <TvRemoteTouchEvent>[];
+      final controller = TvRemoteController.instance;
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await Future<void>.delayed(Duration.zero);
+
+      expect(configureCalls, isEmpty,
+          reason: 'native input should not implicitly initialize Dart state');
+
+      controller.init();
+      controller.addRawListener(events.add);
+      await Future<void>.delayed(Duration.zero);
+
+      await _sendTouch({'type': 'move', 'x': 0.5, 'y': 0.0});
+
+      expect(configureCalls.length, 1);
+      expect(events.length, 1,
+          reason:
+              'events should resume after explicit init and listener setup');
+    });
+
+    test('adding a swipe listener does not implicitly initialize', () async {
+      final swipes = <SwipeEvent>[];
+      final controller = TvRemoteController.instance;
+
+      controller.addSwipeListener(swipes.add);
+      await Future<void>.delayed(Duration.zero);
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+
+      expect(configureCalls, isEmpty,
+          reason: 'listener registration should not attach native channels');
+      expect(swipes, isEmpty,
+          reason: 'swipe events should wait for explicit init()');
+
+      controller.init();
+      await Future<void>.delayed(Duration.zero);
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
+
+      expect(configureCalls.length, 1);
+      expect(swipes.length, 1);
+    });
+
+    test('config before init is pushed once on explicit init', () async {
+      final controller = TvRemoteController.instance;
+
+      controller.config = const TvRemoteConfig(dpadDeadZone: 0.9);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(configureCalls, isEmpty,
+          reason: 'config assignment should not initialize native channels');
+
+      controller.init();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(configureCalls.length, 1,
+          reason: 'initial config should be sent exactly once');
+      expect(configureCalls.single['dpadDeadZone'], 0.9);
+    });
+
+    test('hot restart requires explicit re-init before events resume',
+        () async {
+      final controller = TvRemoteController.instance;
+      final beforeRestart = <TvRemoteTouchEvent>[];
+      final afterRestart = <TvRemoteTouchEvent>[];
+
+      controller.init();
+      controller.addRawListener(beforeRestart.add);
+      await Future<void>.delayed(Duration.zero);
+
+      await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
+      expect(beforeRestart.length, 1);
+
+      controller.debugReset();
+      TvRemoteController.debugForceTvosForTesting = true;
+      await _sendTouch({'type': 'move', 'x': 0.5, 'y': 0.0});
+
+      expect(beforeRestart.length, 1,
+          reason: 'events should stop after hot restart drops handlers');
+
+      controller.init();
+      controller.addRawListener(afterRestart.add);
+      await Future<void>.delayed(Duration.zero);
+
+      await _sendTouch({'type': 'ended', 'x': 0.5, 'y': 0.0});
+
+      expect(afterRestart.length, 1,
+          reason: 'main() must re-init so new listeners receive events');
+    });
+  });
+
   group('Edge cases', () {
     final configureCalls = <Map<String, Object?>>[];
 
@@ -278,8 +451,7 @@ void main() {
           .setMockMethodCallHandler(TvRemoteChannels.button,
               (MethodCall call) async {
         if (call.method == 'configure') {
-          configureCalls.add(
-              Map<String, Object?>.from(call.arguments as Map));
+          configureCalls.add(Map<String, Object?>.from(call.arguments as Map));
         }
         return null;
       });
@@ -317,8 +489,7 @@ void main() {
       expect(configureCalls.last['dpadDeadZone'], 0.9);
     });
 
-    test('addRawListener during dispatch fires only on next event',
-        () async {
+    test('addRawListener during dispatch fires only on next event', () async {
       final orderLog = <String>[];
       final controller = TvRemoteController.instance;
       controller.addRawListener((_) {
@@ -357,12 +528,14 @@ void main() {
       void secondListener(TvRemoteTouchEvent e) {
         received.add('second');
       }
+
       void firstListener(TvRemoteTouchEvent e) {
         received.add('first');
         // Remove the second listener during dispatch — but it should
         // still fire on this event (snapshot semantics).
         controller.removeRawListener(secondListener);
       }
+
       controller.addRawListener(firstListener);
       controller.addRawListener(secondListener);
       controller.debugInit();
@@ -451,14 +624,16 @@ void main() {
         keyRepeatInterval: Duration(milliseconds: 50),
       );
       final map = cfg.toMap();
-      expect(map.keys, containsAll(<String>[
-        'shortSwipeThreshold',
-        'fastSwipeThreshold',
-        'dpadDeadZone',
-        'continuousSwipeMoveThreshold',
-        'keyRepeatInitialDelayMs',
-        'keyRepeatIntervalMs',
-      ]));
+      expect(
+          map.keys,
+          containsAll(<String>[
+            'shortSwipeThreshold',
+            'fastSwipeThreshold',
+            'dpadDeadZone',
+            'continuousSwipeMoveThreshold',
+            'keyRepeatInitialDelayMs',
+            'keyRepeatIntervalMs',
+          ]));
       expect(map['keyRepeatInitialDelayMs'], 100);
       expect(map['keyRepeatIntervalMs'], 50);
     });
@@ -526,7 +701,7 @@ void main() {
       controller.debugInit();
 
       await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
-      await _sendTouch({'type': 'move', 'x': 0.5, 'y': 0.0});  // right
+      await _sendTouch({'type': 'move', 'x': 0.5, 'y': 0.0}); // right
       // After right emit, segment resets to (0.5, 0). Move to (0.5, 0.5):
       // dy=0.5 > shortThreshold → Down event.
       await _sendTouch({'type': 'move', 'x': 0.5, 'y': 0.5});
@@ -591,8 +766,7 @@ void main() {
       }
     });
 
-    test('addSwipeListener during dispatch fires only on next event',
-        () async {
+    test('addSwipeListener during dispatch fires only on next event', () async {
       final orderLog = <String>[];
       final controller = TvRemoteController.instance;
       controller.addSwipeListener((_) {
@@ -621,6 +795,7 @@ void main() {
         received.add('first');
         controller.removeSwipeListener(secondListener);
       }
+
       controller.addSwipeListener(firstListener);
       controller.addSwipeListener(secondListener);
       controller.debugInit();
@@ -648,11 +823,11 @@ void main() {
       await _sendTouch({'type': 'started', 'x': 0.0, 'y': 0.0});
       await _sendTouch({'type': 'move', 'x': 0.4, 'y': 0.0});
 
-      expect(events, isEmpty,
-          reason: 'debugReset() must drop swipe listeners');
+      expect(events, isEmpty, reason: 'debugReset() must drop swipe listeners');
     });
 
-    test('config change rebuilds detector — new thresholds in effect on '
+    test(
+        'config change rebuilds detector — new thresholds in effect on '
         'next move', () async {
       final events = <SwipeEvent>[];
       final controller = TvRemoteController.instance;

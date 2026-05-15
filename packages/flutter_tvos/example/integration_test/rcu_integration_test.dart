@@ -10,10 +10,10 @@
 //   cd packages/flutter_tvos/example
 //   flutter test integration_test --device-id <tvos-udid>
 //
-// These tests are the cheapest layer that catches the class of bug
-// Mehmet found — a method channel with no listener on the other side.
-// Widget tests can't observe that; only a live engine sending real
-// method calls exposes it.
+// These tests are the cheapest layer that catches the kind of bug
+// where a method channel has no listener on the other side. Widget
+// tests can't observe that; only a live engine sending real method
+// calls exposes it.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

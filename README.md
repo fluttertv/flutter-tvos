@@ -57,18 +57,27 @@ On a tvOS build, the Dart VM reports:
 | `Platform.isTvOS` | `true` | `false` |
 | `defaultTargetPlatform` | `TargetPlatform.iOS` | `TargetPlatform.iOS` |
 
-**`Platform.isIOS` is `true` on tvOS.** This is intentional: tvOS is an iOS-family operating system (same Darwin kernel, same UIKit, same Metal, same Foundation). Upstream Flutter widgets that check `Platform.isIOS` or switch on `defaultTargetPlatform` render correctly on Apple TV without any framework modification — Cupertino styling, SF font, iOS page transitions all work out of the box.
+**`Platform.isIOS` is `true` on tvOS.** Apple TV runs the same Darwin kernel, UIKit, Metal, and Foundation as iPhone and iPad — it's part of the iOS family. Standard Flutter widgets that branch on `Platform.isIOS` or `defaultTargetPlatform` already render correctly on Apple TV: Cupertino styling, SF font, and iOS-style page transitions all work out of the box, with no Flutter framework changes required.
 
-The Flutter SDK checkout that flutter-tvos uses is bit-for-bit identical to upstream. **We do not patch Flutter.** All tvOS identity lives in the engine artifact (Dart VM) and the CLI.
+The Flutter framework that flutter-tvos uses is unmodified. tvOS identity is contributed entirely by the Dart VM in our engine build and by the `flutter-tvos` CLI itself.
 
-### Plugin isolation (no iOS fallback)
+### Plugin platform key
 
-tvOS and iOS have completely separate plugin ecosystems:
+A Flutter plugin advertises which platforms it supports under `flutter.plugin.platforms` in its `pubspec.yaml`. Plugins target tvOS by adding a `tvos:` entry there:
 
-- **tvOS builds** only discover plugins that declare `flutter.plugin.platforms.tvos` in their pubspec. Plugins with only `ios:` (i.e., most Flutter plugins on pub.dev today) are silently ignored on tvOS.
-- **iOS builds** (stock Flutter) only discover plugins that declare `flutter.plugin.platforms.ios`. Plugins with only `tvos:` are silently ignored — stock Flutter doesn't recognize the `tvos` key.
+```yaml
+flutter:
+  plugin:
+    platforms:
+      tvos:
+        pluginClass: MyPlugin
+```
 
-Every plugin with native code needs a `*_tvos` federated implementation to work on Apple TV. This is the same rule enforced by flutter-tizen, flutter-elinux, and flutter-webos. Currently shipped: `shared_preferences_tvos`. Community-contributed federated implementations are the path forward.
+A tvOS build only loads plugins that declare this key. Plugins targeting only `ios:` are not picked up — Apple TV needs different native code in many cases (no WebKit, no haptics, no clipboard, no camera, focus-engine input instead of touch), so the safe default is to require explicit opt-in.
+
+In practice each plugin with native code ships an extra federated package (e.g. `url_launcher` → `url_launcher_tvos`) that adds the tvOS implementation. The same model is used by `flutter-tizen`, and `flutter-elinux`.
+
+A FlutterTV-curated index of ported plugins is being assembled and will be published soon. In the meantime, `flutter-tvos plugin port` (coming next) can scaffold a federated `*_tvos` package from any existing iOS or macOS plugin so you can port the ones you depend on yourself.
 
 ### Writing cross-platform apps (iOS + Android + tvOS)
 
@@ -123,13 +132,13 @@ Then inside `io_impl.dart`, branch on `Platform.isTvOS` vs `Platform.isIOS`.
 
 ### Known limitations
 
-- **No touch gestures.** All input is Siri Remote (focus-based) or MFi game controller. Touch-only widgets (`GestureDetector`, `Dismissible`, swipe-to-reveal) don't fire on Apple TV.
-- **No soft keyboard.** Text input goes through the tvOS system keyboard view controller (full-screen). `TextField.autofocus` requires focus engine participation — it doesn't "just work" like on iOS.
-- **No WebKit / `webview_flutter`.** tvOS does not ship WebKit. Any plugin depending on `WKWebView` will not compile for Apple TV.
+- **No touch gestures.** All input is Siri Remote (focus-based) or MFi game controller. Touch-only widgets (`GestureDetector`, `Dismissible`, swipe-to-reveal) don't fire on Apple TV. Build with `Focus` / `FocusableActionDetector` / `Shortcuts` instead.
+- **Text input goes through the tvOS virtual keyboard.** `TextField` works on Apple TV: focusing it brings up the full-screen system keyboard view controller. Hardware keyboards paired over Bluetooth also work. `TextField.autofocus` is supported but participates in the focus engine — it competes with other focusables and isn't always the first focus on screen.
+- **No WebKit / `webview_flutter`.** tvOS does not ship WebKit. Plugins depending on `WKWebView` will not compile for Apple TV.
 - **No haptics, clipboard, or status bar.** `HapticFeedback.*`, `Clipboard.*`, and `SystemChrome.setSystemUIOverlayStyle` are no-ops on tvOS.
-- **No `fork()`.** Apple TV disallows `fork()` entirely. This affects some background-work libraries; Perfetto's daemonize path is already patched in our engine fork.
-- **Simulator-only debug builds.** Physical Apple TV deployment is supported in release/profile mode (AOT), not debug (JIT is blocked on the device).
-- **Metal-only rendering.** No OpenGL backend. Apps that rely on GL-specific platform views will not work.
+- **No `fork()`.** Apple TV disallows `fork()` entirely. Some background-work libraries are affected; Perfetto's daemonize path is already patched in our engine build.
+- **Debug mode is simulator-only.** Physical Apple TV deployment runs in release/profile mode (AOT). Debug (JIT) is blocked on the device by Apple.
+- **Metal-only rendering.** No OpenGL backend. Apps relying on GL-specific platform views will not work.
 
 ## Docs
 

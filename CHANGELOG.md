@@ -6,6 +6,11 @@ All notable changes to flutter-tvos will be documented here.
 
 First public release. Targets Flutter 3.41.4.
 
+### Highlights
+- **RCU (Remote Control Unit) Support**: Full integration with the Apple TV Siri Remote, including directional pad (D-pad) focus manipulation and enter/select interactions.
+- **Native TextField Implementation**: Deep integration with the tvOS on-screen keyboard, allowing users to interact with Flutter `TextField` widgets identically to native tvOS text inputs.
+- **Flutter DevTools Integration**: Full support for Flutter DevTools, Observatory, profiling, and debugging across both simulator and physical devices.
+
 ### Commands
 
 Ten commands are available in this release:
@@ -27,7 +32,6 @@ Ten commands are available in this release:
 
 - Debug (JIT) builds targeting `appletvsimulator` SDK
 - Hot reload and hot restart over the VM service
-- Flutter DevTools integration
 - Simulator listed and targeted by device ID via `flutter-tvos devices` and `flutter-tvos run -d <id>`
 
 ### Physical Device Deployment

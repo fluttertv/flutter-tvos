@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Widget-level tests for the Mehmet-review RCU behaviors. These simulate
-// the framework-facing surface that the native FlutterTvRemotePlugin
-// produces on a real device:
+// Widget-level tests for the RCU behaviours covered by code review.
+// These simulate the framework-facing surface that the native
+// FlutterTvRemotePlugin produces on a real device:
 //
 //   - Select press → `flutter/keyevent` (macOS keymap, `kVK_Return`)
 //     → `LogicalKeyboardKey.enter` → default `ActivateIntent` shortcut.
@@ -16,8 +16,8 @@
 // built-in key simulation helpers inject events at the right layer
 // (`platform: 'macos'` / `'android'`), mirroring what the decoded
 // message would produce. This covers the framework pipeline
-// (shortcut → intent → action) that Mehmet's manual testing exercised
-// when M1 was found broken.
+// (shortcut → intent → action) that manual review exercised when M1
+// was found broken.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -173,7 +173,8 @@ void main() {
 
       expect(find.text('screen-1'), findsOneWidget,
           reason: 'popRoute should unwind back to the initial route — '
-              'this is the entire user-facing behavior Mehmet asked for.');
+              'this is the entire user-facing behaviour the review asked '
+              'for.');
     });
 
     testWidgets('popRoute on root route is a no-op (does not crash)',

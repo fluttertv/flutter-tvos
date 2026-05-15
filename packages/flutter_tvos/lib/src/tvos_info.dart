@@ -4,11 +4,43 @@
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'tvos_ffi_bindings.dart';
+import 'tvos_info_platform.dart' as platform;
+
+/// Fallback bindings for platforms where native tvOS symbols are not
+/// linked (Web, Android, Linux, Windows).
+class _UnsupportedPlatformBindings extends TvOSNativeBindings {
+  _UnsupportedPlatformBindings() : super.forTesting();
+
+  @override
+  bool get isTvOS => false;
+  @override
+  String get systemVersion => '';
+  @override
+  String get deviceModel => '';
+  @override
+  String get machineId => '';
+  @override
+  bool get isSimulator => false;
+  @override
+  bool get supports4K => false;
+  @override
+  bool get supportsHDR => false;
+  @override
+  bool get supportsMultiUser => false;
+  @override
+  int get displayWidth => 0;
+  @override
+  int get displayHeight => 0;
+}
 
 /// Provides runtime information about the tvOS platform.
 ///
 /// All properties are synchronous static getters powered by dart:ffi,
 /// calling directly into native C functions with zero async overhead.
+///
+/// On non-Apple platforms (Android, Linux, Windows), all properties
+/// return safe defaults ([isTvOS] returns `false`, strings return `''`,
+/// etc.) without attempting FFI symbol lookups.
 ///
 /// Example:
 /// ```dart
@@ -30,7 +62,17 @@ class TvOSInfo {
   }
 
   static TvOSNativeBindings get _native {
-    _bindings ??= TvOSNativeBindings();
+    if (_bindings == null) {
+      // Only attempt FFI symbol lookup on Apple platforms where the
+      // native tvOS library is linked via CocoaPods.
+      // platform.isApple returns false on Web at compile time via
+      // conditional imports, so no dart:io usage reaches the Web compiler.
+      if (platform.isApple) {
+        _bindings = TvOSNativeBindings();
+      } else {
+        _bindings = _UnsupportedPlatformBindings();
+      }
+    }
     return _bindings!;
   }
 

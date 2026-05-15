@@ -1,8 +1,30 @@
-## 1.1.0
+## 1.0.4
+
+- Fixed `dart:ffi` and `dart:io` compile errors on Web. `flutter_tvos` can now
+  be added to a core package shared across tvOS, iOS, Android, and Web targets
+  without stub workarounds. All `TvOSInfo` properties return safe defaults
+  (`false` / `''` / `0`) on Web.
+
+## 1.0.3
+
+- Example: call `WidgetsFlutterBinding.ensureInitialized()` before `TvRemoteController.instance.init()` so the Flutter binding is ready when the platform channel attaches.
+- pubspec: added `issue_tracker` link so GitHub issues surface on pub.dev.
+
+## 1.0.2
+
+- Removed the `runTvApp` helper from the public API; apps should use normal `runApp`.
+- `TvRemoteController.instance.init()` now attaches Dart touch handlers explicitly and remains a no-op off tvOS.
+- Updated README setup/tuning guidance to reflect explicit initialization and current usage patterns.
+
+## 1.0.1
+
+- Changelog corrected and metadata updated for publication on pub.dev (removed incorrect 1.1.0 header and merged entries under 1.0.0).
+
+## 1.0.0
 
 ### Remote Control (RCU)
 
-- `runTvApp` / `TvRemoteController.init()` — Siri Remote wired to
+- `TvRemoteController.init()` — Siri Remote wired to
   Flutter's keyboard/focus pipeline on tvOS; passthrough on iOS/Android.
 - `TvRemoteConfig` — runtime-tunable thresholds (swipe, D-pad dead
   zone, auto-repeat delays); shipped to native via method channel.
@@ -31,8 +53,6 @@
 - **Touches channel no longer spams** "message discarded" warnings
   when no `addRawListener` is registered — engine installs a no-op
   drain, transparently replaced by Dart handler on attach.
-
-## 1.0.0
 
 - Initial release
 - Platform detection: `isTvOS`, `isSimulator`

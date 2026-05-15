@@ -18,7 +18,7 @@ Add `flutter_tvos` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_tvos: ^1.0.0
+  flutter_tvos: ^1.0.4
 ```
 
 ## Usage
@@ -69,16 +69,24 @@ system. Swipes and button presses become keyboard events
 `Focus`/`Shortcuts`/`Actions` exactly like arrow keys on a physical
 keyboard would.
 
-**One-line setup:** use `runTvApp` in place of `runApp`:
+Basic remote navigation works through Flutter's normal key/focus system. If
+your app only uses `Focus`, `Shortcuts`, `Actions`, buttons, lists, and other
+standard focusable widgets, no Dart listener setup is required.
+
+Call `TvRemoteController.instance.init()` once in `main()` when you use
+`TvRemoteController` APIs such as `config`, `addRawListener`, or
+`addSwipeListener`. `init()` is idempotent, attaches the Dart touch channel
+on tvOS, and is a no-op on other platforms.
 
 ```dart
+import 'package:flutter/material.dart';
 import 'package:flutter_tvos/flutter_tvos.dart';
 
-void main() => runTvApp(const MyApp());
+void main() {
+  TvRemoteController.instance.init();
+  runApp(const MyApp());
+}
 ```
-
-On iOS/Android `runTvApp` is a plain passthrough — the same `main.dart`
-works across all platforms.
 
 ### What works out of the box
 
@@ -99,30 +107,38 @@ works across all platforms.
 
 ### Tuning
 
-All tuning lives on `TvRemoteConfig`. Assigning a new config to
-`TvRemoteController.instance.config` ships the values to the native
-engine plugin (via a method-channel call); mutations take effect on
-the next input event.
+All tuning lives on `TvRemoteConfig`. Assigning a new config after
+initialization ships the values to the native engine plugin (via a
+method-channel call); mutations take effect on the next input event.
+Assigning config before `init()` is also supported: the value is stored
+locally and pushed once when `init()` runs.
 
 ```dart
+// Tuning before init (applied on initialization)
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
   TvRemoteController.instance.config = const TvRemoteConfig(
-    shortSwipeThreshold: 0.4,                         // raw-listener swipe threshold
-    fastSwipeThreshold: 0.6,                          // "fast" flag threshold
-    dpadDeadZone: 0.6,                                // off-center distance for click bias
-    continuousSwipeMoveThreshold: 4,                  // consecutive moves before auto-repeat
+    shortSwipeThreshold: 0.4,
+    fastSwipeThreshold: 0.6,
+    dpadDeadZone: 0.6,
+    continuousSwipeMoveThreshold: 4,
     keyRepeatInitialDelay: Duration(milliseconds: 450),
     keyRepeatInterval: Duration(milliseconds: 100),
   );
-  runTvApp(const MyApp());
+  TvRemoteController.instance.init();
+  runApp(const MyApp());
 }
 ```
+
+You can also assign `config` later, such as from `initState`, if the values
+depend on app state; after initialization, changes are pushed to native
+immediately.
 
 All fields have sensible defaults so apps that never touch `config`
 behave identically to the stock configuration.
 
 ### Raw touch listener (video players, custom swipe zones)
+
+Requires `TvRemoteController.instance.init()` in `main()`.
 
 ```dart
 TvRemoteController.instance.addRawListener((event) {
@@ -133,6 +149,8 @@ TvRemoteController.instance.addRawListener((event) {
 ```
 
 ### Swipe listener (high-level direction + magnitude)
+
+Requires `TvRemoteController.instance.init()` in `main()`.
 
 For consumers that just want "user swiped left/right/up/down" without
 hand-rolling a detector, subscribe at the swipe-event level:
@@ -173,6 +191,23 @@ parallel — the two layers are independent.
 - Flutter 3.19.0+
 - tvOS 13.0+ deployment target
 - Built with [flutter-tvos](https://fluttertv.dev) CLI
+
+## Multi-platform / monorepo usage
+
+`flutter_tvos` is safe to add to a core package shared across tvOS, iOS,
+Android, and Web. On Web, `dart:ffi` and `dart:io` are excluded at compile
+time via conditional imports — no stub workarounds needed in your code.
+
+All `TvOSInfo` properties return safe defaults on non-tvOS platforms:
+
+| Platform | `isTvOS` | strings | ints |
+|----------|----------|---------|------|
+| tvOS | `true` | real values | real values |
+| iOS / macOS | `false` | `''` | `0` |
+| Android / Linux / Windows | `false` | `''` | `0` |
+| **Web** | `false` | `''` | `0` |
+
+`TvRemoteController.init()` is a no-op on all non-tvOS platforms.
 
 ## License
 
