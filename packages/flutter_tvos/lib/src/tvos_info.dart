@@ -2,13 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:io' show Platform;
-
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'tvos_ffi_bindings.dart';
+import 'tvos_info_platform.dart' as platform;
 
-/// Fallback bindings for non-Apple platforms where native tvOS symbols
-/// are not linked into the process (e.g., Android, Linux, Windows).
+/// Fallback bindings for platforms where native tvOS symbols are not
+/// linked (Web, Android, Linux, Windows).
 class _UnsupportedPlatformBindings extends TvOSNativeBindings {
   _UnsupportedPlatformBindings() : super.forTesting();
 
@@ -66,7 +65,9 @@ class TvOSInfo {
     if (_bindings == null) {
       // Only attempt FFI symbol lookup on Apple platforms where the
       // native tvOS library is linked via CocoaPods.
-      if (Platform.isIOS || Platform.isMacOS) {
+      // platform.isApple returns false on Web at compile time via
+      // conditional imports, so no dart:io usage reaches the Web compiler.
+      if (platform.isApple) {
         _bindings = TvOSNativeBindings();
       } else {
         _bindings = _UnsupportedPlatformBindings();

@@ -18,7 +18,7 @@ Add `flutter_tvos` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_tvos: ^1.0.3
+  flutter_tvos: ^1.0.4
 ```
 
 ## Usage
@@ -191,6 +191,23 @@ parallel — the two layers are independent.
 - Flutter 3.19.0+
 - tvOS 13.0+ deployment target
 - Built with [flutter-tvos](https://fluttertv.dev) CLI
+
+## Multi-platform / monorepo usage
+
+`flutter_tvos` is safe to add to a core package shared across tvOS, iOS,
+Android, and Web. On Web, `dart:ffi` and `dart:io` are excluded at compile
+time via conditional imports — no stub workarounds needed in your code.
+
+All `TvOSInfo` properties return safe defaults on non-tvOS platforms:
+
+| Platform | `isTvOS` | strings | ints |
+|----------|----------|---------|------|
+| tvOS | `true` | real values | real values |
+| iOS / macOS | `false` | `''` | `0` |
+| Android / Linux / Windows | `false` | `''` | `0` |
+| **Web** | `false` | `''` | `0` |
+
+`TvRemoteController.init()` is a no-op on all non-tvOS platforms.
 
 ## License
 

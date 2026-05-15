@@ -1,3 +1,10 @@
+## 1.0.4
+
+- Fixed `dart:ffi` and `dart:io` compile errors on Web. `flutter_tvos` can now
+  be added to a core package shared across tvOS, iOS, Android, and Web targets
+  without stub workarounds. All `TvOSInfo` properties return safe defaults
+  (`false` / `''` / `0`) on Web.
+
 ## 1.0.3
 
 - Example: call `WidgetsFlutterBinding.ensureInitialized()` before `TvRemoteController.instance.init()` so the Flutter binding is ready when the platform channel attaches.
