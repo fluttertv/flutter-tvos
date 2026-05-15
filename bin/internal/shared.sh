@@ -180,8 +180,16 @@ function update_flutter_tvos() {
   local package_config_path="$ROOT_DIR/.dart_tool/package_config.json"
   local needs_pub_get="false"
 
+  # Detect whether `flutter pub get` needs to run. We previously compared
+  # pubspec.yaml against pubspec.lock — but `pub get` only updates the
+  # lockfile when dependency versions actually change. Editing pubspec.yaml
+  # in any other way (description, author, comments) would leave
+  # pubspec.yaml newer than pubspec.lock forever, retriggering pub-get and
+  # the snapshot recompile on every invocation. Compare against the stamp
+  # file instead — it is written each time we finish compiling, so it is a
+  # reliable "we have processed this pubspec.yaml" marker.
   if [[ ! -f "$ROOT_DIR/pubspec.lock" || ! -f "$package_config_path"
-        || "$ROOT_DIR/pubspec.yaml" -nt "$ROOT_DIR/pubspec.lock" ]]; then
+        || "$ROOT_DIR/pubspec.yaml" -nt "$stamp_path" ]]; then
     needs_pub_get="true"
   fi
 

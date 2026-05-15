@@ -27,6 +27,5 @@ export 'src/rcu/tv_remote_controller.dart'
         TvRemoteController,
         TvRemoteTouchEvent,
         TvRemoteTouchListener,
-        TvRemoteTouchPhase,
-        runTvApp;
+        TvRemoteTouchPhase;
 export 'src/rcu/swipe_detector.dart' show SwipeDirection, SwipeEvent;
