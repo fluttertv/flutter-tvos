@@ -20,6 +20,7 @@ class PluginSource {
     required this.packageName,
     required this.basePackageName,
     required this.outputPackageName,
+    required this.sourceVersion,
     required this.sourcePlatform,
     required this.pluginClass,
     required this.dartPluginClass,
@@ -43,6 +44,11 @@ class PluginSource {
 
   /// Suggested output package name for the generated `*_tvos` package.
   final String outputPackageName;
+
+  /// `version:` from the source pubspec, used in the porting report's
+  /// provenance header. `null` when the source pubspec omits a version
+  /// (rare, but valid for path-only packages).
+  final String? sourceVersion;
 
   /// Whichever of `ios` / `macos` we're modelling the port on (chosen by the
   /// user via `--base-platform`, or the analyzer's default).
@@ -212,6 +218,7 @@ class SourceAnalyzer {
       packageName: packageName,
       basePackageName: basePackageName,
       outputPackageName: outputPackageName,
+      sourceVersion: (pubspec['version'] as String?)?.trim(),
       sourcePlatform: chosenPlatform,
       pluginClass: pluginClass,
       dartPluginClass: dartPluginClass,

@@ -10,16 +10,18 @@ import 'package:flutter_tools/src/runner/flutter_command.dart';
 
 import '../plugin_porting/scaffolder.dart';
 import '../plugin_porting/source_analyzer.dart';
+import '../plugin_porting/swift_porter.dart' show FindingAction;
 import '../plugin_porting/templates.dart' show kDefaultLicenseHolder;
 
 /// `flutter-tvos plugin port <source>` — scaffolds a federated `*_tvos`
 /// package from an existing iOS or macOS plugin.
 ///
-/// Phase 1 (this implementation): generates the directory skeleton with a
-/// stub Swift class. Phases 2–7 layered on top progressively read the source
-/// plugin, transform iOS API references, generate a porting report, and
-/// support `--from-pub` / `--from-git` / `--include-example`. See
-/// `docs/PLUGIN_PORTING.md` for the full plan.
+/// Phases 1–3 (this implementation): reads the source plugin, copies its
+/// native sources, runs the Swift transformer (strips tvOS-incompatible
+/// imports, stubs unsupported method handlers via the compatibility
+/// database) and writes `PORTING_REPORT.md`. Phases 4–7 layer on the
+/// Objective-C transformer, `--include-example`, and `--from-pub` /
+/// `--from-git`. See `docs/PLUGIN_PORTING.md` for the full plan.
 class TvosPluginPortCommand extends FlutterCommand {
   TvosPluginPortCommand() {
     argParser
@@ -62,6 +64,14 @@ class TvosPluginPortCommand extends FlutterCommand {
             'Report what would be written without touching the filesystem. '
             'Useful for previewing the layout on a plugin you are not yet '
             'sure you want to port.',
+      )
+      ..addFlag(
+        'report',
+        defaultsTo: true,
+        help:
+            'Write PORTING_REPORT.md alongside the package. Pass --no-report '
+            'to skip it; the Swift transform (import stripping, handler '
+            'stubbing) still runs either way.',
       );
   }
 
@@ -123,6 +133,7 @@ class TvosPluginPortCommand extends FlutterCommand {
 
     final bool dryRun = boolArg('dry-run');
     final bool force = boolArg('force');
+    final bool emitReport = boolArg('report');
 
     log.printStatus('Source plugin:    ${source.packageName}');
     log.printStatus('Source platform:  ${source.sourcePlatform} (${source.sourceLanguage.name})');
@@ -152,34 +163,73 @@ class TvosPluginPortCommand extends FlutterCommand {
         outputDirectory: outputDir,
         overwrite: force,
         dryRun: dryRun,
+        emitReport: emitReport,
       );
     } on ScaffoldError catch (e) {
       throwToolExit(e.message);
     }
+
+    final int stubbed = result.findings
+        .where((f) => f.action == FindingAction.stubbedMethod)
+        .length;
+    final int strippedImports = result.findings
+        .where((f) => f.action == FindingAction.importStripped)
+        .length;
+    final int needsReview = result.findings
+        .where((f) =>
+            f.action == FindingAction.flagged ||
+            f.action == FindingAction.taggedWithTodo)
+        .length;
+    final bool anyFindings = result.findings.isNotEmpty;
 
     if (dryRun) {
       log.printStatus('Would write ${result.writtenPaths.length} files:');
       for (final String path in result.writtenPaths) {
         log.printStatus('  $path');
       }
+      log.printStatus('');
+      log.printStatus(
+        'Porter would strip $strippedImports import(s), stub $stubbed '
+        'method(s), and flag $needsReview item(s) for manual review.',
+      );
     } else {
       log.printStatus('Wrote ${result.writtenPaths.length} files into ${outputDir.path}.');
       log.printStatus('');
+      log.printStatus(
+        'Porter stripped $strippedImports iOS-only import(s), stubbed '
+        '$stubbed method handler(s), and flagged $needsReview item(s) for '
+        'manual review.',
+      );
+      log.printStatus('');
       log.printStatus('Next steps:');
       log.printStatus(
-        '  1. Paste your iOS implementation into '
-        'tvos/Classes/${source.pluginClass}.swift and remove imports/calls '
-        'that are not available on tvOS.',
+        '  1. Review tvos/Classes/ — the source plugin was copied and '
+        'ported automatically. Stubbed handlers are marked with '
+        '`// TODO(porter)`.',
       );
       log.printStatus(
         "  2. Add `${source.outputPackageName}` to the plugin's example app "
         'pubspec, then run `flutter-tvos build tvos --simulator --debug` to '
-        'verify.',
+        'verify the registrant compiles.',
       );
       log.printStatus(
         '  3. Once you are happy, publish to pub.dev or push to your fork. '
         'Read `${outputDir.basename}/README.md` for the user-facing pitch.',
       );
+      log.printStatus('');
+      if (result.reportPath != null) {
+        if (anyFindings) {
+          log.printStatus(
+            'Manual review required. Read '
+            '${outputDir.basename}/PORTING_REPORT.md before publishing.',
+          );
+        } else {
+          log.printStatus(
+            'No tvOS-incompatible APIs detected. See '
+            '${outputDir.basename}/PORTING_REPORT.md for the full report.',
+          );
+        }
+      }
     }
 
     return FlutterCommandResult.success();

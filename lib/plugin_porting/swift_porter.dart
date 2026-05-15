@@ -14,6 +14,7 @@ class SwiftPortingResult {
     required this.findings,
     required this.strippedImports,
     required this.stubbedCases,
+    required this.detectedMethods,
   });
 
   /// Transformed Swift content. Always ends with a single trailing newline.
@@ -32,6 +33,11 @@ class SwiftPortingResult {
   /// `unsupported` API. Each entry is the method name (the literal
   /// between the case's quotes).
   final List<String> stubbedCases;
+
+  /// Every `case "<method>":` block the porter recognised in this file,
+  /// sorted and de-duplicated. The report subtracts [stubbedCases] and any
+  /// flagged methods from this set to compute "ported as-is".
+  final List<String> detectedMethods;
 }
 
 /// One detection emitted by the porter. There may be multiple findings per
@@ -125,45 +131,52 @@ class SwiftPorter {
     // Pass 1 — detect `case "<method>":` blocks. Build a map line → method
     // name so per-line findings can be tagged with their enclosing method.
     final Map<int, String> caseAt = _detectCaseBlocks(originalLines);
-
-    // Pass 2 — pattern scan. For each line, evaluate every pattern. Apply
-    // the appropriate action (strip, stub, tag, flag).
-    final Set<int> linesInsideStubbedCase = <int>{};
     final Map<String, int> methodToFirstLine = <String, int>{};
     final Map<String, int> methodToLastLine = <String, int>{};
     _computeCaseExtents(originalLines, methodToFirstLine, methodToLastLine);
 
+    // Pass 2 — strip iOS-only `import` lines. This is deliberately
+    // independent of the API regex: a file that does `import WebKit` must
+    // not keep that import on tvOS even when the specific call site (e.g.
+    // a `WKWebView` subclass via `typealias`) slips past the usage regex.
+    // The compatibility DB's `stripImports` is the authoritative list of
+    // import directives to comment out.
+    for (var i = 0; i < originalLines.length; i++) {
+      final String trimmed = originalLines[i].trim();
+      if (!trimmed.startsWith('import ')) {
+        continue;
+      }
+      for (final _CompiledPattern cp in _patterns) {
+        if (cp.entry.stripImports.contains(trimmed)) {
+          outputLines[i] =
+              '// ${originalLines[i]}  // removed by `flutter-tvos plugin port` (tvOS-incompatible)';
+          strippedImports.add(trimmed);
+          findings.add(PortingFinding(
+            fileRelativePath: fileRelativePath,
+            line: i + 1,
+            column: 1,
+            matchedText: trimmed,
+            pattern: cp.entry,
+            enclosingMethod: null,
+            action: FindingAction.importStripped,
+          ));
+          break;
+        }
+      }
+    }
+
+    // Pass 3 — API pattern scan over non-import lines. Apply the
+    // appropriate action (stub, tag, flag).
     final Set<String> stubbedMethods = <String>{};
 
     for (var i = 0; i < originalLines.length; i++) {
       final String line = originalLines[i];
+      if (line.trimLeft().startsWith('import ')) {
+        continue;
+      }
       for (final _CompiledPattern cp in _patterns) {
         final RegExpMatch? m = cp.regex.firstMatch(line);
         if (m == null) {
-          continue;
-        }
-
-        // Strip iOS-only imports first — these dominate over case-stubbing
-        // because import lines are always at the top of the file.
-        if (line.trimLeft().startsWith('import ')) {
-          for (final String banned in cp.entry.stripImports) {
-            if (line.trim() == banned) {
-              outputLines[i] = '// $line  // removed by `flutter-tvos plugin port` (tvOS-incompatible)';
-              strippedImports.add(banned);
-              findings.add(PortingFinding(
-                fileRelativePath: fileRelativePath,
-                line: i + 1,
-                column: line.indexOf(m.group(0)!) + 1,
-                matchedText: m.group(0)!,
-                pattern: cp.entry,
-                enclosingMethod: caseAt[i],
-                action: FindingAction.importStripped,
-              ));
-              break;
-            }
-          }
-          // Even if the line was an unrelated `import …`, we don't want
-          // to also stub it as method-body — fall through to next pattern.
           continue;
         }
 
@@ -182,11 +195,6 @@ class SwiftPorter {
                 enclosingMethod: method,
                 action: FindingAction.stubbedMethod,
               ));
-              for (var j = methodToFirstLine[method]!;
-                  j <= methodToLastLine[method]!;
-                  j++) {
-                linesInsideStubbedCase.add(j);
-              }
             } else {
               // Outside any case: tag the line so the user notices.
               outputLines[i] =
@@ -216,7 +224,7 @@ class SwiftPorter {
       }
     }
 
-    // Pass 3 — apply the stub replacement for marked cases.
+    // Pass 4 — apply the stub replacement for marked cases.
     if (stubbedMethods.isNotEmpty) {
       _stubCaseBodies(
         outputLines,
@@ -236,6 +244,7 @@ class SwiftPorter {
       findings: findings,
       strippedImports: strippedImports.toList(),
       stubbedCases: stubbedMethods.toList()..sort(),
+      detectedMethods: methodToFirstLine.keys.toList()..sort(),
     );
   }
 
