@@ -67,8 +67,13 @@ String renderPubspec({required PluginSource source, required String licenseHolde
     ..writeln('    sdk: flutter');
   if (platformInterface != null) {
     // Carry the source's own constraint so `pub get` resolves; only fall
-    // back to `any` when the source didn't pin one.
-    final String constraint = source.platformInterfaceConstraint ?? 'any';
+    // back to `any` when the source didn't pin one. Range constraints
+    // (`>=1.0.0 <2.0.0`) and anything with YAML-significant characters
+    // must be quoted — `key: >=1.0.0` is otherwise a YAML block scalar.
+    final String raw = source.platformInterfaceConstraint ?? 'any';
+    final bool needsQuote = RegExp(r'[>< ]').hasMatch(raw);
+    final String constraint =
+        needsQuote ? '"${raw.replaceAll('"', r'\"')}"' : raw;
     buf.writeln('  $platformInterface: $constraint');
   }
   buf

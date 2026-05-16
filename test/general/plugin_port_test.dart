@@ -591,6 +591,31 @@ flutter:
       expect(none.platformInterfaceConstraint, isNull,
           reason: 'non-string constraint → null → template uses `any`');
     });
+
+    testWithoutContext('range constraints are quoted in the generated pubspec', () {
+      final Directory dir = fs.directory('/r')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: sqflite_darwin
+dependencies:
+  sqflite_platform_interface: ">=2.4.0 <3.0.0"
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: SqflitePlugin
+''');
+      dir.childDirectory('ios').childDirectory('Classes').childFile('SqflitePlugin.swift')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('import Flutter\n');
+      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(dir);
+      final Directory out = fs.directory('/out/sqflite_tvos');
+      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
+          .scaffold(source: source, outputDirectory: out);
+
+      final String pubspec = out.childFile('pubspec.yaml').readAsStringSync();
+      expect(pubspec, contains('sqflite_platform_interface: ">=2.4.0 <3.0.0"'),
+          reason: 'range constraint must be quoted or YAML parsing fails');
+    });
   });
 }
 

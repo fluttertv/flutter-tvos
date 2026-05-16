@@ -12,7 +12,28 @@ import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/template.dart';
 
 class TvosCreateCommand extends CreateCommand {
-  TvosCreateCommand({required super.verboseHelp});
+  TvosCreateCommand({required super.verboseHelp}) {
+    argParser.addFlag(
+      'tvos-only',
+      negatable: false,
+      help:
+          'After scaffolding, remove the non-tvOS platform folders '
+          '(android/ios/macos/linux/windows/web) so the project targets '
+          'tvOS only. Ideal for a tvOS plugin\'s example app.',
+    );
+  }
+
+  /// Platform directories `flutter create` emits that a tvOS-only project
+  /// does not need. `tvos/` (added by this command) and the shared
+  /// `lib/`, `test/`, `pubspec.yaml` are kept.
+  static const List<String> _nonTvosPlatformDirs = <String>[
+    'android',
+    'ios',
+    'macos',
+    'linux',
+    'windows',
+    'web',
+  ];
 
   @override
   Future<FlutterCommandResult> runCommand() async {
@@ -26,11 +47,31 @@ class TvosCreateCommand extends CreateCommand {
     final String name = stringArg('project-name') ?? globals.fs.path.basename(projectDirPath);
     final String templateType = stringArg('template') ?? 'app';
 
+    final FlutterCommandResult result;
     if (templateType == 'plugin') {
-      return _createPlugin(projectDirPath, name);
+      result = await _createPlugin(projectDirPath, name);
+    } else {
+      result = await _createApp(projectDirPath, name);
     }
 
-    return _createApp(projectDirPath, name);
+    if (boolArg('tvos-only') && result == FlutterCommandResult.success()) {
+      _stripNonTvosPlatforms(projectDirPath);
+    }
+    return result;
+  }
+
+  /// Deletes the non-tvOS platform folders so the example/app builds only
+  /// for Apple TV. Safe: `tvos/`, `lib/`, `test/`, `pubspec.yaml` stay.
+  void _stripNonTvosPlatforms(String projectDirPath) {
+    final Directory project = globals.fs.directory(projectDirPath);
+    for (final String dir in _nonTvosPlatformDirs) {
+      final Directory d = project.childDirectory(dir);
+      if (d.existsSync()) {
+        d.deleteSync(recursive: true);
+        globals.logger.printTrace('  removed non-tvOS platform: $dir');
+      }
+    }
+    globals.logger.printStatus('Stripped non-tvOS platforms (tvOS-only project).');
   }
 
   Future<FlutterCommandResult> _createApp(String projectDirPath, String name) async {
