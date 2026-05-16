@@ -261,15 +261,31 @@ String renderTestStub({required PluginSource source, required String licenseHold
     commentPrefix: '// ',
     sourcePlugin: source.packageName,
   );
-  return '''$header
+  final String? dartClass = source.dartPluginClass;
+  if (dartClass != null) {
+    // Reference the registrant class so the package import is actually
+    // used (no `unused_import`) and the smoke test verifies the package
+    // compiles and the class is reachable.
+    return '''$header
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:${source.outputPackageName}/${source.outputPackageName}.dart';
 
 void main() {
-  test('package imports cleanly', () {
-    // This is a smoke test for the scaffolded package. Replace it with real
-    // tests once you have ported the iOS implementation.
+  test('package compiles and exposes $dartClass', () {
+    expect($dartClass, isNotNull);
+  });
+}
+''';
+  }
+  // No federated Dart class to reference — keep a dependency-free smoke
+  // test rather than an unused package import.
+  return '''$header
+
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('test harness runs', () {
     expect(1 + 1, 2);
   });
 }
