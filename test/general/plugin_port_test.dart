@@ -666,28 +666,29 @@ flutter:
           reason: 'range constraint must be quoted or YAML parsing fails');
     });
 
-    testWithoutContext('FFI source → seeded working native path_provider_tvos', () {
+    testWithoutContext('FFI source → generic buildable native federated skeleton', () {
+      // Synthetic fixture — the CLI is plugin-agnostic, so tests are too.
       final Directory dir = fs.directory('/p')..createSync();
       dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: path_provider_foundation
-version: 2.6.0
+name: acme_foundation
+version: 1.2.3
 dependencies:
   ffi: ^2.1.4
   objective_c: ^9.2.1
-  path_provider_platform_interface: ^2.1.0
+  acme_platform_interface: ^2.1.0
 flutter:
   plugin:
     platforms:
       ios:
-        dartPluginClass: PathProviderFoundation
+        dartPluginClass: AcmeFoundation
 ''');
       final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
       expect(s.ffiNativeAssets, isTrue);
-      expect(s.outputPackageName, 'path_provider_tvos');
-      expect(s.pluginClass, 'PathProviderPlugin');
-      expect(s.dartPluginClass, 'PathProviderTvos');
+      expect(s.outputPackageName, 'acme_tvos');
+      expect(s.pluginClass, 'AcmePlugin');
+      expect(s.dartPluginClass, 'AcmeTvos');
 
-      final Directory out = fs.directory('/out/path_provider_tvos');
+      final Directory out = fs.directory('/out/acme_tvos');
       final ScaffoldResult r = Scaffolder(
         fileSystem: fs,
         logger: BufferLogger.test(),
@@ -695,86 +696,50 @@ flutter:
       ).scaffold(source: s, outputDirectory: out);
       expect(r.findings, isEmpty);
 
+      // Dart: federated subclass that compiles (inherits the interface's
+      // throwing defaults). No hand-written implementation in the CLI.
       final String dart = out
           .childDirectory('lib')
-          .childFile('path_provider_tvos.dart')
+          .childFile('acme_tvos.dart')
           .readAsStringSync();
-      expect(dart, contains('class PathProviderTvos extends PathProviderPlatform'));
-      expect(dart, contains('PathProviderPlatform.instance = PathProviderTvos()'));
-      expect(dart, contains("invokeMethod<String>('getTemporaryDirectory')"));
-      expect(dart, contains('getExternalStoragePath'));
-      expect(dart, contains('UnsupportedError'));
+      expect(dart, contains('AcmeTvos extends AcmePlatform'));
+      expect(dart, contains('AcmePlatform.instance = AcmeTvos()'));
+      expect(dart, isNot(contains('invokeMethod')));
 
+      // Swift: stub only — returns FlutterMethodNotImplemented.
       final String swift = out
           .childDirectory('tvos')
           .childDirectory('Classes')
-          .childFile('PathProviderPlugin.swift')
+          .childFile('AcmePlugin.swift')
           .readAsStringSync();
-      expect(swift, contains('NSSearchPathForDirectoriesInDomains'));
-      expect(swift, contains('case "getTemporaryDirectory"'));
-      expect(swift, contains('NSTemporaryDirectory()'));
+      expect(swift, contains('result(FlutterMethodNotImplemented)'));
+      expect(swift, contains('TODO(porter)'));
+      expect(swift, isNot(contains('NSSearchPathForDirectoriesInDomains')));
 
       final String pubspec = out.childFile('pubspec.yaml').readAsStringSync();
-      expect(pubspec, contains('name: path_provider_tvos'));
-      expect(pubspec, contains('path_provider_platform_interface: ^2.1.0'));
-      expect(pubspec, contains('pluginClass: PathProviderPlugin'));
-      expect(pubspec, contains('dartPluginClass: PathProviderTvos'));
+      expect(pubspec, contains('name: acme_tvos'));
+      expect(pubspec, contains('acme_platform_interface: ^2.1.0'));
+      expect(pubspec, contains('pluginClass: AcmePlugin'));
+      expect(pubspec, contains('dartPluginClass: AcmeTvos'));
 
       final String report =
           out.childFile('PORTING_REPORT.md').readAsStringSync();
       expect(report, contains('native federated'));
-      expect(report, contains('Seeded with a working implementation'));
+      expect(report, contains('BUILDABLE SKELETON'));
+      expect(report, contains('plugins/packages/acme_tvos'));
 
-      // A runnable tvOS-only example ships with the package.
+      // A runnable tvOS-only example ships with the skeleton.
       final String exPubspec = out
           .childDirectory('example')
           .childFile('pubspec.yaml')
           .readAsStringSync();
-      expect(exPubspec, contains('name: path_provider_example'));
-      expect(exPubspec, contains('path_provider: any'));
-      expect(exPubspec, contains('path_provider_tvos:\n    path: ../'));
-      final String exMain = out
-          .childDirectory('example')
-          .childDirectory('lib')
-          .childFile('main.dart')
-          .readAsStringSync();
-      expect(exMain, contains("import 'package:path_provider/path_provider.dart'"));
-      expect(exMain, contains('getApplicationDocumentsDirectory'));
-    });
-
-    testWithoutContext('FFI source with no seed → buildable skeleton + checklist', () {
-      final Directory dir = fs.directory('/p')..createSync();
-      dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: widget_thing_foundation
-dependencies:
-  ffi: ^2.1.4
-  widget_thing_platform_interface: ^1.2.0
-flutter:
-  plugin:
-    platforms:
-      ios:
-        dartPluginClass: WidgetThingFoundation
-''');
-      final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
-      expect(s.ffiNativeAssets, isTrue);
-      expect(s.outputPackageName, 'widget_thing_tvos');
-
-      final Directory out = fs.directory('/out/widget_thing_tvos');
-      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
-          .scaffold(source: s, outputDirectory: out);
-
-      final String swift = out
-          .childDirectory('tvos')
-          .childDirectory('Classes')
-          .childFile('WidgetThingPlugin.swift')
-          .readAsStringSync();
-      expect(swift, contains('FlutterMethodNotImplemented'));
-      expect(swift, contains('TODO(porter)'));
-
-      final String report =
-          out.childFile('PORTING_REPORT.md').readAsStringSync();
-      expect(report, contains('BUILDABLE SKELETON, not a'));
-      expect(report, contains('widget_thing_platform_interface'));
+      expect(exPubspec, contains('name: acme_example'));
+      expect(exPubspec, contains('acme: any'));
+      expect(exPubspec, contains('acme_tvos:\n    path: ../'));
+      expect(
+        out.childDirectory('example').childDirectory('lib').childFile('main.dart').existsSync(),
+        isTrue,
+      );
     });
   });
 }
