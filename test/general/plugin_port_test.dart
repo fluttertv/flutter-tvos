@@ -532,7 +532,7 @@ flutter:
       expect(warnings.join(), contains('declares no `pluginClass`'));
     });
 
-    testWithoutContext('advisory exit for a pure-Dart/FFI plugin (no native, no pluginClass)', () {
+    testWithoutContext('dart:ffi/native-assets plugin → advisory NOT-supported (verified)', () {
       final Directory dir = fs.directory('/p')..createSync();
       dir.childFile('pubspec.yaml').writeAsStringSync('''
 name: path_provider_foundation
@@ -547,13 +547,34 @@ flutter:
       macos:
         dartPluginClass: PathProviderFoundation
 ''');
-      // No native sources anywhere.
+      // No native sources anywhere; ffi/objective_c deps present.
       expect(
         () => SourceAnalyzer(fileSystem: fs).analyze(dir),
         throwsA(isA<PluginSourceError>()
             .having((PluginSourceError e) => e.advisory, 'advisory', isTrue)
             .having((PluginSourceError e) => e.message, 'm',
-                contains('no `path_provider_tvos` package is needed'))),
+                contains('NOT supported by the flutter-tvos build'))),
+      );
+    });
+
+    testWithoutContext('genuinely pure-Dart plugin → advisory no _tvos package needed', () {
+      final Directory dir = fs.directory('/p')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: some_thing
+dependencies:
+  some_thing_platform_interface: ^1.0.0
+flutter:
+  plugin:
+    platforms:
+      ios:
+        dartPluginClass: SomeThingIos
+''');
+      expect(
+        () => SourceAnalyzer(fileSystem: fs).analyze(dir),
+        throwsA(isA<PluginSourceError>()
+            .having((PluginSourceError e) => e.advisory, 'advisory', isTrue)
+            .having((PluginSourceError e) => e.message, 'm',
+                contains('no `some_thing_tvos` package is needed'))),
       );
     });
 

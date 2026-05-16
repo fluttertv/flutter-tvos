@@ -200,15 +200,44 @@ class SourceAnalyzer {
     );
 
     if (sourcesDir == null && pluginClass == null) {
-      // No native code AND no declared native class — a pure-Dart plugin
-      // or a dart:ffi / package:objective_c plugin (e.g. modern
-      // path_provider_foundation). These already work on tvOS through
-      // their Dart implementation; no `*_tvos` package is needed.
+      // No native iOS/macOS sources and no declared native class. Two
+      // very different sub-cases — and they were conflated before, which
+      // wrongly told users `path_provider_foundation` "just works":
+      final deps = pubspec['dependencies'] as YamlMap?;
+      bool hasDep(String n) => deps != null && deps.containsKey(n);
+      final bool usesFfi = hasDep('ffi') ||
+          hasDep('objective_c') ||
+          sourceDirectory
+              .childDirectory('hook')
+              .childFile('build.dart')
+              .existsSync();
+      if (usesFfi) {
+        // dart:ffi / native-assets plugin (e.g. modern
+        // path_provider_foundation via package:objective_c). VERIFIED
+        // (tvOS simulator) NOT to build with the flutter-tvos toolchain:
+        // the native-assets build hook fails with
+        // "Target native_assets required define SdkRoot". A generated
+        // `*_tvos` package cannot fix this — it needs native-assets
+        // support in the tvOS build pipeline (engine work) or a manual
+        // native reimplementation.
+        throw PluginSourceError(
+          '$packageName is a dart:ffi / native-assets plugin '
+          '(package:objective_c / a build hook). It is NOT supported by '
+          'the flutter-tvos build today — the native-assets step fails '
+          '("SdkRoot not provided") on tvOS. A `*_tvos` package will not '
+          'help; this needs native-assets support in the tvOS engine, or '
+          'a manual native port. Do not assume it works.',
+          advisory: true,
+        );
+      }
+      // Genuinely pure-Dart (no ffi/native-assets): it federates through
+      // the platform interface's default Dart implementation and needs
+      // no `*_tvos` package.
       throw PluginSourceError(
-        '$packageName has no native iOS/macOS sources — it is a pure-Dart '
-        'or dart:ffi/package:objective_c plugin. It already works on tvOS '
-        'through its Dart implementation; no '
-        '`${_stripPlatformSuffix(packageName)}_tvos` package is needed.',
+        '$packageName has no native iOS/macOS sources and no dart:ffi — '
+        'it is a pure-Dart plugin that federates through its platform '
+        'interface; no `${_stripPlatformSuffix(packageName)}_tvos` '
+        'package is needed (the Dart implementation applies on tvOS).',
         advisory: true,
       );
     }
