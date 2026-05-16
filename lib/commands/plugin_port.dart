@@ -12,6 +12,7 @@ import '../plugin_porting/example_extender.dart';
 import '../plugin_porting/porting_result.dart' show FindingAction;
 import '../plugin_porting/scaffolder.dart';
 import '../plugin_porting/source_analyzer.dart';
+import '../plugin_porting/source_fetcher.dart';
 import '../plugin_porting/templates.dart' show kDefaultLicenseHolder;
 
 /// `flutter-tvos plugin port <source>` — scaffolds a federated `*_tvos`
@@ -26,11 +27,32 @@ class TvosPluginPortCommand extends FlutterCommand {
   TvosPluginPortCommand() {
     argParser
       ..addOption(
+        'from-pub',
+        help:
+            'Port a package downloaded from pub.dev instead of a local '
+            'directory, e.g. --from-pub url_launcher_ios. Mutually '
+            'exclusive with a positional path and --from-git.',
+      )
+      ..addOption(
+        'from-git',
+        help:
+            'Port a plugin from a git repository (cloned shallowly to a '
+            'temp dir), e.g. --from-git https://github.com/foo/bar.git. '
+            'Mutually exclusive with a positional path and --from-pub.',
+      )
+      ..addOption(
+        'ref',
+        help:
+            'Git ref (branch/tag/sha) to check out. Only valid with '
+            '--from-git.',
+      )
+      ..addOption(
         'output',
         abbr: 'o',
         help:
             'Where to write the generated `*_tvos` package. Defaults to a '
-            'sibling of <source> named `<plugin>_tvos`.',
+            'sibling of <source> named `<plugin>_tvos` (or the current '
+            'directory for --from-pub / --from-git sources).',
       )
       ..addOption(
         'base-platform',
@@ -101,23 +123,74 @@ class TvosPluginPortCommand extends FlutterCommand {
   @override
   Future<FlutterCommandResult> runCommand() async {
     final List<String> rest = argResults!.rest;
-    if (rest.isEmpty) {
-      throwToolExit(
-        'No source directory supplied. See `flutter-tvos plugin port --help`.',
-      );
-    }
-    if (rest.length > 1) {
-      throwToolExit(
-        'Too many positional arguments. Expected exactly one source directory; '
-        'got ${rest.length} (${rest.join(', ')}).',
-      );
-    }
-
     final FileSystem fs = globals.fs;
     final Logger log = globals.logger;
 
-    final Directory sourceDir = fs.directory(fs.path.absolute(rest.single));
+    if (rest.length > 1) {
+      throwToolExit(
+        'Too many positional arguments. Expected at most one source '
+        'directory; got ${rest.length} (${rest.join(', ')}).',
+      );
+    }
 
+    final SourceSpec spec;
+    try {
+      spec = SourceSpec.parse(
+        positional: rest.isEmpty ? null : rest.single,
+        fromPub: stringArg('from-pub'),
+        fromGit: stringArg('from-git'),
+        ref: stringArg('ref'),
+      );
+    } on SourceFetchError catch (e) {
+      throwToolExit(e.message);
+    }
+
+    // For --from-pub / --from-git the source is materialised under a temp
+    // dir we must clean up no matter how the command exits.
+    Directory? tempWork;
+    final Directory sourceDir;
+    if (spec.mode == FetchMode.localPath) {
+      sourceDir = fs.directory(fs.path.absolute(spec.identifier));
+      if (!sourceDir.existsSync()) {
+        throwToolExit('Source directory does not exist: ${sourceDir.path}');
+      }
+    } else {
+      tempWork = fs.systemTempDirectory.createTempSync('flutter_tvos_port_');
+      try {
+        sourceDir = await SourceFetcher(
+          fileSystem: fs,
+          processManager: globals.processManager,
+          logger: log,
+        ).resolve(spec, workDir: tempWork);
+      } on SourceFetchError catch (e) {
+        _safeDelete(tempWork);
+        throwToolExit(e.message);
+      }
+    }
+
+    try {
+      return await _portResolvedSource(fs, log, sourceDir, fetched: tempWork != null);
+    } finally {
+      _safeDelete(tempWork);
+    }
+  }
+
+  void _safeDelete(Directory? dir) {
+    if (dir != null && dir.existsSync()) {
+      try {
+        dir.deleteSync(recursive: true);
+      } on FileSystemException {
+        // Best-effort temp cleanup; never mask the real result.
+      }
+    }
+  }
+
+  Future<FlutterCommandResult> _portResolvedSource(
+    FileSystem fs,
+    Logger log,
+    Directory sourceDir, {
+    required bool fetched,
+  }) async {
     // Inspect the source. Fatal misconfigurations throw; the analyzer prints
     // any warnings via the supplied sink so the user sees them before any
     // file write happens.
@@ -133,12 +206,16 @@ class TvosPluginPortCommand extends FlutterCommand {
       throwToolExit(e.message);
     }
 
-    // Resolve the output directory. Default = sibling of source named after
-    // the output package. Honours `--output` (path can be relative).
+    // Resolve the output directory. Default = sibling of source named
+    // after the output package, EXCEPT for fetched sources whose sibling
+    // is a temp dir we delete — those default to the current directory.
+    // Honours `--output` (path can be relative).
     final String? outputArg = stringArg('output');
     final Directory outputDir = outputArg != null
         ? fs.directory(fs.path.absolute(outputArg))
-        : sourceDir.parent.childDirectory(source.outputPackageName);
+        : fetched
+            ? fs.currentDirectory.childDirectory(source.outputPackageName)
+            : sourceDir.parent.childDirectory(source.outputPackageName);
 
     final bool dryRun = boolArg('dry-run');
     final bool force = boolArg('force');
@@ -242,7 +319,14 @@ class TvosPluginPortCommand extends FlutterCommand {
       }
     }
 
-    if (includeExample) {
+    if (includeExample && fetched) {
+      log.printWarning(
+        '--include-example ignored: the source was fetched into a temporary '
+        'directory that is deleted after porting, so edits to its example/ '
+        'would not persist. Clone/checkout the plugin locally to use '
+        '--include-example.',
+      );
+    } else if (includeExample) {
       final ExampleExtendResult ex = ExampleExtender(fileSystem: fs).extend(
         source: source,
         outputPackageDir: outputDir,
