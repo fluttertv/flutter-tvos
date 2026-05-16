@@ -65,6 +65,18 @@ class ReportEmitter {
 
     final int manualReviewCount = partialFindings.length + todoFindings.length;
 
+    // `taggedWithTodo` = an `unsupported` API used at type / top-level
+    // scope (e.g. `class X: SFSafariViewControllerDelegate`,
+    // `let v = WKWebView()` in a property). The porter can stub a
+    // method-channel *handler body*, but it cannot remove a type the
+    // class declaration depends on — so the generated package will NOT
+    // compile on tvOS until a human rewrites those sites. Detect it and
+    // say so loudly instead of letting Xcode be the messenger.
+    final Set<String> blockingApis = <String>{
+      for (final PortingFinding f in todoFindings) f.pattern.name,
+    };
+    final bool willNotCompile = blockingApis.isNotEmpty;
+
     final StringBuffer b = StringBuffer()
       ..writeln('# ${source.outputPackageName} — porting report')
       ..writeln()
@@ -77,14 +89,38 @@ class ReportEmitter {
       ..writeln('Base platform: ${source.sourcePlatform} '
           '(${_languageLabel(source)})')
       ..writeln('Output: `./${source.outputPackageName}`')
-      ..writeln()
+      ..writeln();
+
+    if (willNotCompile) {
+      b
+        ..writeln('> ## ⚠️ This plugin is not buildable on tvOS as-is')
+        ..writeln('>')
+        ..writeln('> It uses ${_oxford(blockingApis.toList()..sort())} at '
+            'type / top-level scope — APIs that **do not exist on tvOS**. '
+            'The porter stubs method-channel handlers, but it cannot '
+            'invent these types, so the generated package WILL NOT '
+            'compile until you rewrite those sites by hand (or decide '
+            'this plugin has no meaningful tvOS implementation). See '
+            '“Manual review items” below; each is marked '
+            '`// TODO(porter)` in the source.')
+        ..writeln();
+    } else {
+      b
+        ..writeln('> ✅ No tvOS-incompatible APIs detected at type level — '
+            'the generated package is expected to compile on tvOS '
+            '(still review stubbed/partial items below).')
+        ..writeln();
+    }
+
+    b
       ..writeln('## Summary')
       ..writeln()
       ..writeln('| Status | Count |')
       ..writeln('|---|---|')
       ..writeln('| Methods ported as-is | ${portedMethods.length} |')
       ..writeln('| Methods stubbed (iOS-only) | ${stubbedMethods.length} |')
-      ..writeln('| Compile errors expected | 0 |')
+      ..writeln('| tvOS build outlook | '
+          '${willNotCompile ? '❌ will NOT compile (manual work required)' : '✅ expected to compile'} |')
       ..writeln('| Manual review items | $manualReviewCount |')
       ..writeln();
 
@@ -201,6 +237,14 @@ class ReportEmitter {
   /// Markdown where soft-wrapped prose reads better as one line.
   String _collapse(String note) =>
       note.replaceAll('\n', ' ').replaceAll(RegExp(r' {2,}'), ' ').trim();
+
+  /// `[A]`→`A`, `[A,B]`→`A and B`, `[A,B,C]`→`A, B and C`.
+  String _oxford(List<String> items) {
+    if (items.length == 1) {
+      return items.first;
+    }
+    return '${items.sublist(0, items.length - 1).join(', ')} and ${items.last}';
+  }
 
   String _severityWord(Severity s) => switch (s) {
         Severity.unsupported => 'unsupported',

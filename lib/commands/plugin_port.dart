@@ -274,6 +274,16 @@ class TvosPluginPortCommand extends FlutterCommand {
             f.action == FindingAction.taggedWithTodo)
         .length;
     final bool anyFindings = result.findings.isNotEmpty;
+    // `taggedWithTodo` = a tvOS-unavailable API used at type / top-level
+    // scope (not a stubbable handler body) — the generated package will
+    // NOT compile on tvOS until a human rewrites those sites. Surface
+    // this loudly here, not only at Xcode time.
+    final List<String> blockingApis = <String>{
+      for (final f in result.findings)
+        if (f.action == FindingAction.taggedWithTodo) f.pattern.name,
+    }.toList()
+      ..sort();
+    final bool willNotCompile = blockingApis.isNotEmpty;
 
     if (dryRun) {
       log.printStatus('Would write ${result.writtenPaths.length} files:');
@@ -285,6 +295,12 @@ class TvosPluginPortCommand extends FlutterCommand {
         'Porter would strip $strippedImports import(s), stub $stubbed '
         'method(s), and flag $needsReview item(s) for manual review.',
       );
+      if (willNotCompile) {
+        log.printWarning(
+          '(dry run) NOT tvOS-buildable: uses ${blockingApis.join(', ')} '
+          'at type level — no meaningful automatic tvOS port.',
+        );
+      }
     } else {
       log.printStatus('Wrote ${result.writtenPaths.length} files into ${outputDir.path}.');
       log.printStatus('');
@@ -310,7 +326,19 @@ class TvosPluginPortCommand extends FlutterCommand {
         'Read `${outputDir.basename}/README.md` for the user-facing pitch.',
       );
       log.printStatus('');
-      if (result.reportPath != null) {
+      if (willNotCompile) {
+        log.printWarning('');
+        log.printWarning(
+          '⚠️  NOT buildable on tvOS as-is. This plugin uses '
+          '${blockingApis.join(', ')} at type / top-level scope — APIs '
+          'that do not exist on tvOS. The porter cannot invent these '
+          'types, so the generated package will NOT compile until you '
+          'rewrite those sites by hand, or this plugin simply has no '
+          'meaningful tvOS implementation. Details + every '
+          '`// TODO(porter)` site are in '
+          '${outputDir.basename}/PORTING_REPORT.md.',
+        );
+      } else if (result.reportPath != null) {
         if (anyFindings) {
           log.printStatus(
             'Manual review required. Read '
