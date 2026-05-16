@@ -203,6 +203,11 @@ class TvosPluginPortCommand extends FlutterCommand {
     try {
       source = analyzer.analyze(sourceDir, preferPlatform: stringArg('base-platform')!);
     } on PluginSourceError catch (e) {
+      if (e.advisory) {
+        // Not a failure — the plugin simply needs no `*_tvos` package.
+        log.printStatus(e.message);
+        return FlutterCommandResult.success();
+      }
       throwToolExit(e.message);
     }
 

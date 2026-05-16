@@ -174,19 +174,54 @@ class SourceAnalyzer {
     }
 
     final platformConfig = platforms[chosenPlatform] as YamlMap?;
-    final pluginClass = platformConfig?['pluginClass'] as String?;
-    if (pluginClass == null || pluginClass.isEmpty || pluginClass == 'none') {
+    final bool sharedDarwin = platformConfig?['sharedDarwinSource'] == true;
+    final dartPluginClass = platformConfig?['dartPluginClass'] as String?;
+    String? pluginClass = platformConfig?['pluginClass'] as String?;
+    if (pluginClass != null && (pluginClass.isEmpty || pluginClass == 'none')) {
+      pluginClass = null;
+    }
+
+    // Locate the real native sources. Modern Flutter plugins put them under
+    // `<platform>/<pkg>/Sources/<pkg>` (Swift Package Manager) or
+    // `darwin/<pkg>/Sources/<pkg>` (`sharedDarwinSource: true`), not the
+    // legacy `<platform>/Classes`.
+    final Directory? sourcesDir = _resolveSourceDir(
+      sourceDirectory,
+      chosenPlatform,
+      packageName,
+      sharedDarwin: sharedDarwin,
+    );
+
+    if (sourcesDir == null && pluginClass == null) {
+      // No native code AND no declared native class — a pure-Dart plugin
+      // or a dart:ffi / package:objective_c plugin (e.g. modern
+      // path_provider_foundation). These already work on tvOS through
+      // their Dart implementation; no `*_tvos` package is needed.
       throw PluginSourceError(
-        '$packageName declares no `pluginClass` under '
-        '`flutter.plugin.platforms.$chosenPlatform`. Cannot scaffold a tvOS '
-        'plugin without a native class to register.',
+        '$packageName has no native iOS/macOS sources — it is a pure-Dart '
+        'or dart:ffi/package:objective_c plugin. It already works on tvOS '
+        'through its Dart implementation; no '
+        '`${_stripPlatformSuffix(packageName)}_tvos` package is needed.',
+        advisory: true,
       );
     }
-    final dartPluginClass = platformConfig?['dartPluginClass'] as String?;
 
-    // Detect language by inspecting `<platform>/Classes/`. Fall back to
-    // `<platform>/` itself when Classes/ doesn't exist (some old plugins).
-    final Directory classesDir = _resolveClassesDir(sourceDirectory, chosenPlatform);
+    if (sourcesDir != null && pluginClass == null) {
+      // sharedDarwinSource / federated-only plugins sometimes omit
+      // pluginClass. Recover the native registrant class from the sources.
+      pluginClass = _derivePluginClass(sourcesDir) ??
+          _defaultPluginClass(_stripPlatformSuffix(packageName));
+      _warn(
+        '$packageName declares no `pluginClass`; using `$pluginClass` '
+        'inferred from ${sourcesDir.path}.',
+      );
+    }
+
+    // When pluginClass is declared but no sources were found (e.g. Pigeon
+    // generates them at build time), fall back to the legacy
+    // `<platform>/Classes` path so the scaffolder emits the Phase-1 stub.
+    final Directory classesDir = sourcesDir ??
+        sourceDirectory.childDirectory(chosenPlatform).childDirectory('Classes');
     final SourceLanguage lang = _detectLanguage(classesDir);
     if (lang == SourceLanguage.unknown) {
       _warn(
@@ -220,7 +255,7 @@ class SourceAnalyzer {
       outputPackageName: outputPackageName,
       sourceVersion: (pubspec['version'] as String?)?.trim(),
       sourcePlatform: chosenPlatform,
-      pluginClass: pluginClass,
+      pluginClass: pluginClass!,
       dartPluginClass: dartPluginClass,
       sourceLanguage: lang,
       platformInterfacePackage: platformInterface,
@@ -230,12 +265,106 @@ class SourceAnalyzer {
     );
   }
 
-  Directory _resolveClassesDir(Directory source, String platform) {
-    final Directory primary = source.childDirectory(platform).childDirectory('Classes');
-    if (primary.existsSync()) {
-      return primary;
+  /// Finds the directory that actually holds the native sources, trying
+  /// (in order) the legacy `Classes/`, SPM `…/Sources/<pkg>`, any other
+  /// `Sources/<dir>`, and finally the platform root. When
+  /// `sharedDarwinSource` is set the shared `darwin/` tree is searched
+  /// before the platform-specific one. Returns `null` when there is no
+  /// native code anywhere (pure-Dart / FFI plugin).
+  Directory? _resolveSourceDir(
+    Directory source,
+    String platform,
+    String pkg, {
+    required bool sharedDarwin,
+  }) {
+    final List<String> roots =
+        sharedDarwin ? <String>['darwin', platform] : <String>[platform, 'darwin'];
+    final List<Directory> candidates = <Directory>[];
+    for (final String r in roots) {
+      final Directory root = source.childDirectory(r);
+      candidates.add(root.childDirectory('Classes'));
+      candidates.add(
+        root.childDirectory(pkg).childDirectory('Sources').childDirectory(pkg),
+      );
+      candidates.add(root.childDirectory('Sources').childDirectory(pkg));
+      for (final Directory srcRoot in <Directory>[
+        root.childDirectory(pkg).childDirectory('Sources'),
+        root.childDirectory('Sources'),
+      ]) {
+        if (srcRoot.existsSync()) {
+          for (final FileSystemEntity e in srcRoot.listSync()) {
+            if (e is Directory) {
+              candidates.add(e);
+            }
+          }
+        }
+      }
+      candidates.add(root); // legacy flat layout — last resort.
     }
-    return source.childDirectory(platform);
+    for (final Directory c in candidates) {
+      if (c.existsSync() && _hasNativeFiles(c)) {
+        return c;
+      }
+    }
+    return null;
+  }
+
+  /// True when [dir] (recursively) contains at least one Swift/ObjC source.
+  /// `Package.swift` / `Package.resolved` are SPM manifests, not plugin
+  /// code, so they don't count.
+  bool _hasNativeFiles(Directory dir) {
+    for (final FileSystemEntity e in dir.listSync(recursive: true)) {
+      if (e is! File) {
+        continue;
+      }
+      final String base = _fs.path.basename(e.path);
+      if (base == 'Package.swift' || base == 'Package.resolved') {
+        continue;
+      }
+      final String ext = _fs.path.extension(e.path).toLowerCase();
+      if (ext == '.swift' || ext == '.h' || ext == '.m' || ext == '.mm') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Best-effort scan for the class that registers with Flutter, so a
+  /// plugin that omits `pluginClass` from its pubspec still scaffolds.
+  /// Matches Swift `class X: … FlutterPlugin` and ObjC
+  /// `@interface X : … <FlutterPlugin>`.
+  String? _derivePluginClass(Directory dir) {
+    final RegExp swift =
+        RegExp(r'class\s+([A-Za-z_]\w*)\s*:\s*[^{]*\bFlutterPlugin\b');
+    final RegExp objc =
+        RegExp(r'@interface\s+([A-Za-z_]\w*)\s*:[^<]*<[^>]*\bFlutterPlugin\b');
+    for (final FileSystemEntity e in dir.listSync(recursive: true)) {
+      if (e is! File) {
+        continue;
+      }
+      final String ext = _fs.path.extension(e.path).toLowerCase();
+      if (ext != '.swift' && ext != '.h' && ext != '.m' && ext != '.mm') {
+        continue;
+      }
+      final String src = e.readAsStringSync();
+      final RegExpMatch? m =
+          swift.firstMatch(src) ?? objc.firstMatch(src);
+      if (m != null) {
+        return m.group(1);
+      }
+    }
+    return null;
+  }
+
+  /// `shared_preferences` → `SharedPreferencesPlugin`. Fallback when no
+  /// class could be detected in the sources.
+  String _defaultPluginClass(String base) {
+    final String camel = base
+        .split('_')
+        .where((String p) => p.isNotEmpty)
+        .map((String p) => p[0].toUpperCase() + p.substring(1))
+        .join();
+    return '${camel}Plugin';
   }
 
   SourceLanguage _detectLanguage(Directory dir) {
@@ -286,8 +415,15 @@ class SourceAnalyzer {
 /// Thrown when the source directory can't be ported (missing pubspec, wrong
 /// package layout, already a tvOS plugin, etc).
 class PluginSourceError implements Exception {
-  PluginSourceError(this.message);
+  PluginSourceError(this.message, {this.advisory = false});
+
   final String message;
+
+  /// When true this is not a failure: the source legitimately needs no
+  /// `*_tvos` package (pure-Dart / dart:ffi). The command prints the
+  /// message and exits successfully rather than erroring.
+  final bool advisory;
+
   @override
   String toString() => 'PluginSourceError: $message';
 }

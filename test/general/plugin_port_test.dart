@@ -390,6 +390,150 @@ flutter:
       expect(outputDir.childFile('LICENSE').readAsStringSync(), 'BSD-3 license body');
     });
   });
+
+  group('SourceAnalyzer modern layouts', () {
+    testWithoutContext('resolves a Swift Package Manager layout', () {
+      final Directory dir = fs.directory('/p')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: url_launcher_ios
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: URLLauncherPlugin
+        dartPluginClass: UrlLauncherIOS
+''');
+      dir
+          .childDirectory('ios')
+          .childDirectory('url_launcher_ios')
+          .childDirectory('Sources')
+          .childDirectory('url_launcher_ios')
+          .childFile('URLLauncherPlugin.swift')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('import Flutter\n');
+      dir
+          .childDirectory('ios')
+          .childDirectory('url_launcher_ios')
+          .childFile('Package.swift')
+          .writeAsStringSync('// swift-tools-version:5.9\n');
+
+      final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
+      expect(s.classesDirectory.path, contains('ios/url_launcher_ios/Sources/url_launcher_ios'));
+      expect(s.pluginClass, 'URLLauncherPlugin');
+    });
+
+    testWithoutContext('resolves sharedDarwinSource under darwin/', () {
+      final Directory dir = fs.directory('/p')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: shared_preferences_foundation
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: SharedPreferencesPlugin
+        dartPluginClass: SharedPreferencesFoundation
+        sharedDarwinSource: true
+      macos:
+        pluginClass: SharedPreferencesPlugin
+        dartPluginClass: SharedPreferencesFoundation
+        sharedDarwinSource: true
+''');
+      dir
+          .childDirectory('darwin')
+          .childDirectory('shared_preferences_foundation')
+          .childDirectory('Sources')
+          .childDirectory('shared_preferences_foundation')
+          .childFile('SharedPreferencesPlugin.swift')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('import Flutter\n');
+
+      final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
+      expect(s.classesDirectory.path,
+          contains('darwin/shared_preferences_foundation/Sources'));
+      expect(s.basePackageName, 'shared_preferences');
+    });
+
+    testWithoutContext('infers pluginClass from sources when pubspec omits it', () {
+      final Directory dir = fs.directory('/p')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: foo_ios
+flutter:
+  plugin:
+    platforms:
+      ios:
+        dartPluginClass: FooIOS
+''');
+      dir
+          .childDirectory('ios')
+          .childDirectory('Classes')
+          .childFile('FooNativePlugin.swift')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync(
+            'import Flutter\npublic class FooNativePlugin: NSObject, FlutterPlugin {}\n');
+
+      final warnings = <String>[];
+      final PluginSource s = SourceAnalyzer(fileSystem: fs, warningSink: warnings.add).analyze(dir);
+      expect(s.pluginClass, 'FooNativePlugin');
+      expect(warnings.join(), contains('declares no `pluginClass`'));
+    });
+
+    testWithoutContext('advisory exit for a pure-Dart/FFI plugin (no native, no pluginClass)', () {
+      final Directory dir = fs.directory('/p')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: path_provider_foundation
+dependencies:
+  ffi: ^2.1.4
+  objective_c: ^9.2.1
+flutter:
+  plugin:
+    platforms:
+      ios:
+        dartPluginClass: PathProviderFoundation
+      macos:
+        dartPluginClass: PathProviderFoundation
+''');
+      // No native sources anywhere.
+      expect(
+        () => SourceAnalyzer(fileSystem: fs).analyze(dir),
+        throwsA(isA<PluginSourceError>()
+            .having((PluginSourceError e) => e.advisory, 'advisory', isTrue)
+            .having((PluginSourceError e) => e.message, 'm',
+                contains('no `path_provider_tvos` package is needed'))),
+      );
+    });
+
+    testWithoutContext('SPM Package.swift is excluded from the generated package', () {
+      final Directory dir = fs.directory('/p')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: url_launcher_ios
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: URLLauncherPlugin
+''');
+      final Directory spm = dir
+          .childDirectory('ios')
+          .childDirectory('url_launcher_ios')
+          .childDirectory('Sources')
+          .childDirectory('url_launcher_ios')
+        ..createSync(recursive: true);
+      spm.childFile('URLLauncherPlugin.swift').writeAsStringSync('import Flutter\n');
+      // A stray Package.swift inside the resolved sources dir must be
+      // filtered out by the scaffolder, not copied into Classes/.
+      spm.childFile('Package.swift').writeAsStringSync('// swift-tools-version:5.9\n');
+      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(dir);
+      final Directory out = fs.directory('/out/url_launcher_tvos');
+
+      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
+          .scaffold(source: source, outputDirectory: out);
+
+      final Directory tvosClasses = out.childDirectory('tvos').childDirectory('Classes');
+      expect(tvosClasses.childFile('URLLauncherPlugin.swift').existsSync(), isTrue);
+      expect(tvosClasses.childFile('Package.swift').existsSync(), isFalse,
+          reason: 'SPM manifest must not be copied into Classes/');
+    });
+  });
 }
 
 /// Builds a minimal but valid iOS plugin in [fs] under `/p` and returns it.

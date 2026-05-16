@@ -278,6 +278,12 @@ class Scaffolder {
       if (entity is! File) {
         continue;
       }
+      // SPM manifests are not plugin code and must not land in the
+      // podspec's `Classes/` glob.
+      final String base = _fs.path.basename(entity.path);
+      if (base == 'Package.swift' || base == 'Package.resolved') {
+        continue;
+      }
       if (allowedExtensions != null) {
         final String ext = _fs.path.extension(entity.path).toLowerCase();
         if (!allowedExtensions.contains(ext)) {
