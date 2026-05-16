@@ -532,31 +532,6 @@ flutter:
       expect(warnings.join(), contains('declares no `pluginClass`'));
     });
 
-    testWithoutContext('dart:ffi/native-assets plugin → advisory NOT-supported (verified)', () {
-      final Directory dir = fs.directory('/p')..createSync();
-      dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: path_provider_foundation
-dependencies:
-  ffi: ^2.1.4
-  objective_c: ^9.2.1
-flutter:
-  plugin:
-    platforms:
-      ios:
-        dartPluginClass: PathProviderFoundation
-      macos:
-        dartPluginClass: PathProviderFoundation
-''');
-      // No native sources anywhere; ffi/objective_c deps present.
-      expect(
-        () => SourceAnalyzer(fileSystem: fs).analyze(dir),
-        throwsA(isA<PluginSourceError>()
-            .having((PluginSourceError e) => e.advisory, 'advisory', isTrue)
-            .having((PluginSourceError e) => e.message, 'm',
-                contains('NOT supported by the flutter-tvos build'))),
-      );
-    });
-
     testWithoutContext('genuinely pure-Dart plugin → advisory no _tvos package needed', () {
       final Directory dir = fs.directory('/p')..createSync();
       dir.childFile('pubspec.yaml').writeAsStringSync('''
@@ -689,6 +664,101 @@ flutter:
       final String pubspec = out.childFile('pubspec.yaml').readAsStringSync();
       expect(pubspec, contains('sqflite_platform_interface: ">=2.4.0 <3.0.0"'),
           reason: 'range constraint must be quoted or YAML parsing fails');
+    });
+
+    testWithoutContext('FFI source → seeded working native path_provider_tvos', () {
+      final Directory dir = fs.directory('/p')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: path_provider_foundation
+version: 2.6.0
+dependencies:
+  ffi: ^2.1.4
+  objective_c: ^9.2.1
+  path_provider_platform_interface: ^2.1.0
+flutter:
+  plugin:
+    platforms:
+      ios:
+        dartPluginClass: PathProviderFoundation
+''');
+      final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
+      expect(s.ffiNativeAssets, isTrue);
+      expect(s.outputPackageName, 'path_provider_tvos');
+      expect(s.pluginClass, 'PathProviderPlugin');
+      expect(s.dartPluginClass, 'PathProviderTvos');
+
+      final Directory out = fs.directory('/out/path_provider_tvos');
+      final ScaffoldResult r = Scaffolder(
+        fileSystem: fs,
+        logger: BufferLogger.test(),
+        licenseHolder: 'T',
+      ).scaffold(source: s, outputDirectory: out);
+      expect(r.findings, isEmpty);
+
+      final String dart = out
+          .childDirectory('lib')
+          .childFile('path_provider_tvos.dart')
+          .readAsStringSync();
+      expect(dart, contains('class PathProviderTvos extends PathProviderPlatform'));
+      expect(dart, contains('PathProviderPlatform.instance = PathProviderTvos()'));
+      expect(dart, contains("invokeMethod<String>('getTemporaryDirectory')"));
+      expect(dart, contains('getExternalStoragePath'));
+      expect(dart, contains('UnsupportedError'));
+
+      final String swift = out
+          .childDirectory('tvos')
+          .childDirectory('Classes')
+          .childFile('PathProviderPlugin.swift')
+          .readAsStringSync();
+      expect(swift, contains('NSSearchPathForDirectoriesInDomains'));
+      expect(swift, contains('case "getTemporaryDirectory"'));
+      expect(swift, contains('NSTemporaryDirectory()'));
+
+      final String pubspec = out.childFile('pubspec.yaml').readAsStringSync();
+      expect(pubspec, contains('name: path_provider_tvos'));
+      expect(pubspec, contains('path_provider_platform_interface: ^2.1.0'));
+      expect(pubspec, contains('pluginClass: PathProviderPlugin'));
+      expect(pubspec, contains('dartPluginClass: PathProviderTvos'));
+
+      final String report =
+          out.childFile('PORTING_REPORT.md').readAsStringSync();
+      expect(report, contains('native federated'));
+      expect(report, contains('Seeded with a working implementation'));
+    });
+
+    testWithoutContext('FFI source with no seed → buildable skeleton + checklist', () {
+      final Directory dir = fs.directory('/p')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: widget_thing_foundation
+dependencies:
+  ffi: ^2.1.4
+  widget_thing_platform_interface: ^1.2.0
+flutter:
+  plugin:
+    platforms:
+      ios:
+        dartPluginClass: WidgetThingFoundation
+''');
+      final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
+      expect(s.ffiNativeAssets, isTrue);
+      expect(s.outputPackageName, 'widget_thing_tvos');
+
+      final Directory out = fs.directory('/out/widget_thing_tvos');
+      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
+          .scaffold(source: s, outputDirectory: out);
+
+      final String swift = out
+          .childDirectory('tvos')
+          .childDirectory('Classes')
+          .childFile('WidgetThingPlugin.swift')
+          .readAsStringSync();
+      expect(swift, contains('FlutterMethodNotImplemented'));
+      expect(swift, contains('TODO(porter)'));
+
+      final String report =
+          out.childFile('PORTING_REPORT.md').readAsStringSync();
+      expect(report, contains('BUILDABLE SKELETON, not a'));
+      expect(report, contains('widget_thing_platform_interface'));
     });
   });
 }

@@ -5,6 +5,7 @@
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 
+import 'native_skeleton.dart';
 import 'objc_porter.dart';
 import 'porting_result.dart';
 import 'report_emitter.dart';
@@ -62,6 +63,38 @@ class Scaffolder {
         );
       }
       outputDirectory.deleteSync(recursive: true);
+    }
+
+    // dart:ffi / native-assets source → emit a native federated skeleton
+    // (Swift method channel over the platform interface) instead of
+    // copying an FFI implementation the tvOS toolchain can't build.
+    if (source.ffiNativeAssets) {
+      final Map<String, String> files = const NativeSkeleton()
+          .files(source: source, licenseHolder: licenseHolder);
+      final List<String> written = <String>[];
+      String? reportPath;
+      for (final MapEntry<String, String> e in files.entries) {
+        if (!emitReport && e.key == 'PORTING_REPORT.md') {
+          continue;
+        }
+        final File f = _fs.file(_fs.path.join(outputDirectory.path, e.key));
+        written.add(f.path);
+        if (e.key == 'PORTING_REPORT.md') {
+          reportPath = f.path;
+        }
+        if (!dryRun) {
+          f.parent.createSync(recursive: true);
+          f.writeAsStringSync(e.value);
+          _log.printTrace('  wrote ${f.path}');
+        }
+      }
+      return ScaffoldResult(
+        outputDirectory: outputDirectory,
+        writtenPaths: written,
+        findings: const <PortingFinding>[],
+        reportPath: reportPath,
+        dryRun: dryRun,
+      );
     }
 
     final plan = <_Plan>[

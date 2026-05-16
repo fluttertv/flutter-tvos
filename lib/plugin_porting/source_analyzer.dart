@@ -30,6 +30,7 @@ class PluginSource {
     required this.descriptionFromPubspec,
     required this.licenseFile,
     required this.classesDirectory,
+    this.ffiNativeAssets = false,
   });
 
   /// Absolute source directory.
@@ -87,6 +88,13 @@ class PluginSource {
   /// Directory containing the native source files (`<sourcePlatform>/Classes`).
   /// May not exist on disk if the plugin uses a non-standard layout.
   final Directory classesDirectory;
+
+  /// True when the source is a dart:ffi / native-assets plugin (e.g.
+  /// `path_provider_foundation` via `package:objective_c`). These cannot
+  /// be built for tvOS by the toolchain, so the porter generates a
+  /// native federated `*_tvos` skeleton (Swift + method channel over the
+  /// platform interface) instead of copying the FFI source.
+  final bool ffiNativeAssets;
 }
 
 /// Inspects a candidate source plugin directory and produces a [PluginSource]
@@ -213,21 +221,52 @@ class SourceAnalyzer {
               .existsSync();
       if (usesFfi) {
         // dart:ffi / native-assets plugin (e.g. modern
-        // path_provider_foundation via package:objective_c). VERIFIED
-        // (tvOS simulator) NOT to build with the flutter-tvos toolchain:
-        // the native-assets build hook fails with
-        // "Target native_assets required define SdkRoot". A generated
-        // `*_tvos` package cannot fix this — it needs native-assets
-        // support in the tvOS build pipeline (engine work) or a manual
-        // native reimplementation.
-        throw PluginSourceError(
-          '$packageName is a dart:ffi / native-assets plugin '
-          '(package:objective_c / a build hook). It is NOT supported by '
-          'the flutter-tvos build today — the native-assets step fails '
-          '("SdkRoot not provided") on tvOS. A `*_tvos` package will not '
-          'help; this needs native-assets support in the tvOS engine, or '
-          'a manual native port. Do not assume it works.',
-          advisory: true,
+        // path_provider_foundation via package:objective_c). The
+        // flutter-tvos toolchain can't build native-assets for tvOS, and
+        // we don't patch Flutter — so instead of a dead end, the porter
+        // generates a NATIVE federated `*_tvos` skeleton (Swift method
+        // channel over the platform interface). Flag it here; the
+        // scaffolder branches on `ffiNativeAssets`.
+        final String base = _stripPlatformSuffix(packageName);
+        String? iface;
+        String? ifaceConstraint;
+        if (deps != null) {
+          for (final Object? k in deps.keys) {
+            if (k is String && k.endsWith('_platform_interface')) {
+              iface = k;
+              final Object? v = deps[k];
+              if (v is String && v.trim().isNotEmpty) {
+                ifaceConstraint = v.trim();
+              }
+              break;
+            }
+          }
+        }
+        _warn(
+          '$packageName is a dart:ffi/native-assets plugin; generating a '
+          'native federated ${base}_tvos skeleton (Swift + method '
+          'channel) instead — the upstream FFI build is unsupported on '
+          'tvOS.',
+        );
+        return PluginSource(
+          directory: sourceDirectory,
+          packageName: packageName,
+          basePackageName: base,
+          outputPackageName: '${base}_tvos',
+          sourceVersion: (pubspec['version'] as String?)?.trim(),
+          sourcePlatform: chosenPlatform,
+          pluginClass: _defaultPluginClass(base),
+          dartPluginClass: '${_pascalCase(base)}Tvos',
+          sourceLanguage: SourceLanguage.swift,
+          platformInterfacePackage: iface,
+          platformInterfaceConstraint: ifaceConstraint,
+          descriptionFromPubspec:
+              (pubspec['description'] as String?)?.trim() ?? packageName,
+          licenseFile: sourceDirectory.childFile('LICENSE').existsSync()
+              ? sourceDirectory.childFile('LICENSE')
+              : null,
+          classesDirectory: sourceDirectory,
+          ffiNativeAssets: true,
         );
       }
       // Genuinely pure-Dart (no ffi/native-assets): it federates through
@@ -403,14 +442,14 @@ class SourceAnalyzer {
 
   /// `shared_preferences` → `SharedPreferencesPlugin`. Fallback when no
   /// class could be detected in the sources.
-  String _defaultPluginClass(String base) {
-    final String camel = base
-        .split('_')
-        .where((String p) => p.isNotEmpty)
-        .map((String p) => p[0].toUpperCase() + p.substring(1))
-        .join();
-    return '${camel}Plugin';
-  }
+  String _defaultPluginClass(String base) => '${_pascalCase(base)}Plugin';
+
+  /// `path_provider` → `PathProvider`.
+  String _pascalCase(String base) => base
+      .split('_')
+      .where((String p) => p.isNotEmpty)
+      .map((String p) => p[0].toUpperCase() + p.substring(1))
+      .join();
 
   SourceLanguage _detectLanguage(Directory dir) {
     if (!dir.existsSync()) {
