@@ -140,6 +140,43 @@ Then inside `io_impl.dart`, branch on `Platform.isTvOS` vs `Platform.isIOS`.
 - **Debug mode is simulator-only.** Physical Apple TV deployment runs in release/profile mode (AOT). Debug (JIT) is blocked on the device by Apple.
 - **Metal-only rendering.** No OpenGL backend. Apps relying on GL-specific platform views will not work.
 
+## Add tvOS support to an existing plugin
+
+If a plugin already implements iOS or macOS, `flutter-tvos plugin port`
+scaffolds a federated `<plugin>_tvos` sibling package from it. The source
+plugin is never modified.
+
+```sh
+# Port a local iOS plugin checkout.
+flutter-tvos plugin port ../url_launcher/packages/url_launcher_ios
+
+# Or fetch the source instead of cloning it yourself.
+flutter-tvos plugin port --from-pub url_launcher_ios
+flutter-tvos plugin port --from-git https://github.com/flutter/packages --ref main
+
+# Preview without writing anything.
+flutter-tvos plugin port ../url_launcher_ios --dry-run
+```
+
+What it does:
+
+- copies the native sources and runs them through a compatibility
+  database — Swift **and** Objective-C. tvOS-incompatible imports
+  (WebKit, UIPasteboard, LocalAuthentication, …) are commented out and
+  the method handlers that use them are stubbed with
+  `FlutterMethodNotImplemented`;
+- writes a `PORTING_REPORT.md` listing every stubbed/partial method and
+  removed import so you can review the gaps by hand (`--no-report` to
+  skip);
+- generates a complete package (`pubspec`, podspec, Dart entry, README,
+  CHANGELOG, tests) that builds and passes `dart analyze` out of the box.
+
+Useful flags: `--base-platform ios|macos`, `--output <dir>`, `--force`,
+`--include-example` (wires the source plugin's `example/` for tvOS),
+`--license-holder "<name>"`. The porter never auto-translates UIKit to
+tvOS — it stubs and reports, and you decide. Read `PORTING_REPORT.md`
+before publishing.
+
 ## Docs
 
 #### App development
