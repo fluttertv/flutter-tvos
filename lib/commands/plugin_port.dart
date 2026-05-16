@@ -8,12 +8,13 @@ import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 
-import '../plugin_porting/example_extender.dart';
+import '../plugin_porting/example_porter.dart';
 import '../plugin_porting/porting_result.dart' show FindingAction;
 import '../plugin_porting/scaffolder.dart';
 import '../plugin_porting/source_analyzer.dart';
 import '../plugin_porting/source_fetcher.dart';
 import '../plugin_porting/templates.dart' show kDefaultLicenseHolder;
+import 'tvos_runner.dart';
 
 /// `flutter-tvos plugin port <source>` — scaffolds a federated `*_tvos`
 /// package from an existing iOS or macOS plugin.
@@ -324,37 +325,87 @@ class TvosPluginPortCommand extends FlutterCommand {
       }
     }
 
-    if (includeExample && fetched) {
-      log.printWarning(
-        '--include-example ignored: the source was fetched into a temporary '
-        'directory that is deleted after porting, so edits to its example/ '
-        'would not persist. Clone/checkout the plugin locally to use '
-        '--include-example.',
+    if (includeExample && !dryRun) {
+      await _generateExample(fs, log, source, outputDir);
+    } else if (includeExample && dryRun) {
+      log.printStatus('');
+      log.printStatus(
+        '(dry run) Would generate example/ from the `${source.basePackageName}` '
+        'plugin (tvOS-only), depending on `${source.basePackageName}` + '
+        '`${source.outputPackageName}: path: ../`.',
       );
-    } else if (includeExample) {
-      final ExampleExtendResult ex = ExampleExtender(fileSystem: fs).extend(
-        source: source,
+    }
+
+    return FlutterCommandResult.success();
+  }
+
+  /// Builds the federated example: fetch the app-facing plugin
+  /// (`<base>`), reuse its real example app, make it tvOS-only, and point
+  /// it at the generated `<base>_tvos` (mirrors flutter-tizen/plugins).
+  Future<void> _generateExample(
+    FileSystem fs,
+    Logger log,
+    PluginSource source,
+    Directory outputDir,
+  ) async {
+    final Directory work =
+        fs.systemTempDirectory.createTempSync('flutter_tvos_example_');
+    try {
+      final Directory baseDir = await SourceFetcher(
+        fileSystem: fs,
+        processManager: globals.processManager,
+        logger: log,
+      ).resolve(
+        SourceSpec.parse(fromPub: source.basePackageName),
+        workDir: work,
+      );
+      final String baseVersion = _pubspecVersion(baseDir) ?? '0.0.0';
+      final ExamplePortResult ex = ExamplePorter(fileSystem: fs).port(
+        basePluginDir: baseDir,
         outputPackageDir: outputDir,
-        dryRun: dryRun,
+        baseName: source.basePackageName,
+        tvosPackageName: source.outputPackageName,
+        baseVersion: baseVersion,
       );
       log.printStatus('');
       if (ex.skipped) {
         log.printWarning('--include-example skipped: ${ex.reason}');
-      } else {
-        log.printStatus(
-          '${dryRun ? 'Would update' : 'Updated'} '
-          '${ex.writtenPaths.length} example file(s) in ${ex.exampleDirectory!.path}.',
-        );
-        log.printStatus(
-          'Generate the example tvOS runner with:\n    ${ex.createCommand}',
-        );
-        log.printStatus(
-          'Then: cd ${ex.exampleDirectory!.path} && '
-          'flutter-tvos build tvos --simulator --debug',
-        );
+        return;
+      }
+      await renderTvosRunner(
+        fileSystem: fs,
+        logger: log,
+        templateRenderer: globals.templateRenderer,
+        projectDirPath: ex.exampleDirectory!.path,
+        name: '${source.basePackageName}_example',
+        organization: 'com.example',
+      );
+      log.printStatus(
+        'Generated tvOS-only example (${ex.copiedRelativePaths.length} files) '
+        'in ${ex.exampleDirectory!.path} — depends on '
+        '`${source.basePackageName}` + `${source.outputPackageName}: '
+        'path: ../`.',
+      );
+    } on SourceFetchError catch (e) {
+      log.printWarning('--include-example skipped: ${e.message}');
+    } finally {
+      _safeDelete(work);
+    }
+  }
+
+  /// Reads `version:` from a pubspec directory, or `null`.
+  String? _pubspecVersion(Directory dir) {
+    final File p = dir.childFile('pubspec.yaml');
+    if (!p.existsSync()) {
+      return null;
+    }
+    for (final String line in p.readAsLinesSync()) {
+      final RegExpMatch? m =
+          RegExp(r'^version:\s*([^\s#]+)').firstMatch(line);
+      if (m != null) {
+        return m.group(1);
       }
     }
-
-    return FlutterCommandResult.success();
+    return null;
   }
 }

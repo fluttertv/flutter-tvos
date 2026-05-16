@@ -5,13 +5,13 @@
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/create.dart';
-import 'package:flutter_tools/src/commands/create_base.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/code_signing.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/template.dart';
 
 import 'tvos_app_scaffold.dart';
+import 'tvos_runner.dart';
 
 class TvosCreateCommand extends CreateCommand {
   TvosCreateCommand({required super.verboseHelp}) {
@@ -60,72 +60,31 @@ class TvosCreateCommand extends CreateCommand {
     return FlutterCommandResult.success();
   }
 
-  /// Renders the `tvos/` Xcode runner from the bundled template into
-  /// [projectDirPath]. Shared by the standard and tvOS-only paths.
+  /// Renders the `tvos/` Xcode runner into [projectDirPath], detecting the
+  /// org and (for on-device signing) a development team the way
+  /// `flutter create` does. Delegates the template work to the shared
+  /// [renderTvosRunner] so the plugin porter can reuse it.
   Future<void> _renderTvosRunner(String projectDirPath, String name) async {
-    final String tvosTemplatePath = globals.fs.path.join(
-      Cache.flutterRoot!,
-      '..',
-      'templates',
-      'app',
-      'swift',
-      'tvos.tmpl',
+    final String organization = await getOrganization();
+    final String? developmentTeam = await getCodeSigningIdentityDevelopmentTeam(
+      processManager: globals.processManager,
+      platform: globals.platform,
+      logger: globals.logger,
+      config: globals.config,
+      terminal: globals.terminal,
+      fileSystem: globals.fs,
+      fileSystemUtils: globals.fsUtils,
+      plistParser: globals.plistParser,
     );
-    final Directory templateDir = globals.fs.directory(tvosTemplatePath);
-    final Directory targetDir = globals.fs.directory(projectDirPath).childDirectory('tvos');
-
-    if (templateDir.existsSync() && !targetDir.existsSync()) {
-      // Mirror Flutter's iOS template flow: read --org, build the bundle
-      // identifier via CreateBase.createUTIIdentifier, and auto-detect a
-      // signing-capable development team from the keychain. Hard-coded
-      // 'com.example.<name>' would diverge from `flutter create` behaviour.
-      final String organization = await getOrganization();
-      final String tvosIdentifier = CreateBase.createUTIIdentifier(organization, name);
-      final String? developmentTeam = await getCodeSigningIdentityDevelopmentTeam(
-        processManager: globals.processManager,
-        platform: globals.platform,
-        logger: globals.logger,
-        config: globals.config,
-        terminal: globals.terminal,
-        fileSystem: globals.fs,
-        fileSystemUtils: globals.fsUtils,
-        plistParser: globals.plistParser,
-      );
-
-      globals.logger.printStatus('Generating tvOS application...');
-      final template = Template(
-        templateDir,
-        templateDir,
-        fileSystem: globals.fs,
-        logger: globals.logger,
-        templateRenderer: globals.templateRenderer,
-      );
-
-      template.render(targetDir, <String, Object>{
-        'organization': organization,
-        'projectName': name,
-        'titleCaseProjectName': name.substring(0, 1).toUpperCase() + name.substring(1),
-        'tvosIdentifier': tvosIdentifier,
-        'withRootModule': true,
-        'withPlatformChannelPluginHook': true,
-        'withPluginHook': true,
-        'withFfiPluginHook': true,
-        'withFfiPackage': true,
-        'withSwiftPackageManager': true,
-        'swiftPackageManagerEnabled': true,
-        'cocoapodsEnabled': true,
-        'pluginClass': 'DummyPlugin',
-        'pluginClassSnakeCase': 'dummy_plugin',
-        'pluginProjectName': 'dummy_plugin',
-        'hasTvosDevelopmentTeam': developmentTeam != null && developmentTeam.isNotEmpty,
-        'tvosDevelopmentTeam': developmentTeam ?? '',
-      });
-
-      final File podfileSrc = templateDir.childFile('Podfile');
-      if (podfileSrc.existsSync()) {
-        podfileSrc.copySync(targetDir.childFile('Podfile').path);
-      }
-    }
+    await renderTvosRunner(
+      fileSystem: globals.fs,
+      logger: globals.logger,
+      templateRenderer: globals.templateRenderer,
+      projectDirPath: projectDirPath,
+      name: name,
+      organization: organization,
+      developmentTeam: developmentTeam,
+    );
   }
 
   Future<FlutterCommandResult> _createPlugin(String projectDirPath, String name) async {
