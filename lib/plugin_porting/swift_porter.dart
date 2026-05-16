@@ -42,36 +42,25 @@ class SwiftPorter {
     final Map<String, int> methodToLastLine = <String, int>{};
     _computeCaseExtents(originalLines, methodToFirstLine, methodToLastLine);
 
-    // Pass 1b — widen the Flutter import guard to tvOS. Pigeon (and many
-    // hand-written plugins) gate the Flutter module like:
-    //   #if os(iOS)
-    //     import Flutter
-    //   #elseif os(macOS)
-    //     import FlutterMacOS
-    //   #else
-    //     #error("Unsupported platform.")
-    //   #endif
-    // On tvOS this falls into `#else` and fails to compile. The tvOS
-    // embedder ships the SAME `Flutter` module as iOS, so make the iOS
-    // branch also cover tvOS. Narrow on purpose — only an `#if os(iOS)`
-    // whose first directive is `import Flutter` is touched, so unrelated
-    // `#if os(iOS)` behaviour blocks are left alone.
+    // Pass 1b — make tvOS follow the iOS code paths. The tvOS embedder
+    // mirrors the iOS Flutter API (same `Flutter` module, same
+    // `FlutterPluginRegistrar.messenger()` shape, …), NOT macOS. Plugins
+    // routinely branch `#if os(iOS) … #elseif os(macOS) … #else
+    // #error(...)`; on tvOS the iOS branch is the correct one. So in
+    // every `#if` / `#elseif` directive, widen each `os(iOS)` test to
+    // also match tvOS. Parenthesised so precedence with `&&`/`!` is
+    // preserved (`os(iOS) && X` → `(os(iOS) || os(tvOS)) && X`).
+    // Genuinely iOS-only APIs inside such branches are still caught and
+    // stubbed by the compatibility-database passes below.
     for (var i = 0; i < originalLines.length; i++) {
-      if (originalLines[i].trim() != '#if os(iOS)') {
+      final String t = originalLines[i].trimLeft();
+      if ((!t.startsWith('#if ') && !t.startsWith('#elseif ')) ||
+          !t.contains('os(iOS)') ||
+          t.contains('os(tvOS)')) {
         continue;
       }
-      var j = i + 1;
-      while (j < originalLines.length && originalLines[j].trim().isEmpty) {
-        j++;
-      }
-      if (j < originalLines.length &&
-          originalLines[j].trim() == 'import Flutter') {
-        final String indent = originalLines[i].substring(
-          0,
-          originalLines[i].length - originalLines[i].trimLeft().length,
-        );
-        outputLines[i] = '$indent#if os(iOS) || os(tvOS)';
-      }
+      outputLines[i] = originalLines[i]
+          .replaceAll('os(iOS)', '(os(iOS) || os(tvOS))');
     }
 
     // Pass 2 — strip iOS-only `import` lines. This is deliberately

@@ -163,25 +163,36 @@ final class Foo {}
 ''';
       final PortingResult r =
           SwiftPorter().port(pigeon, fileRelativePath: 'tvos/Classes/messages.g.swift');
-      expect(r.transformed, contains('#if os(iOS) || os(tvOS)'));
+      // tvOS now takes the iOS branch (parenthesised to keep precedence).
+      expect(r.transformed, contains('#if (os(iOS) || os(tvOS))'));
       expect(r.transformed, contains('  import Flutter'));
-      // macOS branch and the rest are untouched.
+      // macOS branch and non-iOS directives are untouched.
       expect(r.transformed, contains('#elseif os(macOS)'));
     });
 
-    testWithoutContext('leaves an #if os(iOS) behaviour block alone', () {
-      const String behaviour = '''
+    testWithoutContext('widens os(iOS) behaviour + messenger branches, keeps precedence', () {
+      const String src = '''
 func f() {
 #if os(iOS)
-  doIosThing()
+  let m = registrar.messenger()
+#else
+  let m = registrar.messenger
+#endif
+#if os(iOS) && DEBUG
+  log()
+#endif
+#if os(macOS)
+  mac()
 #endif
 }
 ''';
-      final PortingResult r =
-          SwiftPorter().port(behaviour, fileRelativePath: 'x.swift');
-      // Not an import guard — must not be widened.
-      expect(r.transformed, contains('#if os(iOS)\n'));
-      expect(r.transformed, isNot(contains('os(tvOS)')));
+      final PortingResult r = SwiftPorter().port(src, fileRelativePath: 'x.swift');
+      // Plain iOS guard widened so tvOS uses the iOS (messenger()) branch.
+      expect(r.transformed, contains('#if (os(iOS) || os(tvOS))\n'));
+      // Compound condition keeps `&&` precedence via parentheses.
+      expect(r.transformed, contains('#if (os(iOS) || os(tvOS)) && DEBUG'));
+      // Non-iOS directives are left exactly as-is.
+      expect(r.transformed, contains('#if os(macOS)\n'));
     });
   });
 }
