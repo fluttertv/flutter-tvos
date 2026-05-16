@@ -144,7 +144,9 @@ flutter:
       expect(pubspec, contains('name: url_launcher_tvos'));
       expect(pubspec, contains('pluginClass: URLLauncherPlugin'));
       expect(pubspec, contains('dartPluginClass: UrlLauncherIOS'));
-      expect(pubspec, contains('url_launcher_platform_interface: ^1.0.0'));
+      // The source's own constraint is carried over verbatim (not a
+      // hardcoded ^1.0.0, which would break `pub get` for real plugins).
+      expect(pubspec, contains('url_launcher_platform_interface: ^2.4.0'));
 
       // Podspec
       final String podspec = outputDir.childDirectory('tvos').childFile('url_launcher_tvos.podspec').readAsStringSync();
@@ -532,6 +534,62 @@ flutter:
       expect(tvosClasses.childFile('URLLauncherPlugin.swift').existsSync(), isTrue);
       expect(tvosClasses.childFile('Package.swift').existsSync(), isFalse,
           reason: 'SPM manifest must not be copied into Classes/');
+    });
+
+    testWithoutContext('strips federated Apple impl suffixes for the output name', () {
+      for (final (String src, String want) in <(String, String)>[
+        ('video_player_avfoundation', 'video_player_tvos'),
+        ('in_app_purchase_storekit', 'in_app_purchase_tvos'),
+        ('geolocator_apple', 'geolocator_tvos'),
+        ('audioplayers_darwin', 'audioplayers_tvos'),
+        ('google_sign_in_ios', 'google_sign_in_tvos'),
+        ('device_info_plus', 'device_info_plus_tvos'),
+      ]) {
+        final Directory dir = fs.directory('/p_$src')..createSync();
+        dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: $src
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: SomePlugin
+''');
+        dir.childDirectory('ios').childDirectory('Classes').childFile('SomePlugin.swift')
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync('import Flutter\n');
+        final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
+        expect(s.outputPackageName, want, reason: '$src → $want');
+      }
+    });
+
+    testWithoutContext('carries the platform-interface constraint; falls back to any', () {
+      Directory mk(String depLine) {
+        final Directory dir = fs.directory('/pi')..createSync();
+        dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: thing_ios
+dependencies:
+$depLine
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: ThingPlugin
+''');
+        dir.childDirectory('ios').childDirectory('Classes').childFile('ThingPlugin.swift')
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync('import Flutter\n');
+        return dir;
+      }
+
+      final PluginSource pinned =
+          SourceAnalyzer(fileSystem: fs).analyze(mk('  thing_platform_interface: ^3.1.0'));
+      expect(pinned.platformInterfaceConstraint, '^3.1.0');
+
+      fs.directory('/pi').deleteSync(recursive: true);
+      final PluginSource none = SourceAnalyzer(fileSystem: fs)
+          .analyze(mk('  thing_platform_interface:\n    git: https://x/y.git'));
+      expect(none.platformInterfaceConstraint, isNull,
+          reason: 'non-string constraint → null → template uses `any`');
     });
   });
 }

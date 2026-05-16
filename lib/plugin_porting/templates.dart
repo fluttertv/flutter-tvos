@@ -66,7 +66,10 @@ String renderPubspec({required PluginSource source, required String licenseHolde
     ..writeln('  flutter:')
     ..writeln('    sdk: flutter');
   if (platformInterface != null) {
-    buf.writeln('  $platformInterface: ^1.0.0');
+    // Carry the source's own constraint so `pub get` resolves; only fall
+    // back to `any` when the source didn't pin one.
+    final String constraint = source.platformInterfaceConstraint ?? 'any';
+    buf.writeln('  $platformInterface: $constraint');
   }
   buf
     ..writeln()

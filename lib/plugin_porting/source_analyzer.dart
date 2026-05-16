@@ -26,6 +26,7 @@ class PluginSource {
     required this.dartPluginClass,
     required this.sourceLanguage,
     required this.platformInterfacePackage,
+    required this.platformInterfaceConstraint,
     required this.descriptionFromPubspec,
     required this.licenseFile,
     required this.classesDirectory,
@@ -69,6 +70,12 @@ class PluginSource {
   /// (e.g. `url_launcher_platform_interface`), or `null` if the plugin isn't
   /// federated.
   final String? platformInterfacePackage;
+
+  /// The version constraint the source declared for
+  /// [platformInterfacePackage] (e.g. `^2.4.0`), copied verbatim into the
+  /// generated pubspec so `pub get` resolves. `null` when unknown — the
+  /// template then falls back to `any`.
+  final String? platformInterfaceConstraint;
 
   /// `description:` line from the source pubspec, used to seed the output
   /// pubspec's description.
@@ -231,13 +238,21 @@ class SourceAnalyzer {
       );
     }
 
-    // Best-effort: find the platform interface package in dependencies.
+    // Best-effort: find the platform interface package AND carry its
+    // version constraint over verbatim. Hardcoding `^1.0.0` (the old
+    // behaviour) makes `pub get` fail for the many plugins whose
+    // interface is already past 1.x.
     String? platformInterface;
+    String? platformInterfaceConstraint;
     final deps = pubspec['dependencies'] as YamlMap?;
     if (deps != null) {
       for (final Object? key in deps.keys) {
         if (key is String && key.endsWith('_platform_interface')) {
           platformInterface = key;
+          final Object? v = deps[key];
+          if (v is String && v.trim().isNotEmpty) {
+            platformInterfaceConstraint = v.trim();
+          }
           break;
         }
       }
@@ -259,6 +274,7 @@ class SourceAnalyzer {
       dartPluginClass: dartPluginClass,
       sourceLanguage: lang,
       platformInterfacePackage: platformInterface,
+      platformInterfaceConstraint: platformInterfaceConstraint,
       descriptionFromPubspec: (pubspec['description'] as String?)?.trim() ?? packageName,
       licenseFile: license.existsSync() ? license : null,
       classesDirectory: classesDir,
@@ -402,7 +418,18 @@ class SourceAnalyzer {
   /// implements both iOS and macOS (`shared_preferences_foundation`,
   /// `path_provider_foundation`). We strip it the same way as `_ios`.
   String _stripPlatformSuffix(String name) {
-    const suffixes = <String>['_ios', '_macos', '_foundation', '_darwin'];
+    // Federated Apple-implementation naming conventions. Order matters:
+    // longer/more-specific suffixes first so `_avfoundation` is not
+    // shortened by `_foundation`.
+    const suffixes = <String>[
+      '_avfoundation',
+      '_foundation',
+      '_storekit',
+      '_apple',
+      '_ios',
+      '_macos',
+      '_darwin',
+    ];
     for (final s in suffixes) {
       if (name.endsWith(s) && name.length > s.length) {
         return name.substring(0, name.length - s.length);
