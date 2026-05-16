@@ -11,70 +11,58 @@ import 'package:flutter_tools/src/ios/code_signing.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/template.dart';
 
+import 'tvos_app_scaffold.dart';
+
 class TvosCreateCommand extends CreateCommand {
   TvosCreateCommand({required super.verboseHelp}) {
-    argParser.addFlag(
-      'tvos-only',
-      negatable: false,
-      help:
-          'After scaffolding, remove the non-tvOS platform folders '
-          '(android/ios/macos/linux/windows/web) so the project targets '
-          'tvOS only. Ideal for a tvOS plugin\'s example app.',
-    );
+    // Internal only. Users say `--platforms=tvos`; the argv shim in
+    // executable.dart rewrites that to this flag because upstream
+    // Flutter's `--platforms` parser rejects `tvos`. Hidden so it never
+    // appears in `--help` as a thing to type.
+    argParser.addFlag('tvos-only', negatable: false, hide: true);
   }
-
-  /// Platform directories `flutter create` emits that a tvOS-only project
-  /// does not need. `tvos/` (added by this command) and the shared
-  /// `lib/`, `test/`, `pubspec.yaml` are kept.
-  static const List<String> _nonTvosPlatformDirs = <String>[
-    'android',
-    'ios',
-    'macos',
-    'linux',
-    'windows',
-    'web',
-  ];
 
   @override
   Future<FlutterCommandResult> runCommand() async {
-    // Generate standard flutter project structure
+    final String projectDirPath = argResults!.rest.first;
+    final String name =
+        stringArg('project-name') ?? globals.fs.path.basename(projectDirPath);
+    final String templateType = stringArg('template') ?? 'app';
+
+    // tvOS-only app: build the shared scaffold + tvos/ ourselves. We do
+    // NOT delegate to upstream `flutter create` (it can't target tvos and
+    // would force an unwanted iOS/Android app), so nothing is generated
+    // then stripped — the project is tvOS-only by construction.
+    if (boolArg('tvos-only') && templateType != 'plugin') {
+      globals.logger.printStatus('Generating tvOS-only project...');
+      TvosAppScaffold(globals.fs).write(projectDirPath, name);
+      await _renderTvosRunner(projectDirPath, name);
+      globals.logger.printStatus(
+        'Created tvOS-only project (shared app + tvos/, no other platforms).',
+      );
+      return FlutterCommandResult.success();
+    }
+
+    // Standard path: real `flutter create` (all/requested platforms),
+    // then add `tvos/` alongside.
     final FlutterCommandResult exitCode = await super.runCommand();
     if (exitCode != FlutterCommandResult.success()) {
       return exitCode;
     }
-
-    final String projectDirPath = argResults!.rest.first;
-    final String name = stringArg('project-name') ?? globals.fs.path.basename(projectDirPath);
-    final String templateType = stringArg('template') ?? 'app';
-
-    final FlutterCommandResult result;
     if (templateType == 'plugin') {
-      result = await _createPlugin(projectDirPath, name);
-    } else {
-      result = await _createApp(projectDirPath, name);
+      return _createPlugin(projectDirPath, name);
     }
-
-    if (boolArg('tvos-only') && result == FlutterCommandResult.success()) {
-      _stripNonTvosPlatforms(projectDirPath);
-    }
-    return result;
-  }
-
-  /// Deletes the non-tvOS platform folders so the example/app builds only
-  /// for Apple TV. Safe: `tvos/`, `lib/`, `test/`, `pubspec.yaml` stay.
-  void _stripNonTvosPlatforms(String projectDirPath) {
-    final Directory project = globals.fs.directory(projectDirPath);
-    for (final String dir in _nonTvosPlatformDirs) {
-      final Directory d = project.childDirectory(dir);
-      if (d.existsSync()) {
-        d.deleteSync(recursive: true);
-        globals.logger.printTrace('  removed non-tvOS platform: $dir');
-      }
-    }
-    globals.logger.printStatus('Stripped non-tvOS platforms (tvOS-only project).');
+    return _createApp(projectDirPath, name);
   }
 
   Future<FlutterCommandResult> _createApp(String projectDirPath, String name) async {
+    await _renderTvosRunner(projectDirPath, name);
+    return FlutterCommandResult.success();
+  }
+
+  /// Renders the `tvos/` Xcode runner from the bundled template into
+  /// [projectDirPath]. Shared by the standard and tvOS-only paths.
+  Future<void> _renderTvosRunner(String projectDirPath, String name) async {
     final String tvosTemplatePath = globals.fs.path.join(
       Cache.flutterRoot!,
       '..',
@@ -138,8 +126,6 @@ class TvosCreateCommand extends CreateCommand {
         podfileSrc.copySync(targetDir.childFile('Podfile').path);
       }
     }
-
-    return FlutterCommandResult.success();
   }
 
   Future<FlutterCommandResult> _createPlugin(String projectDirPath, String name) async {

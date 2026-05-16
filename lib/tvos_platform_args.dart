@@ -10,13 +10,13 @@
 /// rejected outright. We don't patch Flutter, so this rewrites argv at our
 /// own entrypoint — the one seam we fully control:
 ///
-///   * `--platforms=tvos`            → `--platforms=ios --tvos-only`
-///     (Flutter scaffolds the minimal `ios` app, `TvosCreateCommand` adds
-///     `tvos/`, then `--tvos-only` strips the residual `ios/` — a clean
-///     tvOS-only project.)
+///   * `--platforms=tvos`            → `--tvos-only` (no `--platforms`)
+///     `TvosCreateCommand` self-generates the shared app + `tvos/`; it
+///     never runs upstream `flutter create`, so no iOS/Android app is
+///     scaffolded — nothing is created then deleted.
 ///   * `--platforms=tvos,ios,...`    → `--platforms=ios,...`
-///     (drop `tvos`; the other platforms stay, `tvos/` is still added by
-///     `TvosCreateCommand`, nothing is stripped.)
+///     (drop `tvos`; the other platforms are scaffolded normally and
+///     `tvos/` is added alongside.)
 ///   * no `tvos` / no `create`       → returned unchanged.
 ///
 /// Pure function: no I/O, so it unit-tests directly.
@@ -56,8 +56,10 @@ List<String> expandTvosPlatformArgs(List<String> args) {
   final List<String> others =
       requested.where((String p) => p != 'tvos').toList();
   if (others.isEmpty) {
-    return <String>[...withoutPlatforms, '--platforms=ios', '--tvos-only'];
+    // Pure tvOS: self-generated, no upstream flutter create at all.
+    return <String>[...withoutPlatforms, '--tvos-only'];
   }
+  // tvos + siblings: scaffold the siblings normally; tvos/ added alongside.
   return <String>[...withoutPlatforms, '--platforms=${others.join(',')}'];
 }
 

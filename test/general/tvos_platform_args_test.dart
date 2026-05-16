@@ -23,17 +23,17 @@ void main() {
       expect(expandTvosPlatformArgs(a), same(a));
     });
 
-    test('--platforms=tvos → minimal ios scaffold + --tvos-only', () {
+    test('--platforms=tvos → self-generated tvOS-only (internal --tvos-only)', () {
       expect(
         expandTvosPlatformArgs(<String>['create', '--platforms=tvos', '--org', 'com.x', '.']),
-        <String>['create', '--org', 'com.x', '.', '--platforms=ios', '--tvos-only'],
+        <String>['create', '--org', 'com.x', '.', '--tvos-only'],
       );
     });
 
     test('--platforms tvos (space form) is handled', () {
       expect(
         expandTvosPlatformArgs(<String>['create', '--platforms', 'tvos', '.']),
-        <String>['create', '.', '--platforms=ios', '--tvos-only'],
+        <String>['create', '.', '--tvos-only'],
       );
     });
 
@@ -71,7 +71,6 @@ void main() {
         '--org',
         'com.example',
         '.',
-        '--platforms=ios',
         '--tvos-only',
       ]);
     });
