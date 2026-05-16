@@ -48,7 +48,46 @@ class NativeSkeleton {
       'lib/$out.dart': seed.dart,
       'tvos/Classes/$swiftClass.swift': seed.swift,
       'PORTING_REPORT.md': _report(source, seed),
+      // A runnable, tvOS-only example so the package is testable
+      // (`cd example && flutter-tvos run`). The command renders
+      // `example/tvos/` on top of these.
+      'example/pubspec.yaml': _examplePubspec(source),
+      'example/lib/main.dart': seed.exampleMain,
+      'example/analysis_options.yaml': tmpl.renderAnalysisOptions(),
+      'example/.gitignore': tmpl.renderGitignore(),
+      'example/README.md': '# ${source.basePackageName}_example\n\n'
+          'tvOS-only example for `$out`. Run with:\n\n'
+          '```sh\nflutter-tvos run\n```\n',
     };
+  }
+
+  String _examplePubspec(PluginSource source) {
+    final String base = source.basePackageName;
+    final String out = source.outputPackageName;
+    return '''
+name: ${base}_example
+description: "tvOS example for $out."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  $base: any
+  $out:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+''';
   }
 
   String _report(PluginSource source, _Seed seed) {
@@ -145,7 +184,35 @@ public class ${source.pluginClass}: NSObject, FlutterPlugin {
   }
 }
 ''';
-    return _Seed(dart: dart, swift: swift, seeded: false);
+    return _Seed(
+      dart: dart,
+      swift: swift,
+      seeded: false,
+      exampleMain: '''
+import 'package:flutter/material.dart';
+
+void main() => runApp(const ExampleApp());
+
+class ExampleApp extends StatelessWidget {
+  const ExampleApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(title: const Text('${source.outputPackageName}')),
+        body: const Center(
+          child: Text(
+            'Skeleton example.\\nImplement the plugin, then call it here.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );
+  }
+}
+''',
+    );
   }
 }
 
@@ -154,6 +221,7 @@ class _Seed {
     required this.dart,
     required this.swift,
     required this.seeded,
+    required this.exampleMain,
     this.implemented = const <String>[],
     this.unsupported = const <String>[],
   });
@@ -161,6 +229,10 @@ class _Seed {
   final String dart;
   final String swift;
   final bool seeded;
+
+  /// `example/lib/main.dart` — exercises the plugin on tvOS.
+  final String exampleMain;
+
   final List<String> implemented;
   final List<String> unsupported;
 }
@@ -278,10 +350,66 @@ public class ${source.pluginClass}: NSObject, FlutterPlugin {
 }
 ''';
 
+  const String exampleMain = r'''
+import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+
+void main() => runApp(const PathProviderExample());
+
+class PathProviderExample extends StatefulWidget {
+  const PathProviderExample({super.key});
+
+  @override
+  State<PathProviderExample> createState() => _State();
+}
+
+class _State extends State<PathProviderExample> {
+  String _out = 'Querying path_provider on tvOS…';
+
+  @override
+  void initState() {
+    super.initState();
+    _query();
+  }
+
+  Future<void> _query() async {
+    final StringBuffer b = StringBuffer();
+    Future<void> probe(String label, Future<Directory> Function() f) async {
+      try {
+        b.writeln('$label = ${(await f()).path}');
+      } catch (e) {
+        b.writeln('$label ERROR: $e');
+      }
+    }
+
+    await probe('temp', getTemporaryDirectory);
+    await probe('documents', getApplicationDocumentsDirectory);
+    await probe('support', getApplicationSupportDirectory);
+    if (mounted) {
+      setState(() => _out = b.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(title: const Text('path_provider on tvOS')),
+        body: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Text(_out, style: const TextStyle(fontSize: 20)),
+        ),
+      ),
+    );
+  }
+}
+''';
+
   return _Seed(
     dart: dart,
     swift: swift,
     seeded: true,
+    exampleMain: exampleMain,
     implemented: <String>[
       'getTemporaryPath',
       'getApplicationDocumentsPath',

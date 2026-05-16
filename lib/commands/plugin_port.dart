@@ -353,7 +353,28 @@ class TvosPluginPortCommand extends FlutterCommand {
       }
     }
 
-    if (includeExample && !dryRun) {
+    if (source.ffiNativeAssets) {
+      // The native skeleton already wrote example/lib + example/pubspec
+      // (depending on `<base>` + `<base>_tvos: path: ../`). Render its
+      // tvOS-only runner so it is immediately runnable — no fragile
+      // upstream-monorepo example copy for the FFI case.
+      final Directory exampleDir = outputDir.childDirectory('example');
+      if (!dryRun && exampleDir.existsSync()) {
+        await renderTvosRunner(
+          fileSystem: fs,
+          logger: log,
+          templateRenderer: globals.templateRenderer,
+          projectDirPath: exampleDir.path,
+          name: '${source.basePackageName}_example',
+          organization: 'com.example',
+        );
+        log.printStatus('');
+        log.printStatus(
+          'Runnable tvOS example at ${exampleDir.path}\n'
+          '  cd ${exampleDir.path} && flutter-tvos run',
+        );
+      }
+    } else if (includeExample && !dryRun) {
       await _generateExample(fs, log, source, outputDir);
     } else if (includeExample && dryRun) {
       log.printStatus('');

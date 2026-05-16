@@ -724,6 +724,22 @@ flutter:
           out.childFile('PORTING_REPORT.md').readAsStringSync();
       expect(report, contains('native federated'));
       expect(report, contains('Seeded with a working implementation'));
+
+      // A runnable tvOS-only example ships with the package.
+      final String exPubspec = out
+          .childDirectory('example')
+          .childFile('pubspec.yaml')
+          .readAsStringSync();
+      expect(exPubspec, contains('name: path_provider_example'));
+      expect(exPubspec, contains('path_provider: any'));
+      expect(exPubspec, contains('path_provider_tvos:\n    path: ../'));
+      final String exMain = out
+          .childDirectory('example')
+          .childDirectory('lib')
+          .childFile('main.dart')
+          .readAsStringSync();
+      expect(exMain, contains("import 'package:path_provider/path_provider.dart'"));
+      expect(exMain, contains('getApplicationDocumentsDirectory'));
     });
 
     testWithoutContext('FFI source with no seed → buildable skeleton + checklist', () {
