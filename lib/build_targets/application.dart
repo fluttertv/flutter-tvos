@@ -10,7 +10,6 @@ import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
-import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 
@@ -106,10 +105,40 @@ class TvosCopyFlutterBundle extends CopyFlutterBundle {
 
   @override
   List<Target> get dependencies => const <Target>[
-    DartBuildForNative(),
+    // NOTE: deliberately NOT depending on DartBuildForNative() /
+    // InstallCodeAssets(). The flutter-tvos toolchain cannot build Dart
+    // native-assets / code-assets for tvOS (flutter_tools' code-asset
+    // path is iOS/macOS-only and we don't patch it). Pulling those
+    // targets in makes the build run the build hooks of every
+    // native-assets plugin in the graph — including iOS-endorsed FFI
+    // plugins like `path_provider_foundation` that an app drags in
+    // transitively via `path_provider` — which fails with
+    // "Target native_assets required define SdkRoot" (issue #3).
+    //
+    // On tvOS those FFI Dart implementations are never used anyway:
+    // TvosDartPluginRegistrantTarget routes federated plugins to their
+    // native `*_tvos` package instead. So skipping the native-assets
+    // step is correct here, not a workaround — tvOS plugins are plain
+    // Swift built via CocoaPods, never via Dart code-assets.
     TvosKernelSnapshot(),
-    InstallCodeAssets(),
   ];
+
+  @override
+  Future<void> build(Environment environment) async {
+    // We skip the native-assets targets for tvOS (see `dependencies`),
+    // so `native_assets.json` is never produced. Upstream
+    // CopyFlutterBundle.build() unconditionally bundles it as
+    // `NativeAssetsManifest.json` and throws PathNotFound without it.
+    // Write the canonical empty manifest first — tvOS genuinely has no
+    // Dart native assets — so the upstream copy succeeds. (In-policy:
+    // our code writes a file; flutter_tools is untouched.)
+    final File manifest = environment.buildDir.childFile('native_assets.json');
+    if (!manifest.existsSync()) {
+      manifest.parent.createSync(recursive: true);
+      manifest.writeAsStringSync('{"format-version":[1,0,0],"native-assets":{}}');
+    }
+    await super.build(environment);
+  }
 }
 
 class DebugTvosApplication extends Target {
