@@ -8,9 +8,10 @@ import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 
+import '../plugin_porting/example_extender.dart';
+import '../plugin_porting/porting_result.dart' show FindingAction;
 import '../plugin_porting/scaffolder.dart';
 import '../plugin_porting/source_analyzer.dart';
-import '../plugin_porting/porting_result.dart' show FindingAction;
 import '../plugin_porting/templates.dart' show kDefaultLicenseHolder;
 
 /// `flutter-tvos plugin port <source>` — scaffolds a federated `*_tvos`
@@ -48,6 +49,15 @@ class TvosPluginPortCommand extends FlutterCommand {
             'Copyright holder line baked into generated source files. Set '
             'this to your name or organisation when porting plugins you will '
             'maintain yourself.',
+      )
+      ..addFlag(
+        'include-example',
+        negatable: false,
+        help:
+            "Also wire the source plugin's example/ app for tvOS: merge "
+            '`dependency_overrides` so it resolves the generated `*_tvos` '
+            'package, and append a run note to its README. Never writes '
+            'into the generated package itself.',
       )
       ..addFlag(
         'force',
@@ -133,6 +143,7 @@ class TvosPluginPortCommand extends FlutterCommand {
     final bool dryRun = boolArg('dry-run');
     final bool force = boolArg('force');
     final bool emitReport = boolArg('report');
+    final bool includeExample = boolArg('include-example');
 
     log.printStatus('Source plugin:    ${source.packageName}');
     log.printStatus('Source platform:  ${source.sourcePlatform} (${source.sourceLanguage.name})');
@@ -228,6 +239,30 @@ class TvosPluginPortCommand extends FlutterCommand {
             '${outputDir.basename}/PORTING_REPORT.md for the full report.',
           );
         }
+      }
+    }
+
+    if (includeExample) {
+      final ExampleExtendResult ex = ExampleExtender(fileSystem: fs).extend(
+        source: source,
+        outputPackageDir: outputDir,
+        dryRun: dryRun,
+      );
+      log.printStatus('');
+      if (ex.skipped) {
+        log.printWarning('--include-example skipped: ${ex.reason}');
+      } else {
+        log.printStatus(
+          '${dryRun ? 'Would update' : 'Updated'} '
+          '${ex.writtenPaths.length} example file(s) in ${ex.exampleDirectory!.path}.',
+        );
+        log.printStatus(
+          'Generate the example tvOS runner with:\n    ${ex.createCommand}',
+        );
+        log.printStatus(
+          'Then: cd ${ex.exampleDirectory!.path} && '
+          'flutter-tvos build tvos --simulator --debug',
+        );
       }
     }
 
