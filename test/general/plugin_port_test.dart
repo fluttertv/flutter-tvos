@@ -391,6 +391,59 @@ flutter:
 
       expect(outputDir.childFile('LICENSE').readAsStringSync(), 'BSD-3 license body');
     });
+
+    testWithoutContext('copies the source Dart lib/, renaming entry + rewriting self-imports', () {
+      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      sourceDir.childDirectory('lib').childFile('url_launcher_ios.dart')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync(
+          "import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';\n"
+          "import 'package:url_launcher_ios/src/messages.g.dart';\n"
+          'class UrlLauncherIOS extends UrlLauncherPlatform {}\n',
+        );
+      sourceDir
+          .childDirectory('lib')
+          .childDirectory('src')
+          .childFile('messages.g.dart')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('// pigeon generated\n');
+      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
+      final Directory out = fs.directory('/out/url_launcher_tvos');
+
+      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
+          .scaffold(source: source, outputDirectory: out);
+
+      // Entry renamed to <out>.dart; real upstream class preserved.
+      final String entry =
+          out.childDirectory('lib').childFile('url_launcher_tvos.dart').readAsStringSync();
+      expect(entry, contains('class UrlLauncherIOS extends UrlLauncherPlatform'));
+      // Self-import rewritten to the output package; interface import kept.
+      expect(entry, contains("package:url_launcher_tvos/src/messages.g.dart"));
+      expect(entry, isNot(contains('package:url_launcher_ios/')));
+      expect(entry,
+          contains("package:url_launcher_platform_interface/url_launcher_platform_interface.dart"));
+      // Sub-tree copied verbatim, structure preserved.
+      expect(
+        out.childDirectory('lib').childDirectory('src').childFile('messages.g.dart').readAsStringSync(),
+        '// pigeon generated\n',
+      );
+      // No hand-written guessed stub left behind.
+      expect(entry, isNot(contains('TODO(porter): override the platform interface')));
+    });
+
+    testWithoutContext('falls back to the Dart stub when the source has no lib/', () {
+      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
+      final Directory out = fs.directory('/out/url_launcher_tvos');
+
+      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
+          .scaffold(source: source, outputDirectory: out);
+
+      final String entry =
+          out.childDirectory('lib').childFile('url_launcher_tvos.dart').readAsStringSync();
+      expect(entry, contains('base class UrlLauncherIOS extends UrlLauncherPlatform'));
+      expect(entry, contains('static void registerWith()'));
+    });
   });
 
   group('SourceAnalyzer modern layouts', () {

@@ -86,10 +86,6 @@ class Scaffolder {
         contents: tmpl.renderGitignore(),
       ),
       _Plan(
-        path: outputDirectory.childDirectory('lib').childFile('${source.outputPackageName}.dart').path,
-        contents: tmpl.renderDartEntry(source: source, licenseHolder: licenseHolder),
-      ),
-      _Plan(
         path: outputDirectory
             .childDirectory('test')
             .childFile('${source.outputPackageName}_test.dart')
@@ -104,6 +100,16 @@ class Scaffolder {
         contents: tmpl.renderPodspec(source: source, licenseHolder: licenseHolder),
       ),
     ];
+
+    // The federated Dart implementation. The source plugin's `lib/`
+    // already extends the platform interface and talks to the SAME
+    // method channel the native side registers — and we keep that
+    // channel name unchanged — so the upstream Dart code works on tvOS
+    // verbatim. Copy it (rewriting `package:<src>` self-imports to the
+    // output package) instead of hand-writing a guessed stub that would
+    // not compile. Falls back to the templated stub when the source has
+    // no Dart `lib/` (rare).
+    plan.addAll(_dartLibPlans(source, outputDirectory, licenseHolder));
 
     // Native sources from the source plugin's <platform>/Classes/ go into
     // the output's tvos/Classes/. Swift files run through [SwiftPorter] and
@@ -226,6 +232,50 @@ class Scaffolder {
       reportPath: reportFile?.path,
       dryRun: dryRun,
     );
+  }
+
+  /// Copies the source plugin's Dart `lib/` into the output package,
+  /// rewriting `package:<src>/…` self-imports to the output package and
+  /// renaming the conventional entry `lib/<src>.dart` →
+  /// `lib/<out>.dart` (so Flutter's federated registrant can import it
+  /// and find `dartPluginClass`). Falls back to the templated stub when
+  /// the source ships no Dart `lib/`.
+  List<_Plan> _dartLibPlans(
+    PluginSource source,
+    Directory outputDirectory,
+    String licenseHolder,
+  ) {
+    final Directory srcLib = source.directory.childDirectory('lib');
+    final Directory dstLib = outputDirectory.childDirectory('lib');
+    List<_Plan> stub() => <_Plan>[
+          _Plan(
+            path: dstLib.childFile('${source.outputPackageName}.dart').path,
+            contents:
+                tmpl.renderDartEntry(source: source, licenseHolder: licenseHolder),
+          ),
+        ];
+    if (!srcLib.existsSync()) {
+      return stub();
+    }
+    final List<_Plan> plans = <_Plan>[];
+    for (final FileSystemEntity e in srcLib.listSync(recursive: true)) {
+      if (e is! File || _fs.path.extension(e.path).toLowerCase() != '.dart') {
+        continue;
+      }
+      final String rel = _fs.path.relative(e.path, from: srcLib.path);
+      final String destRel = rel == '${source.packageName}.dart'
+          ? '${source.outputPackageName}.dart'
+          : rel;
+      final String content = e.readAsStringSync().replaceAll(
+            'package:${source.packageName}/',
+            'package:${source.outputPackageName}/',
+          );
+      plans.add(_Plan(
+        path: _fs.path.join(dstLib.path, destRel),
+        contents: content,
+      ));
+    }
+    return plans.isEmpty ? stub() : plans;
   }
 
   /// Walks the source's `<platform>/Classes/` directory and produces a list
