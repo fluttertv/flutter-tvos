@@ -210,14 +210,14 @@ void main() {
     testWithoutContext('emits a deterministic, well-formed report', () {
       final Directory src = _createUrlLauncherIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
-      final SwiftPortingResult r = SwiftPorter().port(
+      final PortingResult r = SwiftPorter().port(
         _kUrlLauncherSwift,
         fileRelativePath: 'tvos/Classes/URLLauncherPlugin.swift',
       );
 
       final String report = const ReportEmitter().render(
         source: source,
-        results: <SwiftPortingResult>[r],
+        results: <PortingResult>[r],
         today: '2026-01-02',
       );
 
@@ -233,14 +233,14 @@ void main() {
     testWithoutContext('handles a clean port with no findings', () {
       final Directory src = _createUrlLauncherIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
-      final SwiftPortingResult clean = SwiftPorter().port(
+      final PortingResult clean = SwiftPorter().port(
         'import Flutter\n\npublic class P {}\n',
         fileRelativePath: 'tvos/Classes/P.swift',
       );
 
       final String report = const ReportEmitter().render(
         source: source,
-        results: <SwiftPortingResult>[clean],
+        results: <PortingResult>[clean],
         today: '2026-01-02',
       );
 

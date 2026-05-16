@@ -10,18 +10,17 @@ import 'package:flutter_tools/src/runner/flutter_command.dart';
 
 import '../plugin_porting/scaffolder.dart';
 import '../plugin_porting/source_analyzer.dart';
-import '../plugin_porting/swift_porter.dart' show FindingAction;
+import '../plugin_porting/porting_result.dart' show FindingAction;
 import '../plugin_porting/templates.dart' show kDefaultLicenseHolder;
 
 /// `flutter-tvos plugin port <source>` — scaffolds a federated `*_tvos`
 /// package from an existing iOS or macOS plugin.
 ///
-/// Phases 1–3 (this implementation): reads the source plugin, copies its
-/// native sources, runs the Swift transformer (strips tvOS-incompatible
-/// imports, stubs unsupported method handlers via the compatibility
-/// database) and writes `PORTING_REPORT.md`. Phases 4–7 layer on the
-/// Objective-C transformer, `--include-example`, and `--from-pub` /
-/// `--from-git`. See `docs/PLUGIN_PORTING.md` for the full plan.
+/// Reads the source plugin, then runs the Swift transformer (`.swift`) and
+/// the Objective-C transformer (`.h/.m/.mm`): tvOS-incompatible imports are
+/// stripped and unsupported method handlers stubbed via the compatibility
+/// database, with a `PORTING_REPORT.md` summarising every change. Still to
+/// come: `--include-example`, `--from-pub`, and `--from-git`.
 class TvosPluginPortCommand extends FlutterCommand {
   TvosPluginPortCommand() {
     argParser

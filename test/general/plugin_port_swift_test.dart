@@ -41,7 +41,7 @@ public class URLLauncherPlugin: NSObject, FlutterPlugin {
 void main() {
   group('SwiftPorter', () {
     testWithoutContext('strips iOS-only imports independent of the API regex', () {
-      final SwiftPortingResult r =
+      final PortingResult r =
           SwiftPorter().port(_kSwiftSource, fileRelativePath: 'tvos/Classes/URLLauncherPlugin.swift');
 
       // `import WebKit` is commented out even though "import WebKit" does not
@@ -65,7 +65,7 @@ void main() {
     });
 
     testWithoutContext('stubs handlers that reference unsupported APIs', () {
-      final SwiftPortingResult r =
+      final PortingResult r =
           SwiftPorter().port(_kSwiftSource, fileRelativePath: 'tvos/Classes/URLLauncherPlugin.swift');
 
       expect(r.stubbedCases, <String>['closeWebView', 'openWebView']);
@@ -92,7 +92,7 @@ void main() {
     });
 
     testWithoutContext('flags partial APIs without modifying the code', () {
-      final SwiftPortingResult r =
+      final PortingResult r =
           SwiftPorter().port(_kSwiftSource, fileRelativePath: 'tvos/Classes/URLLauncherPlugin.swift');
 
       // `launch` uses UIApplication.shared.open — partial, code stays.
@@ -110,7 +110,7 @@ void main() {
     });
 
     testWithoutContext('records the methods it detected for the report', () {
-      final SwiftPortingResult r =
+      final PortingResult r =
           SwiftPorter().port(_kSwiftSource, fileRelativePath: 'x.swift');
 
       expect(
@@ -129,7 +129,7 @@ public class FooPlugin: NSObject, FlutterPlugin {
   }
 }
 ''';
-      final SwiftPortingResult r = SwiftPorter().port(clean, fileRelativePath: 'x.swift');
+      final PortingResult r = SwiftPorter().port(clean, fileRelativePath: 'x.swift');
 
       expect(r.transformed, clean);
       expect(r.findings, isEmpty);
@@ -138,11 +138,11 @@ public class FooPlugin: NSObject, FlutterPlugin {
     });
 
     testWithoutContext('always ends with exactly one trailing newline', () {
-      final SwiftPortingResult noNewline =
+      final PortingResult noNewline =
           SwiftPorter().port('let x = 1', fileRelativePath: 'x.swift');
       expect(noNewline.transformed, 'let x = 1\n');
 
-      final SwiftPortingResult oneNewline =
+      final PortingResult oneNewline =
           SwiftPorter().port('let x = 1\n', fileRelativePath: 'x.swift');
       expect(oneNewline.transformed, 'let x = 1\n');
     });

@@ -3,102 +3,9 @@
 // found in the LICENSE file.
 
 import 'compatibility_database.dart';
+import 'porting_result.dart';
 
-/// Result of running [SwiftPorter.port] on a single Swift source file.
-///
-/// `transformed` is what the scaffolder writes to the output package;
-/// `findings` are the per-line detections fed into `PORTING_REPORT.md`.
-class SwiftPortingResult {
-  SwiftPortingResult({
-    required this.transformed,
-    required this.findings,
-    required this.strippedImports,
-    required this.stubbedCases,
-    required this.detectedMethods,
-  });
-
-  /// Transformed Swift content. Always ends with a single trailing newline.
-  final String transformed;
-
-  /// Every pattern hit, in source-file order. Empty when nothing matched.
-  final List<PortingFinding> findings;
-
-  /// Import lines (verbatim, including leading `import `) that were
-  /// commented out during the port. Surfaced in the report's "Imports
-  /// removed" section.
-  final List<String> strippedImports;
-
-  /// `case "method":` blocks whose body was replaced with
-  /// `result(FlutterMethodNotImplemented)` because they referenced an
-  /// `unsupported` API. Each entry is the method name (the literal
-  /// between the case's quotes).
-  final List<String> stubbedCases;
-
-  /// Every `case "<method>":` block the porter recognised in this file,
-  /// sorted and de-duplicated. The report subtracts [stubbedCases] and any
-  /// flagged methods from this set to compute "ported as-is".
-  final List<String> detectedMethods;
-}
-
-/// One detection emitted by the porter. There may be multiple findings per
-/// file — e.g. a plugin that uses both `WKWebView` and `UIPasteboard` in
-/// different methods produces two findings.
-class PortingFinding {
-  PortingFinding({
-    required this.fileRelativePath,
-    required this.line,
-    required this.column,
-    required this.matchedText,
-    required this.pattern,
-    required this.enclosingMethod,
-    required this.action,
-  });
-
-  /// Path of the offending file relative to the output package root, e.g.
-  /// `tvos/Classes/URLLauncherPlugin.swift`. Hand-printed into the report.
-  final String fileRelativePath;
-
-  /// 1-based line number of the matching line.
-  final int line;
-
-  /// 1-based column where the match starts on that line.
-  final int column;
-
-  /// The exact substring of source that triggered the match. Useful for
-  /// the report so the reader can locate it quickly.
-  final String matchedText;
-
-  /// The compatibility-database entry that matched.
-  final ApiPattern pattern;
-
-  /// Name of the enclosing `case "<method>":` block, or `null` if the
-  /// match wasn't inside a recognised case (e.g. it was at top level or
-  /// inside a private helper function).
-  final String? enclosingMethod;
-
-  /// What the porter did about this finding.
-  final FindingAction action;
-}
-
-/// What action the porter took for a given finding.
-enum FindingAction {
-  /// Method-handler body stubbed with `result(FlutterMethodNotImplemented)`.
-  /// Applied only to `unsupported` patterns inside a recognised
-  /// `case "<method>":` block.
-  stubbedMethod,
-
-  /// Source line marked with a `// TODO(porter):` comment but otherwise
-  /// untouched. Applied to `unsupported` patterns NOT inside a recognised
-  /// case (e.g. private helpers, top-level code).
-  taggedWithTodo,
-
-  /// `partial` patterns: source unchanged, finding recorded for manual
-  /// review.
-  flagged,
-
-  /// Import line commented out, preserving line numbers.
-  importStripped,
-}
+export 'porting_result.dart';
 
 /// Pure-function Swift transformer.
 ///
@@ -122,7 +29,7 @@ class SwiftPorter {
   /// porting report can locate the issue. It should be the path the file
   /// will live at in the OUTPUT package, e.g.
   /// `tvos/Classes/URLLauncherPlugin.swift`.
-  SwiftPortingResult port(String source, {required String fileRelativePath}) {
+  PortingResult port(String source, {required String fileRelativePath}) {
     final List<String> originalLines = source.split('\n');
     final List<String> outputLines = <String>[...originalLines];
     final List<PortingFinding> findings = <PortingFinding>[];
@@ -239,7 +146,7 @@ class SwiftPorter {
       transformed = '$transformed\n';
     }
 
-    return SwiftPortingResult(
+    return PortingResult(
       transformed: transformed,
       findings: findings,
       strippedImports: strippedImports.toList(),

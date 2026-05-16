@@ -2,20 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/// Builds `PORTING_REPORT.md` from the aggregated [SwiftPortingResult]s the
+/// Builds `PORTING_REPORT.md` from the aggregated [PortingResult]s the
 /// scaffolder collected while transforming a plugin's native sources.
 ///
 /// The report is the human-facing half of the porter's "honest about
-/// limits" promise (see `docs/PLUGIN_PORTING.md` §7): every method that was
-/// stubbed because it touches a tvOS-incompatible API is listed with the
-/// reason and a suggested action, every flagged-for-review API is called
-/// out, and every stripped iOS-only import is recorded with its source
-/// location so a reviewer can audit the port without re-reading the diff.
+/// limits" promise: every method that was stubbed because it touches a
+/// tvOS-incompatible API is listed with the reason and a suggested action,
+/// every flagged-for-review API is called out, and every stripped iOS-only
+/// import is recorded with its source location so a reviewer can audit the
+/// port without re-reading the diff.
 library;
 
 import 'compatibility_database.dart';
+import 'porting_result.dart';
 import 'source_analyzer.dart';
-import 'swift_porter.dart';
 
 /// Stateless renderer. Pure function of its inputs so it golden-tests
 /// cleanly; inject [today] in tests to keep output deterministic.
@@ -27,11 +27,11 @@ class ReportEmitter {
   /// `YYYY-MM-DD` string) to override the generation date in tests.
   String render({
     required PluginSource source,
-    required List<SwiftPortingResult> results,
+    required List<PortingResult> results,
     String? today,
   }) {
     final List<PortingFinding> all = <PortingFinding>[
-      for (final SwiftPortingResult r in results) ...r.findings,
+      for (final PortingResult r in results) ...r.findings,
     ];
 
     final List<PortingFinding> importStrips = all
@@ -48,10 +48,10 @@ class ReportEmitter {
         .toList();
 
     final Set<String> detectedMethods = <String>{
-      for (final SwiftPortingResult r in results) ...r.detectedMethods,
+      for (final PortingResult r in results) ...r.detectedMethods,
     };
     final Set<String> stubbedMethods = <String>{
-      for (final SwiftPortingResult r in results) ...r.stubbedCases,
+      for (final PortingResult r in results) ...r.stubbedCases,
     };
     final Set<String> partialMethods = <String>{
       for (final PortingFinding f in partialFindings)

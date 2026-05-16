@@ -5,6 +5,8 @@
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 
+import 'objc_porter.dart';
+import 'porting_result.dart';
 import 'report_emitter.dart';
 import 'source_analyzer.dart';
 import 'swift_porter.dart';
@@ -104,31 +106,40 @@ class Scaffolder {
     ];
 
     // Native sources from the source plugin's <platform>/Classes/ go into
-    // the output's tvos/Classes/. Phase 3: Swift files run through
-    // [SwiftPorter] (iOS-only imports stripped, unsupported method handlers
-    // stubbed); .h/.m/.mm are still copied verbatim (Phase 4 ports ObjC).
-    // Falls back to the Phase-1 stub when the source has no native files.
+    // the output's tvos/Classes/. Swift files run through [SwiftPorter] and
+    // Objective-C `.h/.m/.mm` through [ObjcPorter] (iOS-only imports
+    // stripped, unsupported method handlers stubbed). Anything else is
+    // copied verbatim. Falls back to the Phase-1 stub when the source has
+    // no native files at all.
     final Directory tvosClassesDir = outputDirectory.childDirectory('tvos').childDirectory('Classes');
     final List<_NativeCopy> allNative = _collectNativeCopies(source, tvosClassesDir);
+    const Set<String> swiftExt = <String>{'.swift'};
+    const Set<String> objcExt = <String>{'.h', '.m', '.mm'};
     final List<_NativeCopy> nativeCopies = <_NativeCopy>[
       for (final _NativeCopy c in allNative)
-        if (_fs.path.extension(c.source.path).toLowerCase() != '.swift') c,
+        if (!swiftExt.contains(_fs.path.extension(c.source.path).toLowerCase()) &&
+            !objcExt.contains(_fs.path.extension(c.source.path).toLowerCase()))
+          c,
     ];
-    final List<_SwiftPort> swiftPorts = <_SwiftPort>[];
-    final List<SwiftPortingResult> portResults = <SwiftPortingResult>[];
-    final SwiftPorter porter = SwiftPorter();
+    final List<_PortedFile> portedFiles = <_PortedFile>[];
+    final List<PortingResult> portResults = <PortingResult>[];
+    final SwiftPorter swiftPorter = SwiftPorter();
+    final ObjcPorter objcPorter = ObjcPorter();
     for (final _NativeCopy c in allNative) {
-      if (_fs.path.extension(c.source.path).toLowerCase() != '.swift') {
+      final String ext = _fs.path.extension(c.source.path).toLowerCase();
+      final bool isSwift = swiftExt.contains(ext);
+      final bool isObjc = objcExt.contains(ext);
+      if (!isSwift && !isObjc) {
         continue;
       }
       final String relInPackage =
           _fs.path.relative(c.destinationPath, from: outputDirectory.path);
-      final SwiftPortingResult r = porter.port(
-        c.source.readAsStringSync(),
-        fileRelativePath: relInPackage,
-      );
+      final String src = c.source.readAsStringSync();
+      final PortingResult r = isSwift
+          ? swiftPorter.port(src, fileRelativePath: relInPackage)
+          : objcPorter.port(src, fileRelativePath: relInPackage);
       portResults.add(r);
-      swiftPorts.add(_SwiftPort(
+      portedFiles.add(_PortedFile(
         destinationPath: c.destinationPath,
         contents: r.transformed,
       ));
@@ -177,7 +188,7 @@ class Scaffolder {
         f.writeAsStringSync(p.contents);
         _log.printTrace('  wrote ${p.path}');
       }
-      for (final s in swiftPorts) {
+      for (final s in portedFiles) {
         final File f = _fs.file(s.destinationPath)..parent.createSync(recursive: true);
         f.writeAsStringSync(s.contents);
         _log.printTrace('  ported ${s.destinationPath}');
@@ -203,14 +214,14 @@ class Scaffolder {
       outputDirectory: outputDirectory,
       writtenPaths: <String>[
         for (final _Plan p in plan) p.path,
-        for (final _SwiftPort s in swiftPorts) s.destinationPath,
+        for (final _PortedFile s in portedFiles) s.destinationPath,
         for (final _NativeCopy c in nativeCopies) c.destinationPath,
         for (final _NativeCopy c in resourceCopies) c.destinationPath,
         if (copiedLicense != null) copiedLicense.path,
         if (reportFile != null) reportFile.path,
       ],
       findings: <PortingFinding>[
-        for (final SwiftPortingResult r in portResults) ...r.findings,
+        for (final PortingResult r in portResults) ...r.findings,
       ],
       reportPath: reportFile?.path,
       dryRun: dryRun,
@@ -334,11 +345,11 @@ class _NativeCopy {
   final String destinationPath;
 }
 
-/// A Swift source that was run through [SwiftPorter]. Unlike [_NativeCopy]
-/// the bytes written are the *transformed* content, not a verbatim copy —
-/// so the verbose log can say "ported X" rather than "copied X".
-class _SwiftPort {
-  _SwiftPort({required this.destinationPath, required this.contents});
+/// A native source run through [SwiftPorter] or [ObjcPorter]. Unlike
+/// [_NativeCopy] the bytes written are the *transformed* content, not a
+/// verbatim copy — so the verbose log says "ported X" not "copied X".
+class _PortedFile {
+  _PortedFile({required this.destinationPath, required this.contents});
   final String destinationPath;
   final String contents;
 }
