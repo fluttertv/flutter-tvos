@@ -146,5 +146,42 @@ public class FooPlugin: NSObject, FlutterPlugin {
           SwiftPorter().port('let x = 1\n', fileRelativePath: 'x.swift');
       expect(oneNewline.transformed, 'let x = 1\n');
     });
+
+    testWithoutContext('widens the Pigeon/Flutter import guard to tvOS', () {
+      const String pigeon = '''
+import Foundation
+
+#if os(iOS)
+  import Flutter
+#elseif os(macOS)
+  import FlutterMacOS
+#else
+  #error("Unsupported platform.")
+#endif
+
+final class Foo {}
+''';
+      final PortingResult r =
+          SwiftPorter().port(pigeon, fileRelativePath: 'tvos/Classes/messages.g.swift');
+      expect(r.transformed, contains('#if os(iOS) || os(tvOS)'));
+      expect(r.transformed, contains('  import Flutter'));
+      // macOS branch and the rest are untouched.
+      expect(r.transformed, contains('#elseif os(macOS)'));
+    });
+
+    testWithoutContext('leaves an #if os(iOS) behaviour block alone', () {
+      const String behaviour = '''
+func f() {
+#if os(iOS)
+  doIosThing()
+#endif
+}
+''';
+      final PortingResult r =
+          SwiftPorter().port(behaviour, fileRelativePath: 'x.swift');
+      // Not an import guard — must not be widened.
+      expect(r.transformed, contains('#if os(iOS)\n'));
+      expect(r.transformed, isNot(contains('os(tvOS)')));
+    });
   });
 }
