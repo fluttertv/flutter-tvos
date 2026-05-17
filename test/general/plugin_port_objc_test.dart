@@ -12,21 +12,21 @@ import 'package:flutter_tvos/plugin_porting/source_analyzer.dart';
 
 import '../src/common.dart';
 
-/// A url_launcher_ios-shaped Objective-C plugin: clean handlers plus one
+/// A gadget_ios-shaped Objective-C plugin: clean handlers plus one
 /// (`launchInWebView`) that touches WebKit, an angle-import and a module
 /// import of WebKit.
 const String _kObjcImpl = '''
-#import "URLLauncherPlugin.h"
+#import "GadgetPlugin.h"
 #import <WebKit/WebKit.h>
 @import WebKit;
 
-@implementation URLLauncherPlugin
+@implementation GadgetPlugin
 
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {
   FlutterMethodChannel* channel =
-      [FlutterMethodChannel methodChannelWithName:@"plugins.flutter.io/url_launcher_ios"
+      [FlutterMethodChannel methodChannelWithName:@"plugins.flutter.io/gadget_ios"
                                   binaryMessenger:[registrar messenger]];
-  URLLauncherPlugin* instance = [[URLLauncherPlugin alloc] init];
+  GadgetPlugin* instance = [[GadgetPlugin alloc] init];
   [registrar addMethodCallDelegate:instance channel:channel];
 }
 
@@ -50,15 +50,15 @@ const String _kObjcImpl = '''
 const String _kObjcHeader = '''
 #import <Flutter/Flutter.h>
 
-@interface URLLauncherPlugin : NSObject <FlutterPlugin>
+@interface GadgetPlugin : NSObject <FlutterPlugin>
 @end
 ''';
 
 Directory _createObjcPlugin(FileSystem fs) {
-  final Directory dir = fs.directory('/src/url_launcher_ios')..createSync(recursive: true);
+  final Directory dir = fs.directory('/src/gadget_ios')..createSync(recursive: true);
   dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: url_launcher_ios
-description: iOS implementation of url_launcher.
+name: gadget_ios
+description: iOS implementation of gadget.
 version: 6.3.4
 
 environment:
@@ -68,19 +68,19 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  url_launcher_platform_interface: ^2.4.0
+  gadget_platform_interface: ^2.4.0
 
 flutter:
   plugin:
-    implements: url_launcher
+    implements: gadget
     platforms:
       ios:
-        pluginClass: URLLauncherPlugin
+        pluginClass: GadgetPlugin
 ''');
   final Directory classes = dir.childDirectory('ios').childDirectory('Classes')
     ..createSync(recursive: true);
-  classes.childFile('URLLauncherPlugin.h').writeAsStringSync(_kObjcHeader);
-  classes.childFile('URLLauncherPlugin.m').writeAsStringSync(_kObjcImpl);
+  classes.childFile('GadgetPlugin.h').writeAsStringSync(_kObjcHeader);
+  classes.childFile('GadgetPlugin.m').writeAsStringSync(_kObjcImpl);
   return dir;
 }
 
@@ -88,14 +88,14 @@ void main() {
   group('ObjcPorter', () {
     testWithoutContext('strips <Framework/...> and @import framework imports', () {
       final PortingResult r =
-          ObjcPorter().port(_kObjcImpl, fileRelativePath: 'tvos/Classes/URLLauncherPlugin.m');
+          ObjcPorter().port(_kObjcImpl, fileRelativePath: 'tvos/Classes/GadgetPlugin.m');
 
       expect(r.transformed,
           contains('// #import <WebKit/WebKit.h>  // removed by `flutter-tvos plugin port`'));
       expect(r.transformed,
           contains('// @import WebKit;  // removed by `flutter-tvos plugin port`'));
       // Local quoted import and Flutter stay.
-      expect(r.transformed, contains('#import "URLLauncherPlugin.h"'));
+      expect(r.transformed, contains('#import "GadgetPlugin.h"'));
       expect(
         r.strippedImports,
         containsAll(<String>['#import <WebKit/WebKit.h>', '@import WebKit;']),
@@ -107,7 +107,7 @@ void main() {
 
     testWithoutContext('stubs the handler that uses WKWebView, keeps the rest', () {
       final PortingResult r =
-          ObjcPorter().port(_kObjcImpl, fileRelativePath: 'tvos/Classes/URLLauncherPlugin.m');
+          ObjcPorter().port(_kObjcImpl, fileRelativePath: 'tvos/Classes/GadgetPlugin.m');
 
       expect(r.detectedMethods,
           containsAll(<String>['canLaunch', 'launch', 'launchInWebView']));
@@ -134,7 +134,7 @@ void main() {
 
     testWithoutContext('clean ObjC ports to identical content (plus newline)', () {
       final PortingResult r =
-          ObjcPorter().port(_kObjcHeader, fileRelativePath: 'tvos/Classes/URLLauncherPlugin.h');
+          ObjcPorter().port(_kObjcHeader, fileRelativePath: 'tvos/Classes/GadgetPlugin.h');
       expect(r.transformed, _kObjcHeader);
       expect(r.findings, isEmpty);
       expect(r.stubbedCases, isEmpty);
@@ -160,7 +160,7 @@ void main() {
       final Directory src = _createObjcPlugin(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
       expect(source.sourceLanguage, SourceLanguage.objc);
-      final Directory out = fs.directory('/out/url_launcher_tvos');
+      final Directory out = fs.directory('/out/gadget_tvos');
 
       final ScaffoldResult result = Scaffolder(
         fileSystem: fs,
@@ -170,8 +170,8 @@ void main() {
 
       final Directory tvosClasses =
           out.childDirectory('tvos').childDirectory('Classes');
-      final String m = tvosClasses.childFile('URLLauncherPlugin.m').readAsStringSync();
-      final String h = tvosClasses.childFile('URLLauncherPlugin.h').readAsStringSync();
+      final String m = tvosClasses.childFile('GadgetPlugin.m').readAsStringSync();
+      final String h = tvosClasses.childFile('GadgetPlugin.h').readAsStringSync();
 
       // .m was ported.
       expect(m, contains('// #import <WebKit/WebKit.h>'));
@@ -180,7 +180,7 @@ void main() {
       // .h is clean → unchanged (plus the porter's trailing newline).
       expect(h, _kObjcHeader);
       // No Swift stub generated for an ObjC plugin.
-      expect(tvosClasses.childFile('URLLauncherPlugin.swift').existsSync(), isFalse);
+      expect(tvosClasses.childFile('GadgetPlugin.swift').existsSync(), isFalse);
 
       final String report = out.childFile('PORTING_REPORT.md').readAsStringSync();
       expect(report, contains('Base platform: ios (Objective-C)'));

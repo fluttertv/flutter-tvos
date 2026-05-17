@@ -19,28 +19,28 @@ void main() {
 
   group('SourceAnalyzer', () {
     testWithoutContext('reads a federated iOS plugin pubspec', () {
-      final Directory dir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      final Directory dir = _createIosPlugin(fs, name: 'gadget_ios');
 
       final analyzer = SourceAnalyzer(fileSystem: fs);
       final PluginSource source = analyzer.analyze(dir);
 
-      expect(source.packageName, 'url_launcher_ios');
-      expect(source.basePackageName, 'url_launcher');
-      expect(source.outputPackageName, 'url_launcher_tvos');
+      expect(source.packageName, 'gadget_ios');
+      expect(source.basePackageName, 'gadget');
+      expect(source.outputPackageName, 'gadget_tvos');
       expect(source.sourcePlatform, 'ios');
-      expect(source.pluginClass, 'URLLauncherPlugin');
-      expect(source.dartPluginClass, 'UrlLauncherIOS');
-      expect(source.platformInterfacePackage, 'url_launcher_platform_interface');
+      expect(source.pluginClass, 'GadgetPlugin');
+      expect(source.dartPluginClass, 'GadgetIOS');
+      expect(source.platformInterfacePackage, 'gadget_platform_interface');
       expect(source.sourceLanguage, SourceLanguage.swift);
     });
 
     testWithoutContext('strips _foundation suffix on shared iOS/macOS packages', () {
-      final Directory dir = _createIosPlugin(fs, name: 'shared_preferences_foundation');
+      final Directory dir = _createIosPlugin(fs, name: 'prefsbox_foundation');
 
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(dir);
 
-      expect(source.basePackageName, 'shared_preferences');
-      expect(source.outputPackageName, 'shared_preferences_tvos');
+      expect(source.basePackageName, 'prefsbox');
+      expect(source.outputPackageName, 'prefsbox_tvos');
     });
 
     testWithoutContext('rejects pure-Dart plugins with no native impl', () {
@@ -102,16 +102,16 @@ flutter:
     testWithoutContext('falls back to macOS when iOS is missing and prefer=ios', () {
       final Directory dir = fs.directory('/p')..createSync();
       dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: path_provider_macos
+name: widgetbox_macos
 flutter:
   plugin:
     platforms:
       macos:
-        pluginClass: PathProviderPlugin
-        dartPluginClass: PathProviderMacOS
+        pluginClass: WidgetboxPlugin
+        dartPluginClass: WidgetboxMacOS
 ''');
       dir.childDirectory('macos').childDirectory('Classes').createSync(recursive: true);
-      dir.childDirectory('macos').childDirectory('Classes').childFile('PathProviderPlugin.swift').writeAsStringSync('// stub');
+      dir.childDirectory('macos').childDirectory('Classes').childFile('WidgetboxPlugin.swift').writeAsStringSync('// stub');
 
       final warnings = <String>[];
       final PluginSource source = SourceAnalyzer(
@@ -126,9 +126,9 @@ flutter:
 
   group('Scaffolder', () {
     testWithoutContext('writes a complete federated package skeleton', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory outputDir = fs.directory('/out/url_launcher_tvos');
+      final Directory outputDir = fs.directory('/out/gadget_tvos');
 
       final scaffolder = Scaffolder(
         fileSystem: fs,
@@ -141,16 +141,16 @@ flutter:
 
       // Pubspec
       final String pubspec = outputDir.childFile('pubspec.yaml').readAsStringSync();
-      expect(pubspec, contains('name: url_launcher_tvos'));
-      expect(pubspec, contains('pluginClass: URLLauncherPlugin'));
-      expect(pubspec, contains('dartPluginClass: UrlLauncherIOS'));
+      expect(pubspec, contains('name: gadget_tvos'));
+      expect(pubspec, contains('pluginClass: GadgetPlugin'));
+      expect(pubspec, contains('dartPluginClass: GadgetIOS'));
       // The source's own constraint is carried over verbatim (not a
       // hardcoded ^1.0.0, which would break `pub get` for real plugins).
-      expect(pubspec, contains('url_launcher_platform_interface: ^2.4.0'));
+      expect(pubspec, contains('gadget_platform_interface: ^2.4.0'));
 
       // Podspec
-      final String podspec = outputDir.childDirectory('tvos').childFile('url_launcher_tvos.podspec').readAsStringSync();
-      expect(podspec, contains("s.name             = 'url_launcher_tvos'"));
+      final String podspec = outputDir.childDirectory('tvos').childFile('gadget_tvos.podspec').readAsStringSync();
+      expect(podspec, contains("s.name             = 'gadget_tvos'"));
       expect(podspec, contains(':tvos, '));
       expect(podspec, isNot(contains("s.dependency 'Flutter'")),
           reason: 'podspec must not depend on the Flutter pod, which lacks tvOS support');
@@ -162,7 +162,7 @@ flutter:
       final String swift = outputDir
           .childDirectory('tvos')
           .childDirectory('Classes')
-          .childFile('URLLauncherPlugin.swift')
+          .childFile('GadgetPlugin.swift')
           .readAsStringSync();
       expect(
         swift,
@@ -173,15 +173,15 @@ flutter:
       // Dart entry uses the dartPluginClass and the platform interface package.
       final String dartEntry = outputDir
           .childDirectory('lib')
-          .childFile('url_launcher_tvos.dart')
+          .childFile('gadget_tvos.dart')
           .readAsStringSync();
-      expect(dartEntry, contains("import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart'"));
-      expect(dartEntry, contains('base class UrlLauncherIOS extends UrlLauncherPlatform'));
+      expect(dartEntry, contains("import 'package:gadget_platform_interface/gadget_platform_interface.dart'"));
+      expect(dartEntry, contains('base class GadgetIOS extends GadgetPlatform'));
       expect(dartEntry, contains('static void registerWith()'));
 
       // Test stub.
       expect(
-        outputDir.childDirectory('test').childFile('url_launcher_tvos_test.dart').existsSync(),
+        outputDir.childDirectory('test').childFile('gadget_tvos_test.dart').existsSync(),
         isTrue,
       );
 
@@ -193,9 +193,9 @@ flutter:
     });
 
     testWithoutContext('--dry-run does not write any files', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory outputDir = fs.directory('/out/url_launcher_tvos');
+      final Directory outputDir = fs.directory('/out/gadget_tvos');
 
       final scaffolder = Scaffolder(
         fileSystem: fs,
@@ -214,9 +214,9 @@ flutter:
     });
 
     testWithoutContext('refuses to overwrite without --force', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory outputDir = fs.directory('/out/url_launcher_tvos')..createSync(recursive: true);
+      final Directory outputDir = fs.directory('/out/gadget_tvos')..createSync(recursive: true);
       outputDir.childFile('preexisting.txt').writeAsStringSync('do not touch');
 
       final scaffolder = Scaffolder(
@@ -239,9 +239,9 @@ flutter:
     });
 
     testWithoutContext('--force overwrites the output directory', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory outputDir = fs.directory('/out/url_launcher_tvos')..createSync(recursive: true);
+      final Directory outputDir = fs.directory('/out/gadget_tvos')..createSync(recursive: true);
       outputDir.childFile('preexisting.txt').writeAsStringSync('overwrite me');
 
       final scaffolder = Scaffolder(
@@ -272,15 +272,15 @@ flutter:
 
       // Both .h and .m land in tvos/Classes/ unchanged.
       final Directory tvosClasses = outputDir.childDirectory('tvos').childDirectory('Classes');
-      expect(tvosClasses.childFile('URLLauncherPlugin.h').readAsStringSync(), _kRealisticObjcHeader);
-      expect(tvosClasses.childFile('URLLauncherPlugin.m').readAsStringSync(), _kRealisticObjcImpl);
+      expect(tvosClasses.childFile('GadgetPlugin.h').readAsStringSync(), _kRealisticObjcHeader);
+      expect(tvosClasses.childFile('GadgetPlugin.m').readAsStringSync(), _kRealisticObjcImpl);
 
       // No Swift stub written when ObjC sources are present.
-      expect(tvosClasses.childFile('URLLauncherPlugin.swift').existsSync(), isFalse);
+      expect(tvosClasses.childFile('GadgetPlugin.swift').existsSync(), isFalse);
     });
 
     testWithoutContext('preserves subdirectory structure under Classes/', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
       // Add a nested helper file.
       sourceDir
           .childDirectory('ios')
@@ -290,7 +290,7 @@ flutter:
         ..parent.createSync(recursive: true)
         ..writeAsStringSync('// helper');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory outputDir = fs.directory('/out/url_launcher_tvos');
+      final Directory outputDir = fs.directory('/out/gadget_tvos');
 
       Scaffolder(
         fileSystem: fs,
@@ -314,7 +314,7 @@ flutter:
     });
 
     testWithoutContext('copies <platform>/Resources/ when present', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
       sourceDir
           .childDirectory('ios')
           .childDirectory('Resources')
@@ -329,7 +329,7 @@ flutter:
         ..parent.createSync(recursive: true)
         ..writeAsStringSync('{"info": {"version": 1}}');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory outputDir = fs.directory('/out/url_launcher_tvos');
+      final Directory outputDir = fs.directory('/out/gadget_tvos');
 
       Scaffolder(
         fileSystem: fs,
@@ -378,10 +378,10 @@ flutter:
     });
 
     testWithoutContext('copies LICENSE from source when present', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
       sourceDir.childFile('LICENSE').writeAsStringSync('BSD-3 license body');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory outputDir = fs.directory('/out/url_launcher_tvos');
+      final Directory outputDir = fs.directory('/out/gadget_tvos');
 
       Scaffolder(
         fileSystem: fs,
@@ -393,13 +393,13 @@ flutter:
     });
 
     testWithoutContext('copies the source Dart lib/, renaming entry + rewriting self-imports', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
-      sourceDir.childDirectory('lib').childFile('url_launcher_ios.dart')
+      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
+      sourceDir.childDirectory('lib').childFile('gadget_ios.dart')
         ..parent.createSync(recursive: true)
         ..writeAsStringSync(
-          "import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';\n"
-          "import 'package:url_launcher_ios/src/messages.g.dart';\n"
-          'class UrlLauncherIOS extends UrlLauncherPlatform {}\n',
+          "import 'package:gadget_platform_interface/gadget_platform_interface.dart';\n"
+          "import 'package:gadget_ios/src/messages.g.dart';\n"
+          'class GadgetIOS extends GadgetPlatform {}\n',
         );
       sourceDir
           .childDirectory('lib')
@@ -408,20 +408,20 @@ flutter:
         ..parent.createSync(recursive: true)
         ..writeAsStringSync('// pigeon generated\n');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory out = fs.directory('/out/url_launcher_tvos');
+      final Directory out = fs.directory('/out/gadget_tvos');
 
       Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
           .scaffold(source: source, outputDirectory: out);
 
       // Entry renamed to <out>.dart; real upstream class preserved.
       final String entry =
-          out.childDirectory('lib').childFile('url_launcher_tvos.dart').readAsStringSync();
-      expect(entry, contains('class UrlLauncherIOS extends UrlLauncherPlatform'));
+          out.childDirectory('lib').childFile('gadget_tvos.dart').readAsStringSync();
+      expect(entry, contains('class GadgetIOS extends GadgetPlatform'));
       // Self-import rewritten to the output package; interface import kept.
-      expect(entry, contains("package:url_launcher_tvos/src/messages.g.dart"));
-      expect(entry, isNot(contains('package:url_launcher_ios/')));
+      expect(entry, contains("package:gadget_tvos/src/messages.g.dart"));
+      expect(entry, isNot(contains('package:gadget_ios/')));
       expect(entry,
-          contains("package:url_launcher_platform_interface/url_launcher_platform_interface.dart"));
+          contains("package:gadget_platform_interface/gadget_platform_interface.dart"));
       // Sub-tree copied verbatim, structure preserved.
       expect(
         out.childDirectory('lib').childDirectory('src').childFile('messages.g.dart').readAsStringSync(),
@@ -432,16 +432,16 @@ flutter:
     });
 
     testWithoutContext('falls back to the Dart stub when the source has no lib/', () {
-      final Directory sourceDir = _createIosPlugin(fs, name: 'url_launcher_ios');
+      final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
-      final Directory out = fs.directory('/out/url_launcher_tvos');
+      final Directory out = fs.directory('/out/gadget_tvos');
 
       Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
           .scaffold(source: source, outputDirectory: out);
 
       final String entry =
-          out.childDirectory('lib').childFile('url_launcher_tvos.dart').readAsStringSync();
-      expect(entry, contains('base class UrlLauncherIOS extends UrlLauncherPlatform'));
+          out.childDirectory('lib').childFile('gadget_tvos.dart').readAsStringSync();
+      expect(entry, contains('base class GadgetIOS extends GadgetPlatform'));
       expect(entry, contains('static void registerWith()'));
     });
   });
@@ -450,62 +450,62 @@ flutter:
     testWithoutContext('resolves a Swift Package Manager layout', () {
       final Directory dir = fs.directory('/p')..createSync();
       dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: url_launcher_ios
+name: gadget_ios
 flutter:
   plugin:
     platforms:
       ios:
-        pluginClass: URLLauncherPlugin
-        dartPluginClass: UrlLauncherIOS
+        pluginClass: GadgetPlugin
+        dartPluginClass: GadgetIOS
 ''');
       dir
           .childDirectory('ios')
-          .childDirectory('url_launcher_ios')
+          .childDirectory('gadget_ios')
           .childDirectory('Sources')
-          .childDirectory('url_launcher_ios')
-          .childFile('URLLauncherPlugin.swift')
+          .childDirectory('gadget_ios')
+          .childFile('GadgetPlugin.swift')
         ..parent.createSync(recursive: true)
         ..writeAsStringSync('import Flutter\n');
       dir
           .childDirectory('ios')
-          .childDirectory('url_launcher_ios')
+          .childDirectory('gadget_ios')
           .childFile('Package.swift')
           .writeAsStringSync('// swift-tools-version:5.9\n');
 
       final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
-      expect(s.classesDirectory.path, contains('ios/url_launcher_ios/Sources/url_launcher_ios'));
-      expect(s.pluginClass, 'URLLauncherPlugin');
+      expect(s.classesDirectory.path, contains('ios/gadget_ios/Sources/gadget_ios'));
+      expect(s.pluginClass, 'GadgetPlugin');
     });
 
     testWithoutContext('resolves sharedDarwinSource under darwin/', () {
       final Directory dir = fs.directory('/p')..createSync();
       dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: shared_preferences_foundation
+name: prefsbox_foundation
 flutter:
   plugin:
     platforms:
       ios:
-        pluginClass: SharedPreferencesPlugin
-        dartPluginClass: SharedPreferencesFoundation
+        pluginClass: PrefsboxPlugin
+        dartPluginClass: PrefsboxFoundation
         sharedDarwinSource: true
       macos:
-        pluginClass: SharedPreferencesPlugin
-        dartPluginClass: SharedPreferencesFoundation
+        pluginClass: PrefsboxPlugin
+        dartPluginClass: PrefsboxFoundation
         sharedDarwinSource: true
 ''');
       dir
           .childDirectory('darwin')
-          .childDirectory('shared_preferences_foundation')
+          .childDirectory('prefsbox_foundation')
           .childDirectory('Sources')
-          .childDirectory('shared_preferences_foundation')
-          .childFile('SharedPreferencesPlugin.swift')
+          .childDirectory('prefsbox_foundation')
+          .childFile('PrefsboxPlugin.swift')
         ..parent.createSync(recursive: true)
         ..writeAsStringSync('import Flutter\n');
 
       final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
       expect(s.classesDirectory.path,
-          contains('darwin/shared_preferences_foundation/Sources'));
-      expect(s.basePackageName, 'shared_preferences');
+          contains('darwin/prefsbox_foundation/Sources'));
+      expect(s.basePackageName, 'prefsbox');
     });
 
     testWithoutContext('infers pluginClass from sources when pubspec omits it', () {
@@ -556,43 +556,43 @@ flutter:
     testWithoutContext('SPM Package.swift is excluded from the generated package', () {
       final Directory dir = fs.directory('/p')..createSync();
       dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: url_launcher_ios
+name: gadget_ios
 flutter:
   plugin:
     platforms:
       ios:
-        pluginClass: URLLauncherPlugin
+        pluginClass: GadgetPlugin
 ''');
       final Directory spm = dir
           .childDirectory('ios')
-          .childDirectory('url_launcher_ios')
+          .childDirectory('gadget_ios')
           .childDirectory('Sources')
-          .childDirectory('url_launcher_ios')
+          .childDirectory('gadget_ios')
         ..createSync(recursive: true);
-      spm.childFile('URLLauncherPlugin.swift').writeAsStringSync('import Flutter\n');
+      spm.childFile('GadgetPlugin.swift').writeAsStringSync('import Flutter\n');
       // A stray Package.swift inside the resolved sources dir must be
       // filtered out by the scaffolder, not copied into Classes/.
       spm.childFile('Package.swift').writeAsStringSync('// swift-tools-version:5.9\n');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(dir);
-      final Directory out = fs.directory('/out/url_launcher_tvos');
+      final Directory out = fs.directory('/out/gadget_tvos');
 
       Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
           .scaffold(source: source, outputDirectory: out);
 
       final Directory tvosClasses = out.childDirectory('tvos').childDirectory('Classes');
-      expect(tvosClasses.childFile('URLLauncherPlugin.swift').existsSync(), isTrue);
+      expect(tvosClasses.childFile('GadgetPlugin.swift').existsSync(), isTrue);
       expect(tvosClasses.childFile('Package.swift').existsSync(), isFalse,
           reason: 'SPM manifest must not be copied into Classes/');
     });
 
     testWithoutContext('strips federated Apple impl suffixes for the output name', () {
       for (final (String src, String want) in <(String, String)>[
-        ('video_player_avfoundation', 'video_player_tvos'),
-        ('in_app_purchase_storekit', 'in_app_purchase_tvos'),
-        ('geolocator_apple', 'geolocator_tvos'),
-        ('audioplayers_darwin', 'audioplayers_tvos'),
-        ('google_sign_in_ios', 'google_sign_in_tvos'),
-        ('device_info_plus', 'device_info_plus_tvos'),
+        ('vidbox_avfoundation', 'vidbox_tvos'),
+        ('iapbox_storekit', 'iapbox_tvos'),
+        ('geobox_apple', 'geobox_tvos'),
+        ('audbox_darwin', 'audbox_tvos'),
+        ('signbox_ios', 'signbox_tvos'),
+        ('devbox', 'devbox_tvos'),
       ]) {
         final Directory dir = fs.directory('/p_$src')..createSync();
         dir.childFile('pubspec.yaml').writeAsStringSync('''
@@ -644,25 +644,25 @@ flutter:
     testWithoutContext('range constraints are quoted in the generated pubspec', () {
       final Directory dir = fs.directory('/r')..createSync();
       dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: sqflite_darwin
+name: dbbox_darwin
 dependencies:
-  sqflite_platform_interface: ">=2.4.0 <3.0.0"
+  dbbox_platform_interface: ">=2.4.0 <3.0.0"
 flutter:
   plugin:
     platforms:
       ios:
-        pluginClass: SqflitePlugin
+        pluginClass: DbboxPlugin
 ''');
-      dir.childDirectory('ios').childDirectory('Classes').childFile('SqflitePlugin.swift')
+      dir.childDirectory('ios').childDirectory('Classes').childFile('DbboxPlugin.swift')
         ..parent.createSync(recursive: true)
         ..writeAsStringSync('import Flutter\n');
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(dir);
-      final Directory out = fs.directory('/out/sqflite_tvos');
+      final Directory out = fs.directory('/out/dbbox_tvos');
       Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
           .scaffold(source: source, outputDirectory: out);
 
       final String pubspec = out.childFile('pubspec.yaml').readAsStringSync();
-      expect(pubspec, contains('sqflite_platform_interface: ">=2.4.0 <3.0.0"'),
+      expect(pubspec, contains('dbbox_platform_interface: ">=2.4.0 <3.0.0"'),
           reason: 'range constraint must be quoted or YAML parsing fails');
     });
 
@@ -747,12 +747,12 @@ flutter:
 /// Builds a minimal but valid iOS plugin in [fs] under `/p` and returns it.
 ///
 /// Keeps the fixture inline so test files don't need on-disk artefacts. The
-/// pubspec mirrors a real federated plugin (url_launcher_ios style).
+/// pubspec mirrors a real federated plugin (gadget_ios style).
 Directory _createIosPlugin(FileSystem fs, {required String name, bool objc = false}) {
   final Directory dir = fs.directory('/p')..createSync();
   dir.childFile('pubspec.yaml').writeAsStringSync('''
 name: $name
-description: iOS implementation of url_launcher.
+description: iOS implementation of gadget.
 version: 6.3.4
 homepage: https://github.com/flutter/packages/
 
@@ -763,23 +763,23 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  url_launcher_platform_interface: ^2.4.0
+  gadget_platform_interface: ^2.4.0
 
 flutter:
   plugin:
-    implements: url_launcher
+    implements: gadget
     platforms:
       ios:
-        pluginClass: URLLauncherPlugin
-        dartPluginClass: UrlLauncherIOS
+        pluginClass: GadgetPlugin
+        dartPluginClass: GadgetIOS
 ''');
   final Directory classes = dir.childDirectory('ios').childDirectory('Classes')
     ..createSync(recursive: true);
   if (objc) {
-    classes.childFile('URLLauncherPlugin.h').writeAsStringSync(_kRealisticObjcHeader);
-    classes.childFile('URLLauncherPlugin.m').writeAsStringSync(_kRealisticObjcImpl);
+    classes.childFile('GadgetPlugin.h').writeAsStringSync(_kRealisticObjcHeader);
+    classes.childFile('GadgetPlugin.m').writeAsStringSync(_kRealisticObjcImpl);
   } else {
-    classes.childFile('URLLauncherPlugin.swift').writeAsStringSync(_kRealisticSwiftSource);
+    classes.childFile('GadgetPlugin.swift').writeAsStringSync(_kRealisticSwiftSource);
   }
   return dir;
 }
@@ -791,12 +791,12 @@ const String _kRealisticSwiftSource = '''
 import Flutter
 import UIKit
 
-public class URLLauncherPlugin: NSObject, FlutterPlugin {
+public class GadgetPlugin: NSObject, FlutterPlugin {
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
-      name: "plugins.flutter.io/url_launcher_ios",
+      name: "plugins.flutter.io/gadget_ios",
       binaryMessenger: registrar.messenger())
-    let instance = URLLauncherPlugin()
+    let instance = GadgetPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
   }
 
@@ -809,14 +809,14 @@ public class URLLauncherPlugin: NSObject, FlutterPlugin {
 const String _kRealisticObjcHeader = '''
 #import <Flutter/Flutter.h>
 
-@interface URLLauncherPlugin : NSObject <FlutterPlugin>
+@interface GadgetPlugin : NSObject <FlutterPlugin>
 @end
 ''';
 
 const String _kRealisticObjcImpl = '''
-#import "URLLauncherPlugin.h"
+#import "GadgetPlugin.h"
 
-@implementation URLLauncherPlugin
+@implementation GadgetPlugin
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {
   // Intentionally empty for the test fixture.
 }

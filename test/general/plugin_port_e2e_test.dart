@@ -12,19 +12,19 @@ import 'package:flutter_tvos/plugin_porting/swift_porter.dart';
 
 import '../src/common.dart';
 
-/// A url_launcher_ios-shaped Swift plugin: two clean handlers, two that
+/// A gadget_ios-shaped Swift plugin: two clean handlers, two that
 /// touch WebKit (`launchInWebView`, `closeWebView`), plus `import WebKit`.
-const String _kUrlLauncherSwift = '''
+const String _kGadgetSwift = '''
 import Flutter
 import UIKit
 import WebKit
 
-public class URLLauncherPlugin: NSObject, FlutterPlugin {
+public class GadgetPlugin: NSObject, FlutterPlugin {
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
-      name: "plugins.flutter.io/url_launcher_ios",
+      name: "plugins.flutter.io/gadget_ios",
       binaryMessenger: registrar.messenger())
-    registrar.addMethodCallDelegate(URLLauncherPlugin(), channel: channel)
+    registrar.addMethodCallDelegate(GadgetPlugin(), channel: channel)
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -49,11 +49,11 @@ public class URLLauncherPlugin: NSObject, FlutterPlugin {
 }
 ''';
 
-Directory _createUrlLauncherIos(FileSystem fs) {
-  final Directory dir = fs.directory('/src/url_launcher_ios')..createSync(recursive: true);
+Directory _createGadgetIos(FileSystem fs) {
+  final Directory dir = fs.directory('/src/gadget_ios')..createSync(recursive: true);
   dir.childFile('pubspec.yaml').writeAsStringSync('''
-name: url_launcher_ios
-description: iOS implementation of url_launcher.
+name: gadget_ios
+description: iOS implementation of gadget.
 version: 6.3.4
 
 environment:
@@ -63,22 +63,22 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  url_launcher_platform_interface: ^2.4.0
+  gadget_platform_interface: ^2.4.0
 
 flutter:
   plugin:
-    implements: url_launcher
+    implements: gadget
     platforms:
       ios:
-        pluginClass: URLLauncherPlugin
-        dartPluginClass: UrlLauncherIOS
+        pluginClass: GadgetPlugin
+        dartPluginClass: GadgetIOS
 ''');
   dir
       .childDirectory('ios')
       .childDirectory('Classes')
-      .childFile('URLLauncherPlugin.swift')
+      .childFile('GadgetPlugin.swift')
     ..parent.createSync(recursive: true)
-    ..writeAsStringSync(_kUrlLauncherSwift);
+    ..writeAsStringSync(_kGadgetSwift);
   return dir;
 }
 
@@ -90,10 +90,10 @@ void main() {
   });
 
   group('plugin port end-to-end (Swift, Phase 3)', () {
-    testWithoutContext('ports url_launcher_ios: strips WebKit, stubs web handlers', () {
-      final Directory src = _createUrlLauncherIos(fs);
+    testWithoutContext('ports gadget_ios: strips WebKit, stubs web handlers', () {
+      final Directory src = _createGadgetIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
-      final Directory out = fs.directory('/out/url_launcher_tvos');
+      final Directory out = fs.directory('/out/gadget_tvos');
 
       final ScaffoldResult result = Scaffolder(
         fileSystem: fs,
@@ -104,7 +104,7 @@ void main() {
       final String swift = out
           .childDirectory('tvos')
           .childDirectory('Classes')
-          .childFile('URLLauncherPlugin.swift')
+          .childFile('GadgetPlugin.swift')
           .readAsStringSync();
 
       // iOS-only import commented out.
@@ -127,9 +127,9 @@ void main() {
     });
 
     testWithoutContext('writes a PORTING_REPORT.md that names every stub', () {
-      final Directory src = _createUrlLauncherIos(fs);
+      final Directory src = _createGadgetIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
-      final Directory out = fs.directory('/out/url_launcher_tvos');
+      final Directory out = fs.directory('/out/gadget_tvos');
 
       Scaffolder(
         fileSystem: fs,
@@ -139,8 +139,8 @@ void main() {
 
       final String report = out.childFile('PORTING_REPORT.md').readAsStringSync();
 
-      expect(report, contains('# url_launcher_tvos — porting report'));
-      expect(report, contains('Source: `url_launcher_ios` 6.3.4'));
+      expect(report, contains('# gadget_tvos — porting report'));
+      expect(report, contains('Source: `gadget_ios` 6.3.4'));
       expect(report, contains('Base platform: ios (Swift)'));
       expect(report, contains('| Methods ported as-is | 2 |'));
       expect(report, contains('| Methods stubbed (iOS-only) | 2 |'));
@@ -151,7 +151,7 @@ void main() {
       expect(report, contains('### `launch` ✓ ported'));
       expect(report, contains('## Imports removed'));
       expect(report, contains('`import WebKit`'));
-      expect(report, contains('tvos/Classes/URLLauncherPlugin.swift'));
+      expect(report, contains('tvos/Classes/GadgetPlugin.swift'));
       expect(report, contains('Reason: WebKit'));
       expect(
         report,
@@ -160,9 +160,9 @@ void main() {
     });
 
     testWithoutContext('--no-report suppresses the report but still ports', () {
-      final Directory src = _createUrlLauncherIos(fs);
+      final Directory src = _createGadgetIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
-      final Directory out = fs.directory('/out/url_launcher_tvos');
+      final Directory out = fs.directory('/out/gadget_tvos');
 
       final ScaffoldResult result = Scaffolder(
         fileSystem: fs,
@@ -176,16 +176,16 @@ void main() {
       final String swift = out
           .childDirectory('tvos')
           .childDirectory('Classes')
-          .childFile('URLLauncherPlugin.swift')
+          .childFile('GadgetPlugin.swift')
           .readAsStringSync();
       expect(swift, contains('// import WebKit'));
       expect(result.findings, isNotEmpty);
     });
 
     testWithoutContext('--dry-run previews findings without writing', () {
-      final Directory src = _createUrlLauncherIos(fs);
+      final Directory src = _createGadgetIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
-      final Directory out = fs.directory('/out/url_launcher_tvos');
+      final Directory out = fs.directory('/out/gadget_tvos');
 
       final ScaffoldResult result = Scaffolder(
         fileSystem: fs,
@@ -208,11 +208,11 @@ void main() {
 
   group('ReportEmitter', () {
     testWithoutContext('emits a deterministic, well-formed report', () {
-      final Directory src = _createUrlLauncherIos(fs);
+      final Directory src = _createGadgetIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
       final PortingResult r = SwiftPorter().port(
-        _kUrlLauncherSwift,
-        fileRelativePath: 'tvos/Classes/URLLauncherPlugin.swift',
+        _kGadgetSwift,
+        fileRelativePath: 'tvos/Classes/GadgetPlugin.swift',
       );
 
       final String report = const ReportEmitter().render(
@@ -234,7 +234,7 @@ void main() {
     });
 
     testWithoutContext('flags a NOT-buildable plugin when an unsupported API is type-level', () {
-      final Directory src = _createUrlLauncherIos(fs);
+      final Directory src = _createGadgetIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
       // WKWebView used at type/top-level scope (a stored property), not
       // inside a method-channel case — the porter can't stub this.
@@ -258,7 +258,7 @@ public class BrowserPlugin: NSObject, FlutterPlugin {
     });
 
     testWithoutContext('handles a clean port with no findings', () {
-      final Directory src = _createUrlLauncherIos(fs);
+      final Directory src = _createGadgetIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
       final PortingResult clean = SwiftPorter().port(
         'import Flutter\n\npublic class P {}\n',

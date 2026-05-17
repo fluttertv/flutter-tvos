@@ -13,33 +13,33 @@ import '../src/fake_process_manager.dart';
 void main() {
   group('SourceSpec.parse', () {
     test('local path only', () {
-      final SourceSpec s = SourceSpec.parse(positional: '../url_launcher_ios');
+      final SourceSpec s = SourceSpec.parse(positional: '../gadget_ios');
       expect(s.mode, FetchMode.localPath);
-      expect(s.identifier, '../url_launcher_ios');
+      expect(s.identifier, '../gadget_ios');
       expect(s.ref, isNull);
     });
 
     test('--from-pub only', () {
-      final SourceSpec s = SourceSpec.parse(fromPub: 'url_launcher_ios');
+      final SourceSpec s = SourceSpec.parse(fromPub: 'gadget_ios');
       expect(s.mode, FetchMode.pub);
-      expect(s.identifier, 'url_launcher_ios');
-      expect(s.derivedName, 'url_launcher_ios');
+      expect(s.identifier, 'gadget_ios');
+      expect(s.derivedName, 'gadget_ios');
     });
 
     test('--from-git with --ref', () {
       final SourceSpec s = SourceSpec.parse(
-        fromGit: 'https://github.com/foo/url_launcher.git',
+        fromGit: 'https://github.com/foo/gadget.git',
         ref: 'main',
       );
       expect(s.mode, FetchMode.git);
       expect(s.ref, 'main');
-      expect(s.derivedName, 'url_launcher');
+      expect(s.derivedName, 'gadget');
       expect(
         s.gitCloneArgs('/tmp/x'),
         <String>[
           'git', 'clone', '--depth', '1',
           '--branch', 'main',
-          'https://github.com/foo/url_launcher.git', '/tmp/x',
+          'https://github.com/foo/gadget.git', '/tmp/x',
         ],
       );
     });
@@ -110,16 +110,16 @@ void main() {
 
     test('git clone success returns the checkout dir', () async {
       final Directory work = fs.directory('/w')..createSync(recursive: true);
-      final String dest = fs.path.join(work.path, 'url_launcher');
+      final String dest = fs.path.join(work.path, 'gadget');
       final FakeProcessManager pm = FakeProcessManager.list(<FakeCommand>[
         FakeCommand(
           command: <String>[
             'git', 'clone', '--depth', '1',
-            'https://github.com/foo/url_launcher.git', dest,
+            'https://github.com/foo/gadget.git', dest,
           ],
           onRun: (_) {
             fs.directory(dest).createSync(recursive: true);
-            fs.directory(dest).childFile('pubspec.yaml').writeAsStringSync('name: url_launcher\n');
+            fs.directory(dest).childFile('pubspec.yaml').writeAsStringSync('name: gadget\n');
           },
         ),
       ]);
@@ -128,7 +128,7 @@ void main() {
         processManager: pm,
         logger: logger,
       ).resolve(
-        SourceSpec.parse(fromGit: 'https://github.com/foo/url_launcher.git'),
+        SourceSpec.parse(fromGit: 'https://github.com/foo/gadget.git'),
         workDir: work,
       );
       expect(fs.path.canonicalize(got.path), fs.path.canonicalize(dest));
@@ -158,9 +158,9 @@ void main() {
       final Directory work = fs.directory('/w')..createSync(recursive: true);
       final String probe = fs.path.join(work.path, '_pub_probe');
       // The directory pub "downloads" the package into.
-      final Directory pkg = fs.directory(fs.path.join(work.path, 'cache_url_launcher_ios'))
+      final Directory pkg = fs.directory(fs.path.join(work.path, 'cache_gadget_ios'))
         ..createSync(recursive: true);
-      pkg.childFile('pubspec.yaml').writeAsStringSync('name: url_launcher_ios\n');
+      pkg.childFile('pubspec.yaml').writeAsStringSync('name: gadget_ios\n');
       // Real package_config rootUri is relative to the .dart_tool dir.
       final String rootUri =
           fs.path.relative(pkg.path, from: fs.path.join(probe, '.dart_tool'));
@@ -172,7 +172,7 @@ void main() {
             final Directory dt = fs.directory(fs.path.join(probe, '.dart_tool'))
               ..createSync(recursive: true);
             dt.childFile('package_config.json').writeAsStringSync(
-              '{"configVersion":2,"packages":[{"name":"url_launcher_ios",'
+              '{"configVersion":2,"packages":[{"name":"gadget_ios",'
               '"rootUri":"$rootUri"}]}',
             );
           },
@@ -183,7 +183,7 @@ void main() {
         fileSystem: fs,
         processManager: pm,
         logger: logger,
-      ).resolve(SourceSpec.parse(fromPub: 'url_launcher_ios'), workDir: work);
+      ).resolve(SourceSpec.parse(fromPub: 'gadget_ios'), workDir: work);
 
       expect(fs.path.canonicalize(got.path), fs.path.canonicalize(pkg.path));
       expect(got.childFile('pubspec.yaml').existsSync(), isTrue);

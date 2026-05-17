@@ -6,7 +6,7 @@ import 'package:flutter_tvos/plugin_porting/swift_porter.dart';
 
 import '../src/common.dart';
 
-/// A url_launcher_ios-shaped Swift source: one clean handler, one `partial`
+/// A gadget_ios-shaped Swift source: one clean handler, one `partial`
 /// handler (`UIApplication.shared.open`), two `unsupported` handlers behind
 /// `WKWebView`, plus the iOS-only `import WebKit`.
 const String _kSwiftSource = '''
@@ -14,7 +14,7 @@ import Flutter
 import UIKit
 import WebKit
 
-public class URLLauncherPlugin: NSObject, FlutterPlugin {
+public class GadgetPlugin: NSObject, FlutterPlugin {
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "canLaunch":
@@ -42,7 +42,7 @@ void main() {
   group('SwiftPorter', () {
     testWithoutContext('strips iOS-only imports independent of the API regex', () {
       final PortingResult r =
-          SwiftPorter().port(_kSwiftSource, fileRelativePath: 'tvos/Classes/URLLauncherPlugin.swift');
+          SwiftPorter().port(_kSwiftSource, fileRelativePath: 'tvos/Classes/GadgetPlugin.swift');
 
       // `import WebKit` is commented out even though "import WebKit" does not
       // itself match the WKWebView usage regex — the bug this asserts against.
@@ -66,7 +66,7 @@ void main() {
 
     testWithoutContext('stubs handlers that reference unsupported APIs', () {
       final PortingResult r =
-          SwiftPorter().port(_kSwiftSource, fileRelativePath: 'tvos/Classes/URLLauncherPlugin.swift');
+          SwiftPorter().port(_kSwiftSource, fileRelativePath: 'tvos/Classes/GadgetPlugin.swift');
 
       expect(r.stubbedCases, <String>['closeWebView', 'openWebView']);
       // The stub line is injected ...
@@ -93,7 +93,7 @@ void main() {
 
     testWithoutContext('flags partial APIs without modifying the code', () {
       final PortingResult r =
-          SwiftPorter().port(_kSwiftSource, fileRelativePath: 'tvos/Classes/URLLauncherPlugin.swift');
+          SwiftPorter().port(_kSwiftSource, fileRelativePath: 'tvos/Classes/GadgetPlugin.swift');
 
       // `launch` uses UIApplication.shared.open — partial, code stays.
       expect(
