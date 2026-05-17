@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 /// Shared result types produced by the native-source porters
-/// ([SwiftPorter], [ObjcPorter]). Kept in their own library so neither
+/// (`SwiftPorter`, `ObjcPorter`). Kept in their own library so neither
 /// porter has to import the other just to name the result shape, and so
 /// the scaffolder / report emitter depend on one stable contract.
 library;

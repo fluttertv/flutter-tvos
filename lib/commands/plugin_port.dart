@@ -341,7 +341,6 @@ class TvosPluginPortCommand extends FlutterCommand {
           source: source,
           outputDirectory: outputDir,
           overwrite: force,
-          dryRun: false,
           emitReport: emitReport,
         );
       } on ScaffoldError catch (e) {

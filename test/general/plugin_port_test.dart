@@ -418,10 +418,10 @@ flutter:
           out.childDirectory('lib').childFile('gadget_tvos.dart').readAsStringSync();
       expect(entry, contains('class GadgetIOS extends GadgetPlatform'));
       // Self-import rewritten to the output package; interface import kept.
-      expect(entry, contains("package:gadget_tvos/src/messages.g.dart"));
+      expect(entry, contains('package:gadget_tvos/src/messages.g.dart'));
       expect(entry, isNot(contains('package:gadget_ios/')));
       expect(entry,
-          contains("package:gadget_platform_interface/gadget_platform_interface.dart"));
+          contains('package:gadget_platform_interface/gadget_platform_interface.dart'));
       // Sub-tree copied verbatim, structure preserved.
       expect(
         out.childDirectory('lib').childDirectory('src').childFile('messages.g.dart').readAsStringSync(),

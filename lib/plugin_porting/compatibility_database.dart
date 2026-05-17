@@ -88,11 +88,12 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
     pattern: r'\bWKWebView\b|\bWKNavigationDelegate\b|\bWKWebViewConfiguration\b',
     severity: Severity.unsupported,
     note:
-        'WebKit is not available on tvOS. Apps that need to render web content '
-        'typically either use AVPlayer for video URLs (https://developer.apple.com/'
-        'documentation/avfoundation/avplayer) or omit the feature on tvOS. '
-        'Hand off the URL to `UIApplication.shared.open(url)` for the rare '
-        'cases where another app on the device claims it.',
+        'WebKit is not available on tvOS. Apps that need to render web '
+        'content typically either use AVPlayer for video URLs '
+        '(https://developer.apple.com/documentation/avfoundation/avplayer) '
+        'or omit the feature on tvOS. Hand off the URL to '
+        '`UIApplication.shared.open(url)` for the rare cases where another '
+        'app on the device claims it.',
     stripImports: <String>['import WebKit'],
   ),
   ApiPattern(

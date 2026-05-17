@@ -18,12 +18,12 @@ import 'porting_result.dart';
 import 'source_analyzer.dart';
 
 /// Stateless renderer. Pure function of its inputs so it golden-tests
-/// cleanly; inject [today] in tests to keep output deterministic.
+/// cleanly; inject `today` in tests to keep output deterministic.
 class ReportEmitter {
   const ReportEmitter();
 
   /// Renders the full `PORTING_REPORT.md` body for [source] given the
-  /// per-file [results] produced by [SwiftPorter]. Pass [today] (a
+  /// per-file [results] produced by `SwiftPorter`. Pass [today] (a
   /// `YYYY-MM-DD` string) to override the generation date in tests.
   String render({
     required PluginSource source,

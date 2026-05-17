@@ -7,7 +7,6 @@ import 'package:flutter_tools/src/base/logger.dart';
 
 import 'native_skeleton.dart';
 import 'objc_porter.dart';
-import 'porting_result.dart';
 import 'report_emitter.dart';
 import 'source_analyzer.dart';
 import 'swift_porter.dart';

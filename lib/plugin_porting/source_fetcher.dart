@@ -221,7 +221,7 @@ dependencies:
       }
     }
     throw SourceFetchError(
-      '${packageName} not found in package_config.json — does it exist on '
+      '$packageName not found in package_config.json — does it exist on '
       'pub.dev?',
     );
   }
