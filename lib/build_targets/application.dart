@@ -312,6 +312,13 @@ class NativeTvosBundle extends Target {
         'COMPILER_INDEX_STORE_ENABLE=NO',
         'ARCHS=arm64',
         ...signingArgs,
+        // Mirror upstream `flutter build ios`: let Xcode create/update
+        // the provisioning profile for automatic signing on a physical
+        // device. Without this, a device build fails with "Automatic
+        // signing is disabled and unable to generate a profile … pass
+        // -allowProvisioningUpdates". Not used for the simulator, which
+        // is not code-signed.
+        if (!buildInfo.simulator) '-allowProvisioningUpdates',
         'build',
       ], workingDirectory: tvosProjectDir.path);
     } finally {
