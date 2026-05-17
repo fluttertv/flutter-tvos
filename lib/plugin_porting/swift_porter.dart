@@ -23,6 +23,19 @@ class SwiftPorter {
 
   final List<_CompiledPattern> _patterns;
 
+  /// `@available(...)` attribute or `#available(...)` runtime check.
+  /// Group 1 = the keyword (`@available`/`#available`), group 2 = the
+  /// platform list between the parentheses.
+  static final RegExp _availabilityClause =
+      RegExp(r'(@available|#available)\s*\(([^)]*)\)');
+
+  /// An `iOS <version>` entry inside an availability clause. Group 1 is
+  /// the version (`15`, `15.0`, `17.4`, …). The leading boundary avoids
+  /// matching the `iOS` inside identifiers (there are none in practice,
+  /// but be safe).
+  static final RegExp _iosVersionInClause =
+      RegExp(r'(?<![A-Za-z])iOS (\d+(?:\.\d+)*)');
+
   /// Transforms [source] (the raw file content) and returns the result.
   ///
   /// [fileRelativePath] is recorded into each [PortingFinding] so the
@@ -84,6 +97,46 @@ class SwiftPorter {
     // branches (which must NOT compile on tvOS) are deliberately left
     // alone.
     _widenMacOSAssetFallback(originalLines, outputLines);
+
+    // Pass 1d — widen `@available` / `#available` availability clauses to
+    // also cover tvOS. Plugins gate newer-OS APIs with e.g.
+    // `@available(iOS 15.0, macOS 12.0, *)` or
+    // `if #available(iOS 26.0, *)`. Apple ships those same symbols on
+    // tvOS at the same major version (StoreKit2 `Transaction` is
+    // tvOS 15+, `isUltraConstrained` is tvOS 26+, …), but because the
+    // clause names only `iOS` the Swift compiler still rejects the
+    // symbol when building for tvOS. Mirror the iOS version onto tvOS in
+    // every clause that names `iOS <v>` and not already `tvOS` — the
+    // availability analogue of the `os(iOS)` widening above. Genuinely
+    // tvOS-*unavailable* APIs (no version makes them exist) are still
+    // caught and reported by the compatibility-database passes.
+    for (var i = 0; i < originalLines.length; i++) {
+      final String line = outputLines[i];
+      if (!line.contains('available(') ||
+          !line.contains('iOS ') ||
+          line.contains('tvOS ')) {
+        continue;
+      }
+      outputLines[i] = line.replaceAllMapped(
+        _availabilityClause,
+        (Match m) {
+          final String inner = m.group(2)!;
+          if (inner.contains('tvOS ')) {
+            return m.group(0)!;
+          }
+          final Match? ios = _iosVersionInClause.firstMatch(inner);
+          if (ios == null) {
+            return m.group(0)!;
+          }
+          // Insert `, tvOS <sameVersion>` right after the iOS entry.
+          final String widened = inner.replaceFirst(
+            ios.group(0)!,
+            '${ios.group(0)!}, tvOS ${ios.group(1)!}',
+          );
+          return '${m.group(1)!}($widened)';
+        },
+      );
+    }
 
     // Pass 2 — strip iOS-only `import` lines. This is deliberately
     // independent of the API regex: a file that does `import WebKit` must

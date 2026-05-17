@@ -45,6 +45,19 @@ class ObjcPorter {
   static final RegExp _objcModuleImport = RegExp(r'^@import\s+([A-Za-z0-9_]+)');
   static final RegExp _targetOsIos = RegExp(r'\bTARGET_OS_IOS\b');
 
+  /// `@available(iOS 14.0, *)` — group 1 is the platform list.
+  static final RegExp _objcAtAvail =
+      RegExp(r'@available\s*\(([^)]*)\)');
+
+  /// `iOS <version>` inside an `@available(...)` clause.
+  static final RegExp _objcAtAvailIos =
+      RegExp(r'(?<![A-Za-z])iOS (\d+(?:\.\d+)*)');
+
+  /// `ios(14)` / `ios(14.0)` inside `API_AVAILABLE(...)` / `NS_AVAILABLE`
+  /// macros. Group 1 is the version.
+  static final RegExp _objcApiIos =
+      RegExp(r'\bios\((\d+(?:\.\d+)?)\)');
+
   /// Transforms [source]. [fileRelativePath] is recorded into each finding
   /// so the report can point at the issue in the OUTPUT package, e.g.
   /// `tvos/Classes/URLLauncherPlugin.m`.
@@ -88,6 +101,45 @@ class ObjcPorter {
         _targetOsIos,
         '(TARGET_OS_IOS || TARGET_OS_TV)',
       );
+    }
+
+    // Pass 1c — widen Objective-C availability annotations to also cover
+    // tvOS (the ObjC analogue of SwiftPorter's `@available` widening).
+    // Two forms:
+    //   * `if (@available(iOS 14.0, *))`           → add `tvOS 14.0`
+    //   * `API_AVAILABLE(ios(14))` / `NS_…`        → add `tvos(14)`
+    // Apple ships the same symbols on tvOS at the same major version, so
+    // a clause that names only iOS still makes the compiler reject the
+    // symbol on tvOS. Genuinely tvOS-*unavailable* symbols (e.g.
+    // `NEHotspotNetwork`, which no version brings to tvOS) are left to
+    // the compatibility-database passes / report — widening can't and
+    // must not fabricate them.
+    for (var i = 0; i < out.length; i++) {
+      String line = out[i];
+      if (line.contains('@available(') &&
+          _objcAtAvailIos.hasMatch(line) &&
+          !line.contains('tvOS ')) {
+        line = line.replaceAllMapped(_objcAtAvail, (Match m) {
+          final String inner = m.group(1)!;
+          if (inner.contains('tvOS ')) {
+            return m.group(0)!;
+          }
+          final Match? ios = _objcAtAvailIos.firstMatch(inner);
+          if (ios == null) {
+            return m.group(0)!;
+          }
+          return '@available(${inner.replaceFirst(ios.group(0)!, '${ios.group(0)!}, tvOS ${ios.group(1)!}')})';
+        });
+      }
+      if (line.contains('_AVAILABLE(') &&
+          _objcApiIos.hasMatch(line) &&
+          !line.contains('tvos(')) {
+        line = line.replaceFirstMapped(
+          _objcApiIos,
+          (Match m) => '${m.group(0)!}, tvos(${m.group(1)!})',
+        );
+      }
+      out[i] = line;
     }
 
     // Pass 2 — strip iOS-only framework imports (`#import <F/...>`,

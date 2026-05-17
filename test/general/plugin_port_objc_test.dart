@@ -150,6 +150,33 @@ void main() {
         'int x = 1;\n',
       );
     });
+
+    testWithoutContext('widens ObjC availability annotations to tvOS', () {
+      const String src = '''
+- (void)a API_AVAILABLE(ios(14)) {
+  if (@available(iOS 14.0, *)) {
+    [info isiOSAppOnMac];
+  }
+}
+- (void)b API_AVAILABLE(ios(16.0), macos(13)) {}
+- (void)c API_AVAILABLE(ios(13), tvos(13)) {}
+- (void)d API_UNAVAILABLE(tvos) {}
+''';
+      final PortingResult r =
+          ObjcPorter().port(src, fileRelativePath: 'x.m');
+
+      // `@available(iOS …, *)` and `API_AVAILABLE(ios(…))` both gain a
+      // tvOS entry at the same version; other platforms preserved.
+      expect(r.transformed, contains('API_AVAILABLE(ios(14), tvos(14))'));
+      expect(r.transformed, contains('if (@available(iOS 14.0, tvOS 14.0, *))'));
+      expect(
+          r.transformed, contains('API_AVAILABLE(ios(16.0), tvos(16.0), macos(13))'));
+      // Idempotent — already names tvos.
+      expect(r.transformed, contains('API_AVAILABLE(ios(13), tvos(13))'));
+      expect(r.transformed, isNot(contains('tvos(13), tvos(13)')));
+      // Explicit unavailability is never fought.
+      expect(r.transformed, contains('API_UNAVAILABLE(tvos)'));
+    });
   });
 
   group('plugin port end-to-end (Objective-C, Phase 4)', () {

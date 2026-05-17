@@ -246,5 +246,49 @@ func fileURLForAsset(_ key: String) -> String? {
       // And the iOS branch is widened as before.
       expect(r.transformed, contains('#if (os(iOS) || os(tvOS))\n'));
     });
+
+    testWithoutContext('widens @available/#available iOS clauses to tvOS', () {
+      const String src = '''
+@available(iOS 15.0, macOS 12.0, *)
+extension Foo {
+  func bar() {
+    if #available(iOS 26.0, *), x.isUltraConstrained {
+      use()
+    }
+    if #available(iOS 17.4, macOS 14.4, *) {
+      newApi()
+    }
+  }
+}
+
+@available(iOS 13.0, tvOS 13.0, *)
+func alreadyWide() {}
+
+@available(macOS 12.0, *)
+func macOnly() {}
+''';
+      final PortingResult r =
+          SwiftPorter().port(src, fileRelativePath: 'x.swift');
+
+      // iOS version mirrored onto tvOS, other platforms + `*` preserved,
+      // and a trailing condition outside the parens is untouched.
+      expect(r.transformed,
+          contains('@available(iOS 15.0, tvOS 15.0, macOS 12.0, *)'));
+      expect(
+        r.transformed,
+        contains('if #available(iOS 26.0, tvOS 26.0, *), x.isUltraConstrained {'),
+      );
+      expect(r.transformed,
+          contains('if #available(iOS 17.4, tvOS 17.4, macOS 14.4, *) {'));
+      // Idempotent: a clause that already names tvOS is left as-is.
+      expect(r.transformed, contains('@available(iOS 13.0, tvOS 13.0, *)'));
+      expect(
+        r.transformed,
+        isNot(contains('tvOS 13.0, tvOS 13.0')),
+        reason: 'must not double-insert tvOS',
+      );
+      // A clause with no iOS entry is not touched.
+      expect(r.transformed, contains('@available(macOS 12.0, *)'));
+    });
   });
 }
