@@ -43,6 +43,7 @@ class ObjcPorter {
   static final RegExp _methodB = RegExp(r'isEqualToString:\s*@"([^"]+)"');
   static final RegExp _objcAngleImport = RegExp(r'^#import\s*<([A-Za-z0-9_]+)/');
   static final RegExp _objcModuleImport = RegExp(r'^@import\s+([A-Za-z0-9_]+)');
+  static final RegExp _targetOsIos = RegExp(r'\bTARGET_OS_IOS\b');
 
   /// Transforms [source]. [fileRelativePath] is recorded into each finding
   /// so the report can point at the issue in the OUTPUT package, e.g.
@@ -59,6 +60,35 @@ class ObjcPorter {
     final Map<String, int> firstBody = <String, int>{};
     final Map<String, int> lastBody = <String, int>{};
     _detectHandlers(lines, methodAt, firstBody, lastBody);
+
+    // Pass 1b — make tvOS follow the iOS code paths. The Objective-C
+    // analogue of SwiftPorter's `os(iOS)` widening: plugins gate
+    // platform-specific code with `#if TARGET_OS_IOS … #else <macOS> …
+    // #endif`. On tvOS `TARGET_OS_IOS` and `TARGET_OS_OSX` are both 0
+    // (`TARGET_OS_TV` is 1), so neither branch is taken and the iOS
+    // implementation the plugin needs (UIView, CADisplayLink,
+    // AVAudioSession, UIViewController — all available on tvOS) is
+    // skipped. Widen every `TARGET_OS_IOS` test in a preprocessor
+    // conditional to also match tvOS. `TARGET_OS_OSX` is deliberately
+    // left untouched (it stays 0 on tvOS, so its `#else`/iOS-shaped
+    // branch is taken — exactly what we want). Genuinely iOS-only APIs
+    // surfacing through the widened branch are still caught and stubbed
+    // by the compatibility-database passes below.
+    for (var i = 0; i < lines.length; i++) {
+      final String t = lines[i].trimLeft();
+      if ((!t.startsWith('#if ') &&
+              !t.startsWith('#elif ') &&
+              !t.startsWith('#if(') &&
+              !t.startsWith('#elif(')) ||
+          !_targetOsIos.hasMatch(lines[i]) ||
+          lines[i].contains('TARGET_OS_TV')) {
+        continue;
+      }
+      out[i] = lines[i].replaceAll(
+        _targetOsIos,
+        '(TARGET_OS_IOS || TARGET_OS_TV)',
+      );
+    }
 
     // Pass 2 — strip iOS-only framework imports (`#import <F/...>`,
     // `@import F;`). Independent of the usage regex, mirroring SwiftPorter.

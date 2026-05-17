@@ -31,6 +31,7 @@ class PluginSource {
     required this.licenseFile,
     required this.classesDirectory,
     this.ffiNativeAssets = false,
+    this.spmSourcesRoot,
   });
 
   /// Absolute source directory.
@@ -95,6 +96,22 @@ class PluginSource {
   /// native federated `*_tvos` skeleton (Swift + method channel over the
   /// platform interface) instead of copying the FFI source.
   final bool ffiNativeAssets;
+
+  /// When the source uses a modern *modular* Swift Package Manager layout
+  /// — a single Dart package whose native code is split across several
+  /// SwiftPM targets under one `Sources/` directory (e.g. a Swift API
+  /// target plus sibling Objective-C `<pkg>_objc` / `<pkg>_ios` /
+  /// `<pkg>_macos` targets) — this points at that shared `Sources/`
+  /// directory. The scaffolder then copies *every* sibling target
+  /// (preserving structure, dropping the macOS-only target) and collapses
+  /// them into one CocoaPods module, mirroring how the upstream package's
+  /// own CocoaPods podspec ships. `null` for the common single-directory
+  /// layout where [classesDirectory] alone holds all the native code.
+  final Directory? spmSourcesRoot;
+
+  /// True when [spmSourcesRoot] is set — the source is a multi-target
+  /// modular SwiftPM package that must be collapsed into one module.
+  bool get isMultiTargetSpm => spmSourcesRoot != null;
 }
 
 /// Inspects a candidate source plugin directory and produces a [PluginSource]
@@ -329,6 +346,14 @@ class SourceAnalyzer {
     final String basePackageName = _stripPlatformSuffix(packageName);
     final outputPackageName = '${basePackageName}_tvos';
 
+    // Modern modular SwiftPM packages split native code across several
+    // sibling targets under one `Sources/` directory (a Swift API target
+    // plus Objective-C `<pkg>_objc` / `<pkg>_ios` / `<pkg>_macos`
+    // targets). `_resolveSourceDir` returns only the first such target,
+    // which silently drops the rest. Detect that here so the scaffolder
+    // can copy and collapse *all* of them.
+    final Directory? spmRoot = _detectSpmSourcesRoot(sourcesDir);
+
     final File license = sourceDirectory.childFile('LICENSE');
 
     return PluginSource(
@@ -346,7 +371,38 @@ class SourceAnalyzer {
       descriptionFromPubspec: (pubspec['description'] as String?)?.trim() ?? packageName,
       licenseFile: license.existsSync() ? license : null,
       classesDirectory: classesDir,
+      spmSourcesRoot: spmRoot,
     );
+  }
+
+  /// Returns the shared `Sources/` directory of a *modular* multi-target
+  /// SwiftPM package, or `null` for the common single-target layout.
+  ///
+  /// [sourcesDir] is whatever [_resolveSourceDir] picked — for a modular
+  /// package that is one target directory whose parent is `Sources/` and
+  /// whose siblings are the other targets. We treat it as multi-target
+  /// only when that `Sources/` parent has **more than one** child
+  /// directory that actually contains native files (a lone target is just
+  /// the ordinary SwiftPM layout the single-directory copy already
+  /// handles).
+  Directory? _detectSpmSourcesRoot(Directory? sourcesDir) {
+    if (sourcesDir == null) {
+      return null;
+    }
+    final Directory parent = sourcesDir.parent;
+    if (_fs.path.basename(parent.path) != 'Sources' || !parent.existsSync()) {
+      return null;
+    }
+    var nativeTargets = 0;
+    for (final FileSystemEntity e in parent.listSync()) {
+      if (e is Directory && _hasNativeFiles(e)) {
+        nativeTargets++;
+        if (nativeTargets > 1) {
+          return parent;
+        }
+      }
+    }
+    return null;
   }
 
   /// Finds the directory that actually holds the native sources, trying

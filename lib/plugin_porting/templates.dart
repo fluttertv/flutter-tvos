@@ -100,6 +100,20 @@ String renderPubspec({required PluginSource source, required String licenseHolde
 /// `s.dependency 'Flutter'` (the Flutter pod doesn't declare tvOS support).
 /// Flutter.framework is picked up via FRAMEWORK_SEARCH_PATHS instead.
 String renderPodspec({required PluginSource source, required String licenseHolder}) {
+  // A modular multi-target SwiftPM package keeps its targets in
+  // subdirectories under `Classes/` (one per SwiftPM target, structure
+  // preserved). Collapse them into a single CocoaPods module the same
+  // way the upstream package's own podspec does: compile every kept
+  // target's sources, and expose only the `include/` headers (the
+  // SwiftPM public surface) so the generated module umbrella stays
+  // internally consistent. The single-directory layout keeps the flat
+  // `Classes/**/*` globs.
+  final String sourceFilesGlob = source.isMultiTargetSpm
+      ? "'Classes/**/*.{h,m,mm,swift}'"
+      : "'Classes/**/*'";
+  final String publicHeadersGlob = source.isMultiTargetSpm
+      ? "'Classes/**/include/**/*.h'"
+      : "'Classes/**/*.h'";
   return '''
 #
 # To learn more about a Podspec see http://guides.cocoapods.org/syntax/podspec.html.
@@ -119,8 +133,8 @@ package that ships native code targeting Apple tvOS.
   s.license          = { :file => '../LICENSE' }
   s.author           = { '$licenseHolder' => 'noreply@fluttertv.dev' }
   s.source           = { :path => '.' }
-  s.source_files     = 'Classes/**/*'
-  s.public_header_files = 'Classes/**/*.h'
+  s.source_files     = $sourceFilesGlob
+  s.public_header_files = $publicHeadersGlob
   s.platform         = :tvos, '13.0'
   s.swift_version    = '5.0'
 

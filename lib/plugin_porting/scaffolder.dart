@@ -317,15 +317,61 @@ class Scaffolder {
   ///
   /// Returns an empty list when the source has no copyable native files —
   /// caller falls back to writing a stub.
+  ///
+  /// For a *modular* multi-target SwiftPM package (see
+  /// [PluginSource.isMultiTargetSpm]) every sibling target under the
+  /// shared `Sources/` directory is copied — preserving each target's
+  /// internal structure under `Classes/<target>/…` so the targets'
+  /// quoted/relative `#import "…/Foo.h"` paths keep resolving and the
+  /// generated podspec can collapse them into one CocoaPods module
+  /// exactly the way the upstream package's own podspec does. The
+  /// macOS-only platform target is dropped: tvOS shares UIKit with iOS,
+  /// so the `<pkg>_ios` target is the right sibling to keep.
   List<_NativeCopy> _collectNativeCopies(PluginSource source, Directory destination) {
+    const Set<String> nativeExt = <String>{'.swift', '.h', '.m', '.mm'};
+    if (source.isMultiTargetSpm) {
+      final Directory root = source.spmSourcesRoot!;
+      if (!root.existsSync()) {
+        return const <_NativeCopy>[];
+      }
+      final copies = <_NativeCopy>[];
+      for (final FileSystemEntity target in root.listSync()) {
+        if (target is! Directory) {
+          continue;
+        }
+        final String name = _fs.path.basename(target.path);
+        if (_isMacosOnlyTarget(name)) {
+          // macOS-only target (AppKit/Cocoa, CVDisplayLink, …) — not
+          // tvOS-compatible. tvOS takes the iOS sibling instead.
+          _log.printTrace('  skipping macOS-only SwiftPM target: $name');
+          continue;
+        }
+        copies.addAll(_collectByExtension(
+          target,
+          destination.childDirectory(name),
+          nativeExt,
+        ));
+      }
+      return copies;
+    }
     if (!source.classesDirectory.existsSync()) {
       return const <_NativeCopy>[];
     }
     return _collectByExtension(
       source.classesDirectory,
       destination,
-      const <String>{'.swift', '.h', '.m', '.mm'},
+      nativeExt,
     );
+  }
+
+  /// True for a SwiftPM target whose code is macOS-only — by the
+  /// `flutter/packages` convention these targets are suffixed `_macos`
+  /// (or, rarely, `_osx`). They use AppKit/Cocoa and macOS-only display
+  /// link APIs the tvOS toolchain can't build; the matching `_ios`
+  /// sibling is UIKit-based and is what tvOS uses.
+  bool _isMacosOnlyTarget(String targetDirName) {
+    final String n = targetDirName.toLowerCase();
+    return n.endsWith('_macos') || n.endsWith('_osx');
   }
 
   /// Returns the source's `<platform>/Resources/` directory if it exists,
@@ -333,8 +379,18 @@ class Scaffolder {
   /// Resources live; we look in the conventional location next to the
   /// `Classes/` directory we already analysed.
   Directory? _resolveResourcesDir(PluginSource source) {
-    final Directory candidate = source.classesDirectory.parent.childDirectory('Resources');
-    return candidate.existsSync() ? candidate : null;
+    // Legacy layout: `<platform>/Resources/` next to `<platform>/Classes/`.
+    // SwiftPM layout: `Sources/<target>/Resources/` *inside* the target
+    // directory (declared via `.process("Resources")` in Package.swift).
+    for (final Directory candidate in <Directory>[
+      source.classesDirectory.parent.childDirectory('Resources'),
+      source.classesDirectory.childDirectory('Resources'),
+    ]) {
+      if (candidate.existsSync()) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   /// Walks a `Resources/` directory and produces copy plans for every file

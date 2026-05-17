@@ -475,6 +475,8 @@ flutter:
       final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
       expect(s.classesDirectory.path, contains('ios/gadget_ios/Sources/gadget_ios'));
       expect(s.pluginClass, 'GadgetPlugin');
+      expect(s.isMultiTargetSpm, isFalse,
+          reason: 'a lone SwiftPM target is the ordinary single-directory layout');
     });
 
     testWithoutContext('resolves sharedDarwinSource under darwin/', () {
@@ -740,6 +742,179 @@ flutter:
         out.childDirectory('example').childDirectory('lib').childFile('main.dart').existsSync(),
         isTrue,
       );
+    });
+
+    testWithoutContext(
+        'modular multi-target SwiftPM: copies every sibling target, drops macOS, '
+        'preserves structure, collapses into one module', () {
+      // Synthetic fixture mirroring the modern flutter/packages modular
+      // SwiftPM layout (a Swift API target + Objective-C `_objc` core +
+      // platform `_ios`/`_macos` targets). Plugin-agnostic — no real
+      // plugin names anywhere.
+      final Directory dir = fs.directory('/p')..createSync();
+      dir.childFile('pubspec.yaml').writeAsStringSync('''
+name: gizmo_avfoundation
+version: 4.5.6
+dependencies:
+  gizmo_platform_interface: ^2.0.0
+flutter:
+  plugin:
+    implements: gizmo
+    platforms:
+      ios:
+        pluginClass: GizmoPlugin
+        dartPluginClass: AvfoundationGizmo
+        sharedDarwinSource: true
+      macos:
+        pluginClass: GizmoPlugin
+        dartPluginClass: AvfoundationGizmo
+        sharedDarwinSource: true
+''');
+      final Directory sources = dir
+          .childDirectory('darwin')
+          .childDirectory('gizmo_avfoundation')
+          .childDirectory('Sources');
+      dir
+          .childDirectory('darwin')
+          .childDirectory('gizmo_avfoundation')
+          .childFile('Package.swift')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('// swift-tools-version: 5.9\n');
+
+      // Swift API target: branches on os(iOS)/os(macOS) and pulls the
+      // ObjC core in via a `canImport` module guard.
+      sources
+          .childDirectory('gizmo_avfoundation')
+          .childFile('GizmoPlugin.swift')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('''
+import Foundation
+
+#if os(iOS)
+  import Flutter
+#elseif os(macOS)
+  import FlutterMacOS
+#else
+  #error("Unsupported platform.")
+#endif
+
+#if canImport(gizmo_avfoundation_objc)
+  import gizmo_avfoundation_objc
+#endif
+
+final class GizmoPlugin: NSObject {
+  let core = GizmoCore()
+}
+''');
+      // ObjC core target with modular `include/` headers and a
+      // TARGET_OS_IOS/else platform branch.
+      final Directory objc = sources.childDirectory('gizmo_avfoundation_objc');
+      objc.childFile('GizmoCore.m')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('''
+#import "./include/gizmo_avfoundation_objc/GizmoCore.h"
+@import Foundation;
+
+@implementation GizmoCore
+- (void)tick {
+#if TARGET_OS_IOS
+  [self iosPath];
+#else
+  [self macPath];
+#endif
+}
+@end
+''');
+      objc
+          .childDirectory('include')
+          .childDirectory('gizmo_avfoundation_objc')
+          .childFile('GizmoCore.h')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('@import Foundation;\n@interface GizmoCore : NSObject\n@end\n');
+      // iOS platform target: reaches the ObjC core via a cross-target
+      // relative path that only resolves if structure is preserved.
+      sources
+          .childDirectory('gizmo_avfoundation_ios')
+          .childFile('GizmoView.m')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync(
+            '#import "../gizmo_avfoundation_objc/include/gizmo_avfoundation_objc/GizmoCore.h"\n'
+            '@import UIKit;\n');
+      // macOS platform target: AppKit — must be dropped for tvOS.
+      sources
+          .childDirectory('gizmo_avfoundation_macos')
+          .childFile('GizmoViewMac.m')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('@import Cocoa;\n');
+
+      final PluginSource s = SourceAnalyzer(fileSystem: fs).analyze(dir);
+      expect(s.isMultiTargetSpm, isTrue);
+      expect(s.outputPackageName, 'gizmo_tvos');
+      expect(s.pluginClass, 'GizmoPlugin');
+
+      final Directory out = fs.directory('/out/gizmo_tvos');
+      Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
+          .scaffold(source: s, outputDirectory: out);
+
+      final Directory classes =
+          out.childDirectory('tvos').childDirectory('Classes');
+
+      // Every kept target copied, internal structure preserved.
+      final String swift = classes
+          .childDirectory('gizmo_avfoundation')
+          .childFile('GizmoPlugin.swift')
+          .readAsStringSync();
+      final String core = classes
+          .childDirectory('gizmo_avfoundation_objc')
+          .childFile('GizmoCore.m')
+          .readAsStringSync();
+      expect(
+        classes
+            .childDirectory('gizmo_avfoundation_objc')
+            .childDirectory('include')
+            .childDirectory('gizmo_avfoundation_objc')
+            .childFile('GizmoCore.h')
+            .existsSync(),
+        isTrue,
+        reason: 'modular include/ headers must keep their path',
+      );
+      final String view = classes
+          .childDirectory('gizmo_avfoundation_ios')
+          .childFile('GizmoView.m')
+          .readAsStringSync();
+
+      // macOS-only target dropped — tvOS uses the iOS sibling.
+      expect(classes.childDirectory('gizmo_avfoundation_macos').existsSync(),
+          isFalse);
+      expect(s.spmSourcesRoot, isNotNull);
+
+      // Swift: os(iOS) widened to tvOS; the canImport guard is kept (it
+      // self-disables under one CocoaPods module, exposing the ObjC
+      // symbols via the shared umbrella instead).
+      expect(swift, contains('#if (os(iOS) || os(tvOS))'));
+      expect(swift, contains('#if canImport(gizmo_avfoundation_objc)'));
+
+      // ObjC: TARGET_OS_IOS widened so tvOS takes the iOS branch; the
+      // cross-target relative import is untouched (resolves because the
+      // structure is preserved).
+      expect(core, contains('#if (TARGET_OS_IOS || TARGET_OS_TV)'));
+      expect(core, contains('#import "./include/gizmo_avfoundation_objc/GizmoCore.h"'));
+      expect(
+        view,
+        contains(
+            '#import "../gizmo_avfoundation_objc/include/gizmo_avfoundation_objc/GizmoCore.h"'),
+      );
+
+      // Podspec collapses the targets into one module the way the
+      // upstream CocoaPods podspec does.
+      final String podspec = out
+          .childDirectory('tvos')
+          .childFile('gizmo_tvos.podspec')
+          .readAsStringSync();
+      expect(podspec, contains("s.source_files     = 'Classes/**/*.{h,m,mm,swift}'"));
+      expect(
+          podspec, contains("s.public_header_files = 'Classes/**/include/**/*.h'"));
+      expect(podspec, contains("'DEFINES_MODULE' => 'YES'"));
     });
   });
 }
