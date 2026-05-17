@@ -69,6 +69,26 @@ const Map<String, ({String positive, String negative})> _samples =
     positive: 'SKPaymentQueue.default().add(payment)',
     negative: 'let q = JobPaymentQueue()',
   ),
+  'CaptiveNetwork': (
+    positive: 'let info = CNCopyCurrentNetworkInfo(interface)',
+    negative: 'let info = CurrentNetworkInfoStore()',
+  ),
+  'NetworkExtensionHotspot': (
+    positive: 'NEHotspotNetwork.fetchCurrent { network in }',
+    negative: 'let n = HotspotNetworkModel()',
+  ),
+  'StoreKitCodeRedemption': (
+    positive: 'SKPaymentQueue.default().presentCodeRedemptionSheet()',
+    negative: 'showRedeemCodeUI()',
+  ),
+  'ProcessInfoEnvironment': (
+    positive: 'let v = ProcessInfo.processInfo.isiOSAppOnMac',
+    negative: 'let v = processInfo.environment["X"]',
+  ),
+  'GoogleSignInSDK': (
+    positive: 'GIDSignIn.sharedInstance.signIn(withPresenting: vc)',
+    negative: 'let s = GoogleSignInController()',
+  ),
 };
 
 void main() {

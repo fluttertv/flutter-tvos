@@ -290,5 +290,36 @@ func macOnly() {}
       // A clause with no iOS entry is not touched.
       expect(r.transformed, contains('@available(macOS 12.0, *)'));
     });
+
+    testWithoutContext(
+        'type-level tvOS-absent APIs produce taggedWithTodo (the fail-fast signal)',
+        () {
+      // `flutter-tvos plugin port` refuses to emit a package when any
+      // finding is `taggedWithTodo` (an unsupported API used at type /
+      // top-level scope, not a stubbable handler). Assert the porter
+      // raises exactly that for the newly-covered tvOS-absent APIs.
+      const String src = '''
+import Flutter
+import SafariServices
+
+final class Session: NSObject, SFSafariViewControllerDelegate {
+  let vc: SFSafariViewController
+}
+
+func wifi() {
+  let info = CNCopyCurrentNetworkInfo("en0" as CFString)
+}
+''';
+      final PortingResult r =
+          SwiftPorter().port(src, fileRelativePath: 'tvos/Classes/Session.swift');
+
+      final Set<String> tagged = <String>{
+        for (final PortingFinding f in r.findings)
+          if (f.action == FindingAction.taggedWithTodo) f.pattern.name,
+      };
+      expect(tagged, containsAll(<String>['SafariServices', 'CaptiveNetwork']),
+          reason: 'type-level unsupported APIs must be non-stubbable findings '
+              'so the command can refuse to emit a broken package');
+    });
   });
 }

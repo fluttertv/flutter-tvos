@@ -97,7 +97,8 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
   ),
   ApiPattern(
     name: 'SafariServices',
-    pattern: r'\bSFSafariViewController\b|\bSFAuthenticationSession\b|\bASWebAuthenticationSession\b',
+    pattern: r'\bSFSafariViewController\b|\bSFSafariViewControllerDelegate\b'
+        r'|\bSFAuthenticationSession\b|\bASWebAuthenticationSession\b',
     severity: Severity.unsupported,
     note:
         'SafariServices and AuthenticationServices web auth APIs are not '
@@ -200,6 +201,61 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'aggressively reaps Apple TV apps when not in foreground. Background '
         'work has to happen via the foreground UI or a network-side service.',
     stripImports: <String>['import BackgroundTasks'],
+  ),
+  ApiPattern(
+    name: 'CaptiveNetwork',
+    pattern: r'\bCNCopyCurrentNetworkInfo\b|\bCNCopySupportedInterfaces\b'
+        r'|\bkCNNetworkInfoKeySSID\b|\bkCNNetworkInfoKeyBSSID\b',
+    severity: Severity.unsupported,
+    note:
+        'SystemConfiguration CaptiveNetwork (SSID/BSSID lookup) is marked '
+        'unavailable on tvOS — there is no Wi-Fi network-name API. No version '
+        'brings it to tvOS, so a plugin built around it has no tvOS port; the '
+        'Wi-Fi-name feature must be dropped on tvOS.',
+  ),
+  ApiPattern(
+    name: 'NetworkExtensionHotspot',
+    pattern: r'\bNEHotspotNetwork\b|\bNEHotspotConfiguration\b'
+        r'|\bNEHotspotConfigurationManager\b',
+    severity: Severity.unsupported,
+    note:
+        'NetworkExtension hotspot APIs (NEHotspotNetwork / '
+        'NEHotspotConfiguration) are not available on tvOS. There is no tvOS '
+        'replacement; the feature has to be omitted on tvOS.',
+    stripImports: <String>['import NetworkExtension'],
+  ),
+  ApiPattern(
+    name: 'StoreKitCodeRedemption',
+    pattern: r'\bpresentCodeRedemptionSheet\b|\bSKStoreReviewController\b'
+        r'|\bSKStoreProductViewController\b',
+    severity: Severity.unsupported,
+    note:
+        'The StoreKit offer-code redemption sheet, review prompt, and product '
+        'page UI are unavailable on tvOS (tvOS has no in-app modal store UI). '
+        'Core purchasing still works via StoreKit; only these UI entry points '
+        'must be removed for tvOS.',
+  ),
+  ApiPattern(
+    name: 'ProcessInfoEnvironment',
+    pattern: r'\bisiOSAppOnVision\b|\bisiOSAppOnMac\b',
+    severity: Severity.unsupported,
+    note:
+        'NSProcessInfo.isiOSAppOnMac / isiOSAppOnVision are not declared in '
+        'the tvOS SDK (they describe iOS-app-on-other-platform contexts that '
+        'cannot occur on tvOS). The reference fails to compile on tvOS and '
+        'has no meaningful tvOS value — drop it.',
+  ),
+  ApiPattern(
+    name: 'GoogleSignInSDK',
+    pattern: r'\bGIDSignIn\b|\bGIDConfiguration\b|\bGIDGoogleUser\b'
+        r'|\bGIDSignInResult\b',
+    severity: Severity.unsupported,
+    note:
+        'The third-party GoogleSignIn SDK does not ship a tvOS slice, so the '
+        '`GoogleSignIn` module cannot be imported when building for tvOS. '
+        'Google Sign-In on tvOS uses the device-pairing OAuth flow instead, '
+        'which is a different implementation — there is no mechanical port.',
+    stripImports: <String>['import GoogleSignIn'],
   ),
   // ---------------------------------------------------------------------
   // `partial` entries — these compile on tvOS but behave differently or
