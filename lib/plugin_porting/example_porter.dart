@@ -103,6 +103,38 @@ class ExamplePorter {
     );
   }
 
+  /// Removes upstream-monorepo wiring that makes a detached example fail
+  /// `pub get`: the pub-workspace membership directive (there is no
+  /// workspace root here) and the whole `dependency_overrides:` block
+  /// (those only ever re-point packages at sibling `path:`s of the source
+  /// monorepo that do not exist in the generated package). The porter
+  /// already pins the real `<base>` from pub.dev and wires the local
+  /// `<base>_tvos`, so dropping the overrides is both safe and required.
+  List<String> _stripMonorepoWiring(List<String> lines) {
+    final List<String> out = <String>[];
+    for (var i = 0; i < lines.length; i++) {
+      final String l = lines[i];
+      // `resolution: workspace` — a top-level pub-workspace member flag.
+      if (RegExp(r'^resolution:\s').hasMatch(l)) {
+        continue;
+      }
+      // Entire top-level `dependency_overrides:` block.
+      if (RegExp(r'^dependency_overrides:\s*$').hasMatch(l)) {
+        var j = i + 1;
+        while (j < lines.length &&
+            (lines[j].isEmpty ||
+                lines[j].startsWith(' ') ||
+                lines[j].startsWith('\t'))) {
+          j++;
+        }
+        i = j - 1;
+        continue;
+      }
+      out.add(l);
+    }
+    return out;
+  }
+
   /// Forces the example to depend on the app-facing plugin (pinned to the
   /// resolved version) and the local federated impl, replacing any
   /// existing entries for those two names (the upstream monorepo example
@@ -113,14 +145,16 @@ class ExamplePorter {
     required String baseVersion,
     required String tvosPackageName,
   }) {
-    final List<String> lines = pubspec.split('\n');
+    final List<String> lines =
+        _stripMonorepoWiring(pubspec.split('\n'));
     final int depsIdx = lines.indexWhere(
       (String l) => RegExp(r'^dependencies:\s*$').hasMatch(l),
     );
     if (depsIdx == -1) {
       // No dependencies block — append a complete one.
-      final String sep = pubspec.endsWith('\n') ? '' : '\n';
-      return '$pubspec$sep\ndependencies:\n'
+      final String body = lines.join('\n');
+      final String sep = body.endsWith('\n') ? '' : '\n';
+      return '$body$sep\ndependencies:\n'
           '  flutter:\n    sdk: flutter\n'
           '  $baseName: ^$baseVersion\n'
           '  $tvosPackageName:\n    path: ../\n';

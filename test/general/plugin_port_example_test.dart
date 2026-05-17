@@ -117,6 +117,69 @@ void main() {
       expect(pub, isNot(contains('^6.6.0')));
     });
 
+    test('strips pub-workspace + dependency_overrides monorepo wiring', () {
+      final Directory base =
+          fs.directory('/src/audbox')..createSync(recursive: true);
+      final Directory ex = base.childDirectory('example')..createSync(recursive: true);
+      ex.childDirectory('lib').childFile('main.dart')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync("import 'package:audbox/audbox.dart';\nvoid main() {}\n");
+      // Upstream example wired for the source monorepo: a pub-workspace
+      // member, and overrides that point at sibling paths which do not
+      // exist once the example is detached into the generated package.
+      ex.childFile('pubspec.yaml').writeAsStringSync('''
+name: audbox_example
+resolution: workspace
+
+environment:
+  sdk: ">=3.1.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  audbox:
+    path: ../
+  audbox_platform_interface: ^2.0.0
+  provider: ^6.0.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+dependency_overrides:
+  audbox_platform_interface:
+    path: ../../audbox_platform_interface
+  audbox:
+    path: ../
+''');
+      final Directory out =
+          fs.directory('/out/audbox_tvos')..createSync(recursive: true);
+
+      final ExamplePortResult r = ExamplePorter(fileSystem: fs).port(
+        basePluginDir: base,
+        outputPackageDir: out,
+        baseName: 'audbox',
+        tvosPackageName: 'audbox_tvos',
+        baseVersion: '6.6.0',
+      );
+      expect(r.skipped, isFalse);
+      final String pub = out
+          .childDirectory('example')
+          .childFile('pubspec.yaml')
+          .readAsStringSync();
+
+      // Workspace flag and the entire overrides block are gone.
+      expect(pub, isNot(contains('resolution: workspace')));
+      expect(pub, isNot(contains('dependency_overrides:')));
+      expect(pub, isNot(contains('../../audbox_platform_interface')));
+      // Dual-dependency wiring still applied; untouched deps preserved so
+      // the platform interface now resolves from pub.dev normally.
+      expect(pub, contains('  audbox: ^6.6.0'));
+      expect(pub, contains('  audbox_tvos:\n    path: ../'));
+      expect(pub, contains('  audbox_platform_interface: ^2.0.0'));
+      expect(pub, contains('  provider: ^6.0.5'));
+    });
+
     test('skips when the app-facing plugin has no usable example', () {
       final Directory base = fs.directory('/src/foo')..createSync(recursive: true);
       final Directory out = fs.directory('/out/foo_tvos')..createSync(recursive: true);
