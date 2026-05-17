@@ -63,6 +63,28 @@ class SwiftPorter {
           .replaceAll('os(iOS)', '(os(iOS) || os(tvOS))');
     }
 
+    // Pass 1c — Flutter's bundled-asset resolution fallback. The
+    // federated Apple plugins resolve an asset shipped in
+    // `flutter_assets/` with the shared idiom:
+    //
+    //   var path = Bundle.main.path(forResource: key, ofType: nil)
+    //   #if os(macOS)
+    //     if path == nil { path = URL(string: key,
+    //         relativeTo: Bundle.main.bundleURL)?.path }
+    //   #endif
+    //
+    // `Bundle.main.path(forResource:ofType:)` does NOT resolve a nested
+    // `flutter_assets/…` path on tvOS — it behaves like macOS, not iOS —
+    // so without the fallback every `…Controller.asset(…)` (any plugin
+    // using this idiom) fails with "Asset … not found". The fallback is
+    // Foundation-only and correct on tvOS; it is merely gated to macOS.
+    // Widen exactly those guards to also run on tvOS. The rule is scoped
+    // to the asset-fallback idiom — keyed on `Bundle.main.bundleURL`
+    // inside the guarded block — so `#if os(macOS) import FlutterMacOS`
+    // branches (which must NOT compile on tvOS) are deliberately left
+    // alone.
+    _widenMacOSAssetFallback(originalLines, outputLines);
+
     // Pass 2 — strip iOS-only `import` lines. This is deliberately
     // independent of the API regex: a file that does `import WebKit` must
     // not keep that import on tvOS even when the specific call site (e.g.
@@ -314,6 +336,65 @@ class SwiftPorter {
   }
 
   static int _leadingSpaces(String s) => s.length - s.trimLeft().length;
+
+  /// Signature of the Flutter shared bundled-asset fallback: a
+  /// `Bundle.main.bundleURL`-relative path resolution. Foundation-only,
+  /// so it is safe on tvOS; it appears only in the asset-resolution
+  /// helper, never in `import FlutterMacOS` / AppKit branches.
+  static const String _assetFallbackSignature = 'Bundle.main.bundleURL';
+
+  /// Widens `#if os(macOS)` / `#elseif os(macOS)` guards to also run on
+  /// tvOS, but ONLY when the guarded branch is the bundled-asset
+  /// fallback (identified by [_assetFallbackSignature]). Every other
+  /// `os(macOS)` guard — notably `import FlutterMacOS` — is left
+  /// untouched so it stays compiled out on tvOS.
+  void _widenMacOSAssetFallback(
+    List<String> originalLines,
+    List<String> outputLines,
+  ) {
+    for (var i = 0; i < originalLines.length; i++) {
+      final String t = originalLines[i].trimLeft();
+      final bool isGuard =
+          (t.startsWith('#if ') || t.startsWith('#elseif ')) &&
+          t.contains('os(macOS)') &&
+          !t.contains('os(tvOS)');
+      if (!isGuard) {
+        continue;
+      }
+      // Walk this branch's body to its terminating directive, tracking
+      // nested `#if`/`#endif` so an inner conditional can't end it early.
+      var depth = 0;
+      var hasSignature = false;
+      for (var j = i + 1; j < originalLines.length; j++) {
+        final String tj = originalLines[j].trimLeft();
+        if (tj.startsWith('#if') ||
+            tj.startsWith('#ifdef') ||
+            tj.startsWith('#ifndef')) {
+          depth++;
+          continue;
+        }
+        if (tj.startsWith('#endif')) {
+          if (depth == 0) {
+            break;
+          }
+          depth--;
+          continue;
+        }
+        if (depth == 0 &&
+            (tj.startsWith('#elseif') || tj.startsWith('#else'))) {
+          break;
+        }
+        if (originalLines[j].contains(_assetFallbackSignature)) {
+          hasSignature = true;
+          break;
+        }
+      }
+      if (hasSignature) {
+        outputLines[i] = outputLines[i]
+            .replaceAll('os(macOS)', '(os(macOS) || os(tvOS))');
+      }
+    }
+  }
 }
 
 class _CompiledPattern {

@@ -194,5 +194,57 @@ func f() {
       // Non-iOS directives are left exactly as-is.
       expect(r.transformed, contains('#if os(macOS)\n'));
     });
+
+    testWithoutContext(
+        'widens the bundled-asset fallback to tvOS but not the FlutterMacOS import',
+        () {
+      // The shared flutter/packages asset-resolution idiom: the macOS
+      // fallback is Foundation-only and is also needed on tvOS, where
+      // Bundle.main.path(forResource:ofType:) cannot resolve a nested
+      // flutter_assets/ path. The `import FlutterMacOS` guard right
+      // above it must stay macOS-only (tvOS uses the iOS Flutter
+      // module). Synthetic fixture — no real plugin names.
+      const String src = '''
+import Foundation
+
+#if os(iOS)
+  import Flutter
+#elseif os(macOS)
+  import FlutterMacOS
+#endif
+
+func fileURLForAsset(_ key: String) -> String? {
+  var path = Bundle.main.path(forResource: key, ofType: nil)
+  #if os(macOS)
+    if path == nil {
+      path = URL(string: key, relativeTo: Bundle.main.bundleURL)?.path
+    }
+  #endif
+  return path
+}
+''';
+      final PortingResult r =
+          SwiftPorter().port(src, fileRelativePath: 'x.swift');
+
+      // The asset-fallback guard is widened to also run on tvOS.
+      expect(
+        r.transformed,
+        contains('#if (os(macOS) || os(tvOS))\n'),
+        reason: 'asset fallback must execute on tvOS',
+      );
+      expect(r.transformed,
+          contains('relativeTo: Bundle.main.bundleURL'));
+      // The import guard is NOT widened — tvOS must not import
+      // FlutterMacOS (it takes the widened os(iOS) Flutter branch).
+      expect(r.transformed, contains('#elseif os(macOS)\n'));
+      expect(r.transformed, contains('  import FlutterMacOS'));
+      expect(
+        r.transformed,
+        isNot(contains('(os(macOS) || os(tvOS))\n  import FlutterMacOS')),
+        reason: 'FlutterMacOS import guard must stay macOS-only',
+      );
+      // And the iOS branch is widened as before.
+      expect(r.transformed, contains('#if (os(iOS) || os(tvOS))\n'));
+    });
   });
 }
