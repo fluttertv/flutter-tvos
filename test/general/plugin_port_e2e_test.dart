@@ -233,7 +233,7 @@ void main() {
       expect(report, contains('- [ ] '));
     });
 
-    testWithoutContext('flags a NOT-buildable plugin when an unsupported API is type-level', () {
+    testWithoutContext('reports a partial port when an unsupported API is type-level', () {
       final Directory src = _createGadgetIos(fs);
       final PluginSource source = SourceAnalyzer(fileSystem: fs).analyze(src);
       // WKWebView used at type/top-level scope (a stored property), not
@@ -251,9 +251,11 @@ public class BrowserPlugin: NSObject, FlutterPlugin {
       final String report = const ReportEmitter()
           .render(source: source, results: <PortingResult>[r], today: '2026-01-02');
 
-      expect(report, contains('⚠️ This plugin is not buildable on tvOS as-is'));
+      expect(report, contains('⚠️ Partial tvOS port'));
       expect(report,
-          contains('| tvOS build outlook | ❌ will NOT compile (manual work required) |'));
+          contains('| tvOS build outlook | ⚠️ partial — 1 region(s) disabled; verify the build |'));
+      expect(report, contains('| Native regions disabled on tvOS | 1 |'));
+      expect(report, contains('## Disabled on tvOS'));
       expect(report, contains('WebKit'));
     });
 

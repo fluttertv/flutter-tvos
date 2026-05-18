@@ -22,6 +22,13 @@ enum FindingAction {
   /// handler (e.g. private helpers, top-level code).
   taggedWithTodo,
 
+  /// The enclosing declaration (a property, member, or whole type) that
+  /// uses a tvOS-unavailable API at type / top-level scope was wrapped in
+  /// `#if !os(tvOS)` / `#if !TARGET_OS_TV` so the rest of the package
+  /// still compiles on tvOS. The feature is disabled on tvOS; the port
+  /// summary lists every such region for the developer to hand-port.
+  disabledOnTvos,
+
   /// `partial` / `info` patterns: source unchanged, finding recorded for
   /// manual review.
   flagged,

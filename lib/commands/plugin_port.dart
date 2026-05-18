@@ -105,16 +105,6 @@ class TvosPluginPortCommand extends FlutterCommand {
             'Write PORTING_REPORT.md alongside the package. Pass --no-report '
             'to skip it; the Swift transform (import stripping, handler '
             'stubbing) still runs either way.',
-      )
-      ..addFlag(
-        'allow-unbuildable',
-        negatable: false,
-        help:
-            'Scaffold the package even when the porter determines it cannot '
-            'compile on tvOS (the plugin uses APIs that do not exist on '
-            'tvOS at type level). By default the command refuses and exits '
-            'with an error instead of writing a package that will not '
-            'build. Use this only if you intend to finish the port by hand.',
       );
   }
 
@@ -260,93 +250,34 @@ class TvosPluginPortCommand extends FlutterCommand {
       logger: log,
       licenseHolder: stringArg('license-holder')!,
     );
-    final bool allowUnbuildable = boolArg('allow-unbuildable');
-
-    // Probe first (computes findings, writes nothing) so a plugin that
-    // cannot compile on tvOS is rejected BEFORE any package is produced.
-    // `taggedWithTodo` = a tvOS-unavailable API used at type / top-level
-    // scope (not a stubbable method-channel handler): there is no
-    // meaningful automatic tvOS port, and emitting the package would just
-    // hand the developer something that fails at `xcodebuild`.
-    final ScaffoldResult probe;
+    // Graceful partial port: the porter never refuses. Type-level
+    // tvOS-incompatible code is compiled out behind `#if !os(tvOS)` /
+    // `#if !TARGET_OS_TV` (recorded as `disabledOnTvos` findings) so the
+    // package still builds with that feature disabled; PORTING_REPORT.md
+    // lists every disabled region for the developer to hand-port.
+    final ScaffoldResult result;
     try {
-      probe = scaffolder.scaffold(
+      result = scaffolder.scaffold(
         source: source,
         outputDirectory: outputDir,
         overwrite: force,
-        dryRun: true,
+        dryRun: dryRun,
         emitReport: emitReport,
       );
     } on ScaffoldError catch (e) {
       throwToolExit(e.message);
     }
 
-    final List<PortingFinding> blockingFindings = <PortingFinding>[
-      for (final PortingFinding f in probe.findings)
-        if (f.action == FindingAction.taggedWithTodo) f,
-    ];
-    final List<String> blockingApis = <String>{
-      for (final PortingFinding f in blockingFindings) f.pattern.name,
+    bool isDisabled(PortingFinding f) =>
+        f.action == FindingAction.disabledOnTvos ||
+        f.action == FindingAction.taggedWithTodo;
+    final List<String> disabledApis = <String>{
+      for (final PortingFinding f in result.findings)
+        if (isDisabled(f)) f.pattern.name,
     }.toList()
       ..sort();
-    final bool willNotCompile = blockingApis.isNotEmpty;
-
-    if (willNotCompile && !allowUnbuildable) {
-      final StringBuffer b = StringBuffer()
-        ..writeln('✗ ${source.packageName} cannot be ported to tvOS.')
-        ..writeln()
-        ..writeln(
-          'It depends on APIs that do not exist on tvOS, used at type / '
-          'top-level scope (not behind a method channel the porter can '
-          'stub). A generated package would not compile, so none was '
-          'written:')
-        ..writeln();
-      final Set<String> notedApis = <String>{};
-      for (final String api in blockingApis) {
-        final List<PortingFinding> hits = <PortingFinding>[
-          for (final PortingFinding f in blockingFindings)
-            if (f.pattern.name == api) f,
-        ];
-        for (final PortingFinding f in hits.take(3)) {
-          b.writeln(
-              '  • $api  ${f.fileRelativePath}:${f.line}  ‹${f.matchedText}›');
-        }
-        if (hits.length > 3) {
-          b.writeln('    … and ${hits.length - 3} more $api reference(s)');
-        }
-        if (notedApis.add(api)) {
-          b.writeln('      ${hits.first.pattern.note.split('\n').first}');
-        }
-      }
-      b
-        ..writeln()
-        ..writeln(
-          'These features have no tvOS equivalent — the plugin needs a '
-          'hand-written tvOS implementation, or it simply has no tvOS '
-          'support.')
-        ..writeln()
-        ..writeln(
-          'Re-run with --dry-run to inspect the full report, or '
-          '--allow-unbuildable to scaffold the partial package anyway for '
-          'manual porting.');
-      throwToolExit(b.toString());
-    }
-
-    final ScaffoldResult result;
-    if (dryRun) {
-      result = probe;
-    } else {
-      try {
-        result = scaffolder.scaffold(
-          source: source,
-          outputDirectory: outputDir,
-          overwrite: force,
-          emitReport: emitReport,
-        );
-      } on ScaffoldError catch (e) {
-        throwToolExit(e.message);
-      }
-    }
+    final int disabledCount = result.findings.where(isDisabled).length;
+    final bool hasDisabled = disabledApis.isNotEmpty;
 
     final int stubbed = result.findings
         .where((f) => f.action == FindingAction.stubbedMethod)
@@ -355,9 +286,7 @@ class TvosPluginPortCommand extends FlutterCommand {
         .where((f) => f.action == FindingAction.importStripped)
         .length;
     final int needsReview = result.findings
-        .where((f) =>
-            f.action == FindingAction.flagged ||
-            f.action == FindingAction.taggedWithTodo)
+        .where((f) => f.action == FindingAction.flagged || isDisabled(f))
         .length;
     final bool anyFindings = result.findings.isNotEmpty;
 
@@ -371,10 +300,11 @@ class TvosPluginPortCommand extends FlutterCommand {
         'Porter would strip $strippedImports import(s), stub $stubbed '
         'method(s), and flag $needsReview item(s) for manual review.',
       );
-      if (willNotCompile) {
+      if (hasDisabled) {
         log.printWarning(
-          '(dry run) NOT tvOS-buildable: uses ${blockingApis.join(', ')} '
-          'at type level — no meaningful automatic tvOS port.',
+          '(dry run) Partial port: $disabledCount native region(s) using '
+          '${disabledApis.join(', ')} would be disabled on tvOS '
+          '(`#if !os(tvOS)`). See PORTING_REPORT.md “Disabled on tvOS”.',
         );
       }
     } else {
@@ -402,17 +332,16 @@ class TvosPluginPortCommand extends FlutterCommand {
         'Read `${outputDir.basename}/README.md` for the user-facing pitch.',
       );
       log.printStatus('');
-      if (willNotCompile) {
+      if (hasDisabled) {
         log.printWarning('');
         log.printWarning(
-          '⚠️  NOT buildable on tvOS as-is. This plugin uses '
-          '${blockingApis.join(', ')} at type / top-level scope — APIs '
-          'that do not exist on tvOS. The porter cannot invent these '
-          'types, so the generated package will NOT compile until you '
-          'rewrite those sites by hand, or this plugin simply has no '
-          'meaningful tvOS implementation. Details + every '
-          '`// TODO(porter)` site are in '
-          '${outputDir.basename}/PORTING_REPORT.md.',
+          '⚠️  Partial tvOS port. $disabledCount native region(s) using '
+          '${disabledApis.join(', ')} were disabled on tvOS (wrapped in '
+          '`#if !os(tvOS)` / `#if !TARGET_OS_TV`) so the package still '
+          'builds. Those features are unavailable on tvOS until you '
+          'hand-port them. Every disabled region is listed under '
+          '“Disabled on tvOS” in ${outputDir.basename}/PORTING_REPORT.md. '
+          'Verify the build — a symbol used widely may need extra cleanup.',
         );
       } else if (result.reportPath != null) {
         if (anyFindings) {

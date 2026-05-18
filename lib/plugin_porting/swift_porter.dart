@@ -169,8 +169,12 @@ class SwiftPorter {
     }
 
     // Pass 3 — API pattern scan over non-import lines. Apply the
-    // appropriate action (stub, tag, flag).
+    // appropriate action (stub, disable-region, flag).
     final Set<String> stubbedMethods = <String>{};
+    // line index → unsupported API name; the enclosing declaration of
+    // each anchor is later wrapped in `#if !os(tvOS)` so the package
+    // still compiles, with the feature disabled on tvOS.
+    final Map<int, String> disableAnchors = <int, String>{};
 
     for (var i = 0; i < originalLines.length; i++) {
       final String line = originalLines[i];
@@ -199,9 +203,12 @@ class SwiftPorter {
                 action: FindingAction.stubbedMethod,
               ));
             } else {
-              // Outside any case: tag the line so the user notices.
-              outputLines[i] =
-                  '$line  // TODO(porter): ${cp.entry.name} is not available on tvOS.';
+              // Type / top-level use the porter can't stub behind a
+              // method channel. Record the line; its enclosing
+              // declaration is wrapped in `#if !os(tvOS)` in Pass 5 so
+              // the rest of the package still compiles. Feature is
+              // disabled on tvOS and listed in the port summary.
+              disableAnchors.putIfAbsent(i, () => cp.entry.name);
               findings.add(PortingFinding(
                 fileRelativePath: fileRelativePath,
                 line: i + 1,
@@ -209,7 +216,7 @@ class SwiftPorter {
                 matchedText: m.group(0)!,
                 pattern: cp.entry,
                 enclosingMethod: null,
-                action: FindingAction.taggedWithTodo,
+                action: FindingAction.disabledOnTvos,
               ));
             }
           case Severity.partial:
@@ -237,7 +244,14 @@ class SwiftPorter {
       );
     }
 
-    String transformed = outputLines.join('\n');
+    // Pass 5 — wrap the enclosing declaration of every type-level
+    // unsupported use in `#if !os(tvOS)` so the package still compiles
+    // on tvOS with that feature disabled (graceful partial port).
+    final List<String> finalLines = disableAnchors.isEmpty
+        ? outputLines
+        : _disableTvosRegions(outputLines, originalLines, disableAnchors);
+
+    String transformed = finalLines.join('\n');
     if (!transformed.endsWith('\n')) {
       transformed = '$transformed\n';
     }
@@ -389,6 +403,136 @@ class SwiftPorter {
   }
 
   static int _leadingSpaces(String s) => s.length - s.trimLeft().length;
+
+  static final RegExp _swiftTypeDecl = RegExp(
+      r'^(?:@[\w.]+(?:\([^)]*\))?\s*)*(?:(?:public|private|internal|fileprivate|open|final)\s+)*(?:class|struct|extension|enum|protocol|actor)\b');
+  static final RegExp _swiftMemberDecl = RegExp(
+      r'^(?:@[\w.]+(?:\([^)]*\))?\s*)*(?:(?:public|private|internal|fileprivate|open|final|static|class|override|lazy|weak|unowned|convenience|required|mutating|nonisolated|dynamic)\s+)*(?:func|init|deinit|subscript|var|let)\b');
+
+  /// Wraps the enclosing declaration of every type-level unsupported use
+  /// in `#if !os(tvOS)` / `#endif`, so the rest of the package compiles
+  /// on tvOS with that one declaration disabled. Best-effort and
+  /// brace-shallow: well-isolated members/properties/types are excluded
+  /// cleanly; a symbol referenced from elsewhere may still need manual
+  /// work — every region is recorded in the port summary.
+  List<String> _disableTvosRegions(
+    List<String> out,
+    List<String> orig,
+    Map<int, String> anchors,
+  ) {
+    // anchor → [start, end] enclosing-declaration range.
+    final List<List<int>> ranges = <List<int>>[];
+    final Map<int, Set<String>> namesByStart = <int, Set<String>>{};
+    for (final MapEntry<int, String> e in anchors.entries) {
+      final List<int> r = _memberRange(orig, e.key);
+      ranges.add(r);
+      namesByStart.putIfAbsent(r[0], () => <String>{}).add(e.value);
+    }
+    ranges.sort((List<int> a, List<int> b) => a[0].compareTo(b[0]));
+    // Merge only genuinely overlapping ranges (not merely adjacent) so a
+    // healthy member sitting between two disabled ones stays live.
+    final List<List<int>> merged = <List<int>>[];
+    for (final List<int> r in ranges) {
+      if (merged.isNotEmpty && r[0] <= merged.last[1]) {
+        if (r[1] > merged.last[1]) {
+          merged.last[1] = r[1];
+        }
+        (namesByStart[merged.last[0]] ??= <String>{})
+            .addAll(namesByStart[r[0]] ?? const <String>{});
+      } else {
+        merged.add(<int>[r[0], r[1]]);
+      }
+    }
+    final List<String> result = <String>[];
+    var ri = 0;
+    for (var i = 0; i < out.length; i++) {
+      if (ri < merged.length && i == merged[ri][0]) {
+        final int end = merged[ri][1];
+        final String names =
+            (namesByStart[merged[ri][0]]?.toList()?..sort())?.join(', ') ?? '';
+        result.add('#if !os(tvOS)');
+        for (var j = i; j <= end && j < out.length; j++) {
+          result.add(out[j]);
+        }
+        result.add(
+            '#endif  // flutter-tvos plugin port: disabled on tvOS ($names) — see PORTING_REPORT.md');
+        i = end;
+        ri++;
+        continue;
+      }
+      result.add(out[i]);
+    }
+    return result;
+  }
+
+  /// Smallest enclosing declaration of [a]: the property/member it lives
+  /// in, or the whole type when the unsupported token is on the type's
+  /// own header/conformance line. Returns inclusive `[start, end]`.
+  List<int> _memberRange(List<String> lines, int a) {
+    for (var i = a; i >= 0; i--) {
+      final String tl = lines[i].trimLeft();
+      if (_swiftMemberDecl.hasMatch(tl)) {
+        final int end = _constructEnd(lines, i);
+        if (end >= a) {
+          return <int>[i, end];
+        }
+        continue; // member ended before the anchor — keep climbing.
+      }
+      if (_swiftTypeDecl.hasMatch(tl)) {
+        if (i == a) {
+          return <int>[i, _constructEnd(lines, i)]; // header/conformance.
+        }
+        return <int>[a, _constructEnd(lines, a)]; // stmt in type body.
+      }
+    }
+    return <int>[a, _constructEnd(lines, a)]; // file scope.
+  }
+
+  /// Last line of the construct that starts at [s]: the matching `}` when
+  /// it opens a brace, otherwise the end of the (possibly paren- or
+  /// bracket-continued) simple statement.
+  int _constructEnd(List<String> lines, int s) {
+    var depth = 0;
+    var sawBrace = false;
+    var round = 0;
+    var square = 0;
+    for (var j = s; j < lines.length; j++) {
+      final String l = lines[j];
+      for (var c = 0; c < l.length; c++) {
+        switch (l[c]) {
+          case '{':
+            depth++;
+            sawBrace = true;
+          case '}':
+            depth--;
+            if (sawBrace && depth <= 0) {
+              return j;
+            }
+          case '(':
+            round++;
+          case ')':
+            round--;
+          case '[':
+            square++;
+          case ']':
+            square--;
+        }
+      }
+      if (!sawBrace) {
+        final String t = l.trimRight();
+        final bool continues = t.endsWith(',') ||
+            t.endsWith('=') ||
+            t.endsWith('&&') ||
+            t.endsWith('||') ||
+            round > 0 ||
+            square > 0;
+        if (!continues) {
+          return j;
+        }
+      }
+    }
+    return lines.length - 1;
+  }
 
   /// Signature of the Flutter shared bundled-asset fallback: a
   /// `Bundle.main.bundleURL`-relative path resolution. Foundation-only,

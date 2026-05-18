@@ -175,6 +175,9 @@ class ObjcPorter {
 
     // Pass 3 — API pattern scan over non-import lines.
     final Set<String> stubbed = <String>{};
+    // line index → unsupported API name; enclosing construct is wrapped
+    // in `#if !TARGET_OS_TV` so the package still compiles on tvOS.
+    final Map<int, String> disableAnchors = <int, String>{};
     for (var i = 0; i < lines.length; i++) {
       final String line = lines[i];
       final String lt = line.trimLeft();
@@ -201,8 +204,10 @@ class ObjcPorter {
                 action: FindingAction.stubbedMethod,
               ));
             } else {
-              out[i] =
-                  '$line  // TODO(porter): ${cp.entry.name} is not available on tvOS.';
+              // Type / top-level use: record it; its enclosing construct
+              // is wrapped in `#if !TARGET_OS_TV` in Pass 5 so the rest
+              // of the package compiles, feature disabled on tvOS.
+              disableAnchors.putIfAbsent(i, () => cp.entry.name);
               findings.add(PortingFinding(
                 fileRelativePath: fileRelativePath,
                 line: i + 1,
@@ -210,7 +215,7 @@ class ObjcPorter {
                 matchedText: m.group(0)!,
                 pattern: cp.entry,
                 enclosingMethod: null,
-                action: FindingAction.taggedWithTodo,
+                action: FindingAction.disabledOnTvos,
               ));
             }
           case Severity.partial:
@@ -256,7 +261,13 @@ class ObjcPorter {
       out[first] = '$stub\n${out[first]}';
     }
 
-    String transformed = out.join('\n');
+    // Pass 5 — wrap the enclosing construct of every type-level
+    // unsupported use in `#if !TARGET_OS_TV` (graceful partial port).
+    final List<String> finalLines = disableAnchors.isEmpty
+        ? out
+        : _disableTvosRegions(out, lines, disableAnchors);
+
+    String transformed = finalLines.join('\n');
     if (!transformed.endsWith('\n')) {
       transformed = '$transformed\n';
     }
@@ -343,6 +354,137 @@ class ObjcPorter {
   int _indexAfterCondition(String line) {
     final int paren = line.lastIndexOf(')');
     return paren >= 0 ? paren + 1 : 0;
+  }
+
+  static final RegExp _objcMethodDecl = RegExp(r'^[-+]\s*\(');
+  static final RegExp _objcImpl =
+      RegExp(r'^@(implementation|interface|protocol)\b');
+
+  /// Wraps the enclosing construct of every type-level unsupported use
+  /// in `#if !TARGET_OS_TV` / `#endif` so the package still compiles on
+  /// tvOS with that construct disabled. Best-effort and brace-shallow;
+  /// every region is recorded in the port summary.
+  List<String> _disableTvosRegions(
+    List<String> out,
+    List<String> orig,
+    Map<int, String> anchors,
+  ) {
+    final List<List<int>> ranges = <List<int>>[];
+    final Map<int, Set<String>> namesByStart = <int, Set<String>>{};
+    for (final MapEntry<int, String> e in anchors.entries) {
+      final List<int> r = _objcMemberRange(orig, e.key);
+      ranges.add(r);
+      namesByStart.putIfAbsent(r[0], () => <String>{}).add(e.value);
+    }
+    ranges.sort((List<int> a, List<int> b) => a[0].compareTo(b[0]));
+    final List<List<int>> merged = <List<int>>[];
+    for (final List<int> r in ranges) {
+      if (merged.isNotEmpty && r[0] <= merged.last[1]) {
+        if (r[1] > merged.last[1]) {
+          merged.last[1] = r[1];
+        }
+        (namesByStart[merged.last[0]] ??= <String>{})
+            .addAll(namesByStart[r[0]] ?? const <String>{});
+      } else {
+        merged.add(<int>[r[0], r[1]]);
+      }
+    }
+    final List<String> result = <String>[];
+    var ri = 0;
+    for (var i = 0; i < out.length; i++) {
+      if (ri < merged.length && i == merged[ri][0]) {
+        final int end = merged[ri][1];
+        final String names =
+            (namesByStart[merged[ri][0]]?.toList()?..sort())?.join(', ') ?? '';
+        result.add('#if !TARGET_OS_TV');
+        for (var j = i; j <= end && j < out.length; j++) {
+          result.add(out[j]);
+        }
+        result.add(
+            '#endif  // flutter-tvos plugin port: disabled on tvOS ($names) — see PORTING_REPORT.md');
+        i = end;
+        ri++;
+        continue;
+      }
+      result.add(out[i]);
+    }
+    return result;
+  }
+
+  /// Smallest enclosing construct of [a]: the Objective-C method / C
+  /// function it lives in, or the whole `@implementation`/`@interface`
+  /// when the token is on that line. Inclusive `[start, end]`.
+  List<int> _objcMemberRange(List<String> lines, int a) {
+    for (var i = a; i >= 0; i--) {
+      final String tl = lines[i].trimLeft();
+      if (_objcMethodDecl.hasMatch(tl) || _looksLikeCFunction(tl)) {
+        final int end = _objcConstructEnd(lines, i);
+        if (end >= a) {
+          return <int>[i, end];
+        }
+        continue;
+      }
+      if (_objcImpl.hasMatch(tl)) {
+        if (i == a) {
+          // Token on the @implementation/@interface line itself: wrap to
+          // the matching @end.
+          for (var j = i + 1; j < lines.length; j++) {
+            if (lines[j].trimLeft().startsWith('@end')) {
+              return <int>[i, j];
+            }
+          }
+          return <int>[i, lines.length - 1];
+        }
+        return <int>[a, _objcConstructEnd(lines, a)];
+      }
+    }
+    return <int>[a, _objcConstructEnd(lines, a)];
+  }
+
+  bool _looksLikeCFunction(String tl) =>
+      RegExp(r'^[A-Za-z_].*\)\s*\{?\s*$').hasMatch(tl) &&
+      !tl.startsWith('@') &&
+      !tl.startsWith('#') &&
+      !tl.startsWith('//') &&
+      tl.contains('(');
+
+  /// Last line of the construct at [s]: matching `}` when it opens a
+  /// brace, otherwise the `;`-terminated (paren/bracket-aware) statement.
+  int _objcConstructEnd(List<String> lines, int s) {
+    var depth = 0;
+    var sawBrace = false;
+    var round = 0;
+    var square = 0;
+    for (var j = s; j < lines.length; j++) {
+      final String l = lines[j];
+      for (var c = 0; c < l.length; c++) {
+        switch (l[c]) {
+          case '{':
+            depth++;
+            sawBrace = true;
+          case '}':
+            depth--;
+            if (sawBrace && depth <= 0) {
+              return j;
+            }
+          case '(':
+            round++;
+          case ')':
+            round--;
+          case '[':
+            square++;
+          case ']':
+            square--;
+        }
+      }
+      if (!sawBrace) {
+        final String t = l.trimRight();
+        if (t.endsWith(';') && round <= 0 && square <= 0) {
+          return j;
+        }
+      }
+    }
+    return lines.length - 1;
   }
 }
 

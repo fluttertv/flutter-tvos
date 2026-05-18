@@ -292,12 +292,12 @@ func macOnly() {}
     });
 
     testWithoutContext(
-        'type-level tvOS-absent APIs produce taggedWithTodo (the fail-fast signal)',
+        'type-level tvOS-absent APIs are disabled behind #if !os(tvOS), not rejected',
         () {
-      // `flutter-tvos plugin port` refuses to emit a package when any
-      // finding is `taggedWithTodo` (an unsupported API used at type /
-      // top-level scope, not a stubbable handler). Assert the porter
-      // raises exactly that for the newly-covered tvOS-absent APIs.
+      // Graceful partial port: an unsupported API used at type /
+      // top-level scope (not a stubbable handler) has its enclosing
+      // declaration wrapped in `#if !os(tvOS)` so the rest of the
+      // package still compiles. The clean helper below must survive.
       const String src = '''
 import Flutter
 import SafariServices
@@ -309,17 +309,31 @@ final class Session: NSObject, SFSafariViewControllerDelegate {
 func wifi() {
   let info = CNCopyCurrentNetworkInfo("en0" as CFString)
 }
+
+func untouched() {
+  print("this stays live on tvOS")
+}
 ''';
       final PortingResult r =
           SwiftPorter().port(src, fileRelativePath: 'tvos/Classes/Session.swift');
 
-      final Set<String> tagged = <String>{
+      final Set<String> disabled = <String>{
         for (final PortingFinding f in r.findings)
-          if (f.action == FindingAction.taggedWithTodo) f.pattern.name,
+          if (f.action == FindingAction.disabledOnTvos) f.pattern.name,
       };
-      expect(tagged, containsAll(<String>['SafariServices', 'CaptiveNetwork']),
-          reason: 'type-level unsupported APIs must be non-stubbable findings '
-              'so the command can refuse to emit a broken package');
+      expect(disabled, containsAll(<String>['SafariServices', 'CaptiveNetwork']),
+          reason: 'type-level unsupported APIs become disabledOnTvos findings');
+      // The offending declarations are compiled out on tvOS …
+      expect(r.transformed, contains('#if !os(tvOS)'));
+      expect(r.transformed, contains('#endif  // flutter-tvos plugin port: '
+          'disabled on tvOS'));
+      expect(r.transformed, contains('SFSafariViewController'),
+          reason: 'kept, but inside the guard');
+      // … while unrelated code is left live (no whole-file rejection).
+      expect(
+        r.transformed,
+        contains('func untouched() {\n  print("this stays live on tvOS")'),
+      );
     });
   });
 }

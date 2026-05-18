@@ -43,8 +43,10 @@ class ReportEmitter {
     final List<PortingFinding> partialFindings = all
         .where((PortingFinding f) => f.action == FindingAction.flagged)
         .toList();
-    final List<PortingFinding> todoFindings = all
-        .where((PortingFinding f) => f.action == FindingAction.taggedWithTodo)
+    final List<PortingFinding> disabledFindings = all
+        .where((PortingFinding f) =>
+            f.action == FindingAction.disabledOnTvos ||
+            f.action == FindingAction.taggedWithTodo)
         .toList();
 
     final Set<String> detectedMethods = <String>{
@@ -63,19 +65,20 @@ class ReportEmitter {
             .toList())
       ..sort();
 
-    final int manualReviewCount = partialFindings.length + todoFindings.length;
+    final int manualReviewCount =
+        partialFindings.length + disabledFindings.length;
 
-    // `taggedWithTodo` = an `unsupported` API used at type / top-level
-    // scope (e.g. `class X: SFSafariViewControllerDelegate`,
-    // `let v = WKWebView()` in a property). The porter can stub a
-    // method-channel *handler body*, but it cannot remove a type the
-    // class declaration depends on — so the generated package will NOT
-    // compile on tvOS until a human rewrites those sites. Detect it and
-    // say so loudly instead of letting Xcode be the messenger.
-    final Set<String> blockingApis = <String>{
-      for (final PortingFinding f in todoFindings) f.pattern.name,
+    // Type / top-level uses of tvOS-unavailable APIs the porter could not
+    // stub behind a method channel. Pass 5 wrapped each one's enclosing
+    // declaration in `#if !os(tvOS)` / `#if !TARGET_OS_TV`, so the
+    // package still compiles on tvOS with that feature DISABLED. This is
+    // a graceful partial port: the developer can hand-implement these
+    // regions later. (A symbol referenced from many places may still
+    // need manual cleanup — flagged below, not silently broken.)
+    final Set<String> disabledApis = <String>{
+      for (final PortingFinding f in disabledFindings) f.pattern.name,
     };
-    final bool willNotCompile = blockingApis.isNotEmpty;
+    final bool hasDisabled = disabledApis.isNotEmpty;
 
     final StringBuffer b = StringBuffer()
       ..writeln('# ${source.outputPackageName} — porting report')
@@ -91,18 +94,20 @@ class ReportEmitter {
       ..writeln('Output: `./${source.outputPackageName}`')
       ..writeln();
 
-    if (willNotCompile) {
+    if (hasDisabled) {
       b
-        ..writeln('> ## ⚠️ This plugin is not buildable on tvOS as-is')
+        ..writeln('> ## ⚠️ Partial tvOS port')
         ..writeln('>')
-        ..writeln('> It uses ${_oxford(blockingApis.toList()..sort())} at '
-            'type / top-level scope — APIs that **do not exist on tvOS**. '
-            'The porter stubs method-channel handlers, but it cannot '
-            'invent these types, so the generated package WILL NOT '
-            'compile until you rewrite those sites by hand (or decide '
-            'this plugin has no meaningful tvOS implementation). See '
-            '“Manual review items” below; each is marked '
-            '`// TODO(porter)` in the source.')
+        ..writeln('> This plugin uses ${_oxford(disabledApis.toList()..sort())} '
+            'at type / top-level scope — APIs that **do not exist on '
+            'tvOS**. The porter could not stub these behind a method '
+            'channel, so it wrapped each one’s enclosing declaration in '
+            '`#if !os(tvOS)` / `#if !TARGET_OS_TV`. The package still '
+            'compiles on tvOS with **those features disabled**; '
+            'everything else is ported normally. Each disabled region is '
+            'listed under “Disabled on tvOS” below so you can hand-port '
+            'it if tvOS needs that capability. A symbol used from many '
+            'places may still need manual cleanup — verify the build.')
         ..writeln();
     } else {
       b
@@ -119,8 +124,9 @@ class ReportEmitter {
       ..writeln('|---|---|')
       ..writeln('| Methods ported as-is | ${portedMethods.length} |')
       ..writeln('| Methods stubbed (iOS-only) | ${stubbedMethods.length} |')
+      ..writeln('| Native regions disabled on tvOS | ${disabledFindings.length} |')
       ..writeln('| tvOS build outlook | '
-          '${willNotCompile ? '❌ will NOT compile (manual work required)' : '✅ expected to compile'} |')
+          '${hasDisabled ? '⚠️ partial — ${disabledFindings.length} region(s) disabled; verify the build' : '✅ expected to compile'} |')
       ..writeln('| Manual review items | $manualReviewCount |')
       ..writeln();
 
@@ -187,6 +193,31 @@ class ReportEmitter {
     }
 
     b
+      ..writeln('## Disabled on tvOS')
+      ..writeln();
+    if (disabledFindings.isEmpty) {
+      b
+        ..writeln('None. No type-level tvOS-incompatible API was found; '
+            'nothing had to be compiled out.')
+        ..writeln();
+    } else {
+      b
+        ..writeln('Each enclosing declaration below was wrapped in '
+            '`#if !os(tvOS)` / `#if !TARGET_OS_TV` so the package builds on '
+            'tvOS **without that feature**. To support it on tvOS, replace '
+            'the disabled code with a tvOS-capable implementation (or accept '
+            'the feature is unavailable on tvOS).')
+        ..writeln()
+        ..writeln('| API | Where | Matched | Why it cannot run on tvOS |')
+        ..writeln('|---|---|---|---|');
+      for (final PortingFinding f in disabledFindings) {
+        b.writeln('| ${f.pattern.name} | `${f.fileRelativePath}:${f.line}` '
+            '| `${f.matchedText}` | ${_collapse(f.pattern.note)} |');
+      }
+      b.writeln();
+    }
+
+    b
       ..writeln('## Manual review items')
       ..writeln();
     if (manualReviewCount == 0) {
@@ -202,11 +233,11 @@ class ReportEmitter {
             '${f.pattern.name} (${_severityWord(f.pattern.severity)}). '
             '${_collapse(f.pattern.note)}');
       }
-      for (final PortingFinding f in todoFindings) {
+      for (final PortingFinding f in disabledFindings) {
         b.writeln('${n++}. `${f.fileRelativePath}:${f.line}` — '
-            '${f.pattern.name} is used outside a recognised method handler '
-            'and was tagged with `// TODO(porter)` rather than auto-stubbed. '
-            'Decide how tvOS should behave here by hand.');
+            '${f.pattern.name} disabled on tvOS (enclosing declaration '
+            'compiled out behind `#if !os(tvOS)`/`#if !TARGET_OS_TV`). '
+            'Hand-port if tvOS needs this capability.');
       }
       b.writeln();
     }
