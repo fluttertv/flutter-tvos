@@ -89,6 +89,14 @@ const Map<String, ({String positive, String negative})> _samples =
     positive: 'GIDSignIn.sharedInstance.signIn(withPresenting: vc)',
     negative: 'let s = GoogleSignInController()',
   ),
+  'AVAudioSessionOptions': (
+    positive: 'try session.setCategory(.playback, options: [.allowBluetooth])',
+    negative: 'session.setCategory(.playback, mode: .moviePlayback)',
+  ),
+  'CoreTelephony': (
+    positive: 'let info = CTTelephonyNetworkInfo()',
+    negative: 'let info = TelephonyNetworkInfoStub()',
+  ),
 };
 
 void main() {

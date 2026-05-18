@@ -100,20 +100,21 @@ String renderPubspec({required PluginSource source, required String licenseHolde
 /// `s.dependency 'Flutter'` (the Flutter pod doesn't declare tvOS support).
 /// Flutter.framework is picked up via FRAMEWORK_SEARCH_PATHS instead.
 String renderPodspec({required PluginSource source, required String licenseHolder}) {
-  // A modular multi-target SwiftPM package keeps its targets in
-  // subdirectories under `Classes/` (one per SwiftPM target, structure
-  // preserved). Collapse them into a single CocoaPods module the same
-  // way the upstream package's own podspec does: compile every kept
-  // target's sources, and expose only the `include/` headers (the
-  // SwiftPM public surface) so the generated module umbrella stays
-  // internally consistent. The single-directory layout keeps the flat
-  // `Classes/**/*` globs.
-  final String sourceFilesGlob = source.isMultiTargetSpm
-      ? "'Classes/**/*.{h,m,mm,swift}'"
-      : "'Classes/**/*'";
-  final String publicHeadersGlob = source.isMultiTargetSpm
-      ? "'Classes/**/include/**/*.h'"
-      : "'Classes/**/*.h'";
+  // A modular SwiftPM package keeps its public headers under an
+  // `include/<module>/` directory and `#import`s them via that prefix.
+  // Collapse it into a single CocoaPods module the way the upstream
+  // package's own podspec does: compile every source, and expose ONLY
+  // the `include/` headers (the SwiftPM public surface) so the module
+  // umbrella stays internally consistent and the `include/…` import
+  // paths keep resolving after CocoaPods flattens the framework
+  // headers. Applies to multi-target packages AND single-target ones
+  // that use the `include/` convention (e.g. sqflite_darwin). The plain
+  // legacy `Classes/` layout keeps the flat globs.
+  final bool modular = source.isMultiTargetSpm || source.spmModularHeaders;
+  final String sourceFilesGlob =
+      modular ? "'Classes/**/*.{h,m,mm,swift}'" : "'Classes/**/*'";
+  final String publicHeadersGlob =
+      modular ? "'Classes/**/include/**/*.h'" : "'Classes/**/*.h'";
   return '''
 #
 # To learn more about a Podspec see http://guides.cocoapods.org/syntax/podspec.html.

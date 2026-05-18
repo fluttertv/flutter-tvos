@@ -32,6 +32,7 @@ class PluginSource {
     required this.classesDirectory,
     this.ffiNativeAssets = false,
     this.spmSourcesRoot,
+    this.spmModularHeaders = false,
   });
 
   /// Absolute source directory.
@@ -112,6 +113,15 @@ class PluginSource {
   /// True when [spmSourcesRoot] is set — the source is a multi-target
   /// modular SwiftPM package that must be collapsed into one module.
   bool get isMultiTargetSpm => spmSourcesRoot != null;
+
+  /// True when the native sources use the SwiftPM modular-headers
+  /// convention — a single target that nonetheless ships its public
+  /// headers under an `include/<module>/` directory and `#import`s them
+  /// via that prefix (e.g. `sqflite_darwin`). Such packages need the
+  /// same collapsed-module podspec as [isMultiTargetSpm] (public headers
+  /// scoped to `include/`, `DEFINES_MODULE`), or the `include/…` import
+  /// paths break once CocoaPods flattens the framework headers.
+  final bool spmModularHeaders;
 }
 
 /// Inspects a candidate source plugin directory and produces a [PluginSource]
@@ -354,6 +364,14 @@ class SourceAnalyzer {
     // can copy and collapse *all* of them.
     final Directory? spmRoot = _detectSpmSourcesRoot(sourcesDir);
 
+    // SwiftPM modular-headers convention: public headers under an
+    // `include/<module>/` dir, `#import`ed via that prefix. Needs the
+    // collapsed-module podspec (public headers scoped to `include/`)
+    // even for a single target, or the `include/…` paths break once
+    // CocoaPods flattens the framework headers (e.g. sqflite_darwin).
+    final bool spmModular = spmRoot != null ||
+        (sourcesDir != null && _hasIncludeDir(sourcesDir));
+
     final File license = sourceDirectory.childFile('LICENSE');
 
     return PluginSource(
@@ -372,7 +390,22 @@ class SourceAnalyzer {
       licenseFile: license.existsSync() ? license : null,
       classesDirectory: classesDir,
       spmSourcesRoot: spmRoot,
+      spmModularHeaders: spmModular,
     );
+  }
+
+  /// True when [dir] contains (at any depth) a directory named
+  /// `include` — the SwiftPM public-headers convention.
+  bool _hasIncludeDir(Directory dir) {
+    if (!dir.existsSync()) {
+      return false;
+    }
+    for (final FileSystemEntity e in dir.listSync(recursive: true)) {
+      if (e is Directory && _fs.path.basename(e.path) == 'include') {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Returns the shared `Sources/` directory of a *modular* multi-target

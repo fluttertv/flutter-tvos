@@ -258,6 +258,32 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'which is a different implementation — there is no mechanical port.',
     stripImports: <String>['import GoogleSignIn'],
   ),
+  ApiPattern(
+    name: 'AVAudioSessionOptions',
+    pattern: r'\.defaultToSpeaker\b|\.allowBluetooth\b|\.allowBluetoothA2DP\b'
+        r'|AVAudioSessionCategoryOptionDefaultToSpeaker'
+        r'|AVAudioSessionCategoryOptionAllowBluetooth(?:A2DP)?',
+    severity: Severity.unsupported,
+    note:
+        'AVAudioSession exists on tvOS but with a much narrower category-'
+        'options surface. `.defaultToSpeaker` is unavailable on tvOS '
+        '(there is no earpiece/speaker routing on an Apple TV) and '
+        '`.allowBluetooth` / `.allowBluetoothA2DP` only exist from tvOS '
+        '17.0. Plugins that set these unconditionally fail to compile for '
+        'a typical tvOS deployment target; the option is meaningless on '
+        'tvOS anyway (audio routes through the TV/HDMI/AirPlay).',
+  ),
+  ApiPattern(
+    name: 'CoreTelephony',
+    pattern: r'\bCTTelephonyNetworkInfo\b|\bCTCarrier\b|\bCTCellularData\b'
+        r'|\bCTCellularPlanProvisioning\b',
+    severity: Severity.unsupported,
+    note:
+        'CoreTelephony is not available on tvOS — an Apple TV has no '
+        'cellular radio or carrier. There is no tvOS replacement; the '
+        'carrier/cellular feature must be omitted on tvOS.',
+    stripImports: <String>['import CoreTelephony'],
+  ),
   // ---------------------------------------------------------------------
   // `partial` entries — these compile on tvOS but behave differently or
   // have a narrower API surface. Don't strip imports or stub method
