@@ -53,8 +53,9 @@ function update_flutter() {
     exit 1
   fi
 
-  local version="$(head -n 1 "$ROOT_DIR/bin/internal/flutter.version")"
-  local tag="$(sed -n 2p "$ROOT_DIR/bin/internal/flutter.version")"
+  # bin/internal/flutter.version pins the Flutter SDK to a single commit
+  # SHA — the whole file is the revision (flutter-tizen style).
+  local version="$(cat "$ROOT_DIR/bin/internal/flutter.version" | tr -d '[:space:]')"
 
   # Clone flutter repo if not installed.
   #
@@ -64,15 +65,12 @@ function update_flutter() {
   # extremely long unreadable line, so quieting them is a UX win.
   #
   # Print a single line BEFORE the clone so the user knows the command is
-  # working — a fresh clone takes 10–30s depending on connection, and any
-  # output before this point would have been the user's first feedback
-  # (which used to be "Cloning into ..." plus a CR-mangled progress bar,
-  # silenced by `--quiet`). This is now the FIRST line the user sees on
-  # any fresh install.
+  # working — a fresh clone takes 10–30s depending on connection. The
+  # pinned commit is fetched and checked out below.
   if [[ ! -d "$FLUTTER_DIR" ]]; then
     echo "Setting up flutter-tvos (first run)..."
     echo "Downloading Flutter SDK source..."
-    git clone --depth=1 --quiet "$FLUTTER_REPO" "$FLUTTER_DIR" -b "$tag"
+    git clone --depth=1 --quiet "$FLUTTER_REPO" "$FLUTTER_DIR"
   fi
 
   # GIT_DIR and GIT_WORK_TREE are used in the git command.
