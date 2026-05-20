@@ -16,9 +16,8 @@ jobs:
 
       - name: Fetch Flutter SDK
         run: |
-          FLUTTER_COMMIT=$(head -n 1 bin/internal/flutter.version)
-          FLUTTER_BRANCH=$(sed -n '2p' bin/internal/flutter.version)
-          git clone --depth=1 https://github.com/flutter/flutter.git -b "$FLUTTER_BRANCH"
+          FLUTTER_COMMIT=$(cat bin/internal/flutter.version | tr -d '[:space:]')
+          git clone --depth=1 https://github.com/flutter/flutter.git
           cd flutter
           git fetch --depth=1 origin "$FLUTTER_COMMIT"
           git checkout "$FLUTTER_COMMIT"
