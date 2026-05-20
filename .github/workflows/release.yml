@@ -46,6 +46,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if gh release view "${{ steps.version.outputs.version }}" --repo fluttertv/flutter-tvos >/dev/null 2>&1; then
+            echo "Release ${{ steps.version.outputs.version }} already exists; skipping creation."
+            exit 0
+          fi
+
           gh release create "${{ steps.version.outputs.version }}" \
             --title "flutter-tvos ${{ steps.version.outputs.version }}" \
             --notes "See [CHANGELOG.md](https://github.com/fluttertv/flutter-tvos/blob/main/CHANGELOG.md) for release notes." \
