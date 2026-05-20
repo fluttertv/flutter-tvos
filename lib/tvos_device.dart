@@ -662,6 +662,7 @@ class TvosDevice extends Device {
         deviceId: id,
         appProcessId: pid,
         lldbLogForwarder: lldbForwarder,
+        mode: debuggingOptions.buildInfo.mode,
       );
       if (!attached) {
         logger.printError('lldb failed to attach; debug-mode JIT will fail.');

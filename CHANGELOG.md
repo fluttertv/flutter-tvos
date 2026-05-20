@@ -2,6 +2,15 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.0.1] — 2026-05-20
+
+Patch release updating the pinned Flutter SDK and tvOS engine artifacts to Flutter 3.41.9.
+
+### Changed
+- Updated `bin/internal/flutter.version` to Flutter `00b0c91f06209d9e4a41f71b7a512d6eb3b9c694`.
+- Updated `bin/internal/engine.version` to `v1.0.0-flutter3.41.9`.
+- Published matching tvOS engine artifacts for debug, profile, release, simulator, and host tooling.
+
 ## [1.0.0] — 2026-04-15
 
 First public release. Targets Flutter 3.41.4.
