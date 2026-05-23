@@ -837,12 +837,32 @@ class NativeTvosBundle extends Target {
     flutterDir.createSync(recursive: true);
 
     // Generated.xcconfig
+    //
+    // Resolution for FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER:
+    //   1. CLI flag (`--build-name`, `--build-number`) — already in
+    //      `buildInfo.buildInfo`.
+    //   2. Otherwise parse the app's `pubspec.yaml` `version:` field
+    //      (e.g. `1.2.3+4` → buildName `1.2.3`, buildNumber `4`).
+    //   3. Otherwise fall back to Flutter's canonical defaults
+    //      (`1.0.0` / `1`).
+    //
+    // The pubspec step matches what iOS does through `xcode_backend.dart`'s
+    // build phase script. Without it, every Apple TV build reports the
+    // default version, which breaks `package_info_plus` and any code
+    // that surfaces `CFBundleShortVersionString` / `CFBundleVersion`.
+    final String buildName = buildInfo.buildInfo.buildName
+        ?? project.manifest.buildName
+        ?? '1.0.0';
+    final String buildNumber = buildInfo.buildInfo.buildNumber
+        ?? project.manifest.buildNumber
+        ?? '1';
+
     final xcconfig = StringBuffer();
     xcconfig.writeln('FLUTTER_APPLICATION_PATH=${project.directory.path}');
     xcconfig.writeln('FLUTTER_TARGET=$targetFile');
     xcconfig.writeln('FLUTTER_BUILD_DIR=${project.directory.childDirectory('build').path}');
-    xcconfig.writeln('FLUTTER_BUILD_NAME=${buildInfo.buildInfo.buildName ?? '1.0.0'}');
-    xcconfig.writeln('FLUTTER_BUILD_NUMBER=${buildInfo.buildInfo.buildNumber ?? '1'}');
+    xcconfig.writeln('FLUTTER_BUILD_NAME=$buildName');
+    xcconfig.writeln('FLUTTER_BUILD_NUMBER=$buildNumber');
 
     flutterDir.childFile('Generated.xcconfig').writeAsStringSync(xcconfig.toString());
 
