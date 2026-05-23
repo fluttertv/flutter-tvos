@@ -444,6 +444,125 @@ flutter:
       expect(entry, contains('base class GadgetIOS extends GadgetPlatform'));
       expect(entry, contains('static void registerWith()'));
     });
+
+    testWithoutContext(
+      'prunes non-Apple platform Dart from lib/ and scrubs references in '
+      'remaining files (the cross-platform-_plus pattern)',
+      () {
+        // Mirrors a real `connectivity_plus`-style upstream layout: a
+        // single entry file with a conditional export over a Linux
+        // implementation (default) and a web fallback, plus the
+        // implementations themselves and a web-only subdirectory. The
+        // porter should keep only the entry file (with the conditional
+        // export scrubbed), and drop everything that targets
+        // Linux/Web/etc.
+        final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
+        final Directory lib = sourceDir.childDirectory('lib')..createSync();
+        lib.childFile('gadget_ios.dart').writeAsStringSync(
+          "import 'package:gadget_platform_interface/gadget_platform_interface.dart';\n"
+          "\n"
+          "export 'src/gadget_linux.dart'\n"
+          "    if (dart.library.js_interop) 'src/gadget_web.dart';\n"
+          "\n"
+          "class Gadget {}\n",
+        );
+        lib.childDirectory('src').childFile('gadget_linux.dart')
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync("import 'package:nm/nm.dart';\n// linux body\n");
+        lib.childDirectory('src').childFile('gadget_web.dart')
+            .writeAsStringSync("import 'package:web/web.dart';\n");
+        lib
+            .childDirectory('src')
+            .childDirectory('web')
+            .childFile('html_impl.dart')
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync('// web-only helper\n');
+        // An Apple-shared file that must survive the prune untouched.
+        lib.childDirectory('src').childFile('messages.g.dart')
+            .writeAsStringSync('// pigeon generated\n');
+
+        final PluginSource source =
+            SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
+        final Directory out = fs.directory('/out/gadget_tvos');
+        final ScaffoldResult result =
+            Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
+                .scaffold(source: source, outputDirectory: out);
+
+        // Reports what got pruned, source-relative to lib/.
+        expect(
+          result.prunedDartFiles,
+          containsAll(<String>[
+            'src/gadget_linux.dart',
+            'src/gadget_web.dart',
+            'src/web/html_impl.dart',
+          ]),
+        );
+        // Pruned files are not written to the output package.
+        final Directory outLib = out.childDirectory('lib');
+        expect(outLib.childDirectory('src').childFile('gadget_linux.dart').existsSync(), isFalse);
+        expect(outLib.childDirectory('src').childFile('gadget_web.dart').existsSync(), isFalse);
+        expect(outLib.childDirectory('src').childDirectory('web').existsSync(), isFalse);
+        // Apple-shared files survive verbatim.
+        expect(outLib.childDirectory('src').childFile('messages.g.dart').existsSync(), isTrue);
+        // The entry file is kept, renamed, and its conditional export
+        // (which pointed at two now-dropped files) is replaced with the
+        // pruner placeholder so it does not reference missing paths.
+        final String entry =
+            outLib.childFile('gadget_tvos.dart').readAsStringSync();
+        expect(entry, contains('class Gadget'));
+        expect(entry, isNot(contains('gadget_linux.dart')));
+        expect(entry, isNot(contains('gadget_web.dart')));
+        expect(entry, contains('// (pruned by flutter-tvos plugin port'));
+      },
+    );
+
+    testWithoutContext(
+      'pruner matches by platform suffix, not prefix: `_macos.dart` is '
+      'dropped (an impl) but `macos_*.dart` is kept (a data model)',
+      () {
+        // The implementation-file convention upstream `_plus` packages
+        // use is `<base>_<platform>.dart` (e.g. `device_info_plus_macos.dart`).
+        // The pruner matches that *suffix* and drops it. Data classes
+        // named with a *prefix* (e.g. `macos_device_info.dart`) are
+        // plain data — no platform-specific imports — and stay.
+        // Apple-shared `_ios.dart` and `ios_*` both stay.
+        final Directory sourceDir = _createIosPlugin(fs, name: 'gadget_ios');
+        final Directory libSrc =
+            sourceDir.childDirectory('lib').childDirectory('src')
+              ..createSync(recursive: true);
+        libSrc.childFile('gadget_macos.dart').writeAsStringSync('// macos impl\n');
+        libSrc.childFile('gadget_ios.dart').writeAsStringSync('// ios impl\n');
+        final Directory modelDir = libSrc.childDirectory('model')
+          ..createSync();
+        modelDir.childFile('macos_device_info.dart').writeAsStringSync('// macos data\n');
+        modelDir.childFile('ios_device_info.dart').writeAsStringSync('// ios data\n');
+
+        final PluginSource source =
+            SourceAnalyzer(fileSystem: fs).analyze(sourceDir);
+        final Directory out = fs.directory('/out/gadget_tvos');
+        final ScaffoldResult result =
+            Scaffolder(fileSystem: fs, logger: BufferLogger.test(), licenseHolder: 'T')
+                .scaffold(source: source, outputDirectory: out);
+
+        expect(result.prunedDartFiles, contains('src/gadget_macos.dart'));
+        expect(result.prunedDartFiles, isNot(contains('src/gadget_ios.dart')));
+        expect(
+          result.prunedDartFiles,
+          isNot(contains('src/model/macos_device_info.dart')),
+          reason:
+              'Prefix form is a data class, not a platform impl — keep it.',
+        );
+        expect(
+          result.prunedDartFiles,
+          isNot(contains('src/model/ios_device_info.dart')),
+        );
+
+        final Directory outSrc = out.childDirectory('lib').childDirectory('src');
+        expect(outSrc.childFile('gadget_macos.dart').existsSync(), isFalse);
+        expect(outSrc.childFile('gadget_ios.dart').existsSync(), isTrue);
+        expect(outSrc.childDirectory('model').childFile('macos_device_info.dart').existsSync(), isTrue);
+      },
+    );
   });
 
   group('SourceAnalyzer modern layouts', () {

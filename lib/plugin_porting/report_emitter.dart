@@ -25,9 +25,16 @@ class ReportEmitter {
   /// Renders the full `PORTING_REPORT.md` body for [source] given the
   /// per-file [results] produced by `SwiftPorter`. Pass [today] (a
   /// `YYYY-MM-DD` string) to override the generation date in tests.
+  ///
+  /// [prunedDartFiles] is the source-relative list (under the upstream
+  /// `lib/`) of Dart files the scaffolder dropped because they target a
+  /// non-Apple platform (see `Scaffolder._isCrossPlatformDart`). It is
+  /// surfaced verbatim in the “Cross-platform Dart pruned” section so
+  /// the developer can see what was removed.
   String render({
     required PluginSource source,
     required List<PortingResult> results,
+    List<String> prunedDartFiles = const <String>[],
     String? today,
   }) {
     final List<PortingFinding> all = <PortingFinding>[
@@ -188,6 +195,36 @@ class ReportEmitter {
     } else {
       for (final PortingFinding f in importStrips) {
         b.writeln('- `${f.matchedText}` (`${f.fileRelativePath}:${f.line}`)');
+      }
+      b.writeln();
+    }
+
+    b
+      ..writeln('## Cross-platform Dart pruned')
+      ..writeln();
+    if (prunedDartFiles.isEmpty) {
+      b
+        ..writeln('None. The source ships no Dart files for non-Apple '
+            'platforms — nothing had to be removed.')
+        ..writeln();
+    } else {
+      b
+        ..writeln('The upstream package bundles Dart implementations for '
+            'platforms a `_tvos` federated package does not target '
+            '(Linux / Windows / Web / macOS / Android). These files are '
+            'unreachable at runtime on tvOS (the registrar loads only '
+            'this package’s tvOS plugin class) and their transitive '
+            'imports (`package:web`, `flutter_web_plugins`, `win32`, '
+            'etc.) are not in the generated `pubspec.yaml` — shipping '
+            'them would inflate the package and break `pana` / '
+            '`dart pub publish` analysis. The following paths (relative '
+            'to the source `lib/`) were dropped; `import`/`export` '
+            'directives that referenced them in the remaining files '
+            'were replaced with `// (pruned …)` placeholders so line '
+            'numbers stay stable:')
+        ..writeln();
+      for (final String relPath in prunedDartFiles) {
+        b.writeln('- `lib/$relPath`');
       }
       b.writeln();
     }

@@ -290,6 +290,7 @@ class TvosPluginPortCommand extends FlutterCommand {
         .length;
     final bool anyFindings = result.findings.isNotEmpty;
 
+    final int prunedDartCount = result.prunedDartFiles.length;
     if (dryRun) {
       log.printStatus('Would write ${result.writtenPaths.length} files:');
       for (final String path in result.writtenPaths) {
@@ -300,6 +301,13 @@ class TvosPluginPortCommand extends FlutterCommand {
         'Porter would strip $strippedImports import(s), stub $stubbed '
         'method(s), and flag $needsReview item(s) for manual review.',
       );
+      if (prunedDartCount > 0) {
+        log.printStatus(
+          '(dry run) Would prune $prunedDartCount cross-platform Dart '
+          'file(s) from lib/ (non-Apple platforms — listed in '
+          'PORTING_REPORT.md “Cross-platform Dart pruned”).',
+        );
+      }
       if (hasDisabled) {
         log.printWarning(
           '(dry run) Partial port: $disabledCount native region(s) using '
@@ -315,6 +323,13 @@ class TvosPluginPortCommand extends FlutterCommand {
         '$stubbed method handler(s), and flagged $needsReview item(s) for '
         'manual review.',
       );
+      if (prunedDartCount > 0) {
+        log.printStatus(
+          'Pruned $prunedDartCount cross-platform Dart file(s) from '
+          'lib/ (non-Apple platforms; listed under “Cross-platform Dart '
+          'pruned” in PORTING_REPORT.md).',
+        );
+      }
       log.printStatus('');
       log.printStatus('Next steps:');
       log.printStatus(

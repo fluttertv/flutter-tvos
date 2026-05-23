@@ -91,6 +91,7 @@ class Scaffolder {
         outputDirectory: outputDirectory,
         writtenPaths: written,
         findings: const <PortingFinding>[],
+        prunedDartFiles: const <String>[],
         reportPath: reportPath,
         dryRun: dryRun,
       );
@@ -141,7 +142,13 @@ class Scaffolder {
     // output package) instead of hand-writing a guessed stub that would
     // not compile. Falls back to the templated stub when the source has
     // no Dart `lib/` (rare).
-    plan.addAll(_dartLibPlans(source, outputDirectory, licenseHolder));
+    final List<String> prunedDartFiles = <String>[];
+    plan.addAll(_dartLibPlans(
+      source,
+      outputDirectory,
+      licenseHolder,
+      prunedDartFiles,
+    ));
 
     // Native sources from the source plugin's <platform>/Classes/ go into
     // the output's tvos/Classes/. Swift files run through [SwiftPorter] and
@@ -218,7 +225,11 @@ class Scaffolder {
         emitReport ? outputDirectory.childFile('PORTING_REPORT.md') : null;
     final String? reportContents = reportFile == null
         ? null
-        : const ReportEmitter().render(source: source, results: portResults);
+        : const ReportEmitter().render(
+            source: source,
+            results: portResults,
+            prunedDartFiles: prunedDartFiles,
+          );
 
     if (!dryRun) {
       for (final p in plan) {
@@ -261,6 +272,7 @@ class Scaffolder {
       findings: <PortingFinding>[
         for (final PortingResult r in portResults) ...r.findings,
       ],
+      prunedDartFiles: prunedDartFiles,
       reportPath: reportFile?.path,
       dryRun: dryRun,
     );
@@ -272,10 +284,24 @@ class Scaffolder {
   /// `lib/<out>.dart` (so Flutter's federated registrant can import it
   /// and find `dartPluginClass`). Falls back to the templated stub when
   /// the source ships no Dart `lib/`.
+  ///
+  /// **Prunes cross-platform Dart that tvOS will never run.** Upstream
+  /// `_plus`-style packages bundle Linux/Windows/Web/macOS federated
+  /// implementations alongside the iOS one — none of which compile on
+  /// tvOS (they import `package:web`, `flutter_web_plugins`, `win32`,
+  /// `package:nm`, etc.) and none of which are reachable at runtime in
+  /// a tvOS app (the registrar loads only the tvOS plugin class). The
+  /// porter drops files matching non-Apple platform suffixes and
+  /// well-known platform-specific subdirectories, then scrubs the
+  /// remaining files' `import`/`export` directives so nothing points at
+  /// the dropped paths. Apple-shared sources (entry, `_ios*`, generic
+  /// `src/messages.g.dart`, etc.) are preserved verbatim. Paths the
+  /// pruner dropped are reported as [ScaffoldResult.prunedDartFiles].
   List<_Plan> _dartLibPlans(
     PluginSource source,
     Directory outputDirectory,
     String licenseHolder,
+    List<String> prunedRelPaths,
   ) {
     final Directory srcLib = source.directory.childDirectory('lib');
     final Directory dstLib = outputDirectory.childDirectory('lib');
@@ -289,25 +315,194 @@ class Scaffolder {
     if (!srcLib.existsSync()) {
       return stub();
     }
-    final List<_Plan> plans = <_Plan>[];
+
+    // Pass 1: enumerate every .dart file relative to `lib/` and split it
+    // into kept vs. pruned. `rel` is the path inside `lib/`; the entry
+    // file rename to `<out>.dart` happens later when emitting plans, so
+    // pruning decisions are made on the un-renamed source path.
+    final List<String> keptRel = <String>[];
+    final List<String> droppedRel = <String>[];
     for (final FileSystemEntity e in srcLib.listSync(recursive: true)) {
       if (e is! File || _fs.path.extension(e.path).toLowerCase() != '.dart') {
         continue;
       }
-      final String rel = _fs.path.relative(e.path, from: srcLib.path);
+      final String rel = _fs.path
+          .relative(e.path, from: srcLib.path)
+          .replaceAll(r'\', '/');
+      if (_isCrossPlatformDart(rel)) {
+        droppedRel.add(rel);
+      } else {
+        keptRel.add(rel);
+      }
+    }
+    prunedRelPaths.addAll(droppedRel..sort());
+
+    // Pre-compute the set of pruned-file *destination* paths relative to
+    // `lib/` so the sanitiser can match `import './src/foo_linux.dart'`
+    // and `import 'package:<out>/src/foo_linux.dart'` against it.
+    final Set<String> droppedSet = droppedRel.toSet();
+
+    final List<_Plan> plans = <_Plan>[];
+    for (final String rel in keptRel) {
+      final File srcFile = _fs.file(_fs.path.join(srcLib.path, rel));
       final String destRel = rel == '${source.packageName}.dart'
           ? '${source.outputPackageName}.dart'
           : rel;
-      final String content = e.readAsStringSync().replaceAll(
+      String content = srcFile.readAsStringSync().replaceAll(
             'package:${source.packageName}/',
             'package:${source.outputPackageName}/',
           );
+      if (droppedSet.isNotEmpty) {
+        content = _scrubReferencesToDropped(
+          source: content,
+          fromRel: rel,
+          droppedRelPaths: droppedSet,
+          srcPackageName: source.packageName,
+          outPackageName: source.outputPackageName,
+        );
+      }
       plans.add(_Plan(
         path: _fs.path.join(dstLib.path, destRel),
         contents: content,
       ));
     }
     return plans.isEmpty ? stub() : plans;
+  }
+
+  /// True for a Dart file under `lib/` whose path/name marks it as a
+  /// non-Apple platform-specific implementation we don't want shipped in
+  /// the `_tvos` federated package.
+  ///
+  /// Two signals — either is sufficient:
+  /// - A path segment names a non-Apple platform we don't ship for
+  ///   (`web`, `web_impl`, `windows`, `linux`, `android`).
+  /// - The basename ends in a non-Apple platform suffix
+  ///   (`_linux.dart`, `_windows.dart`, `_web.dart`, `_android.dart`,
+  ///   `_macos.dart`, `_osx.dart`, optionally with a `_plugin` tail), or
+  ///   `_io_plugin.dart` (the `wakelock_plus` convention for the
+  ///   non-web/non-platform-specific fallback that fans out to Linux/
+  ///   macOS/Windows).
+  ///
+  /// `_ios*` is deliberately kept — `IosDeviceInfo`, `AVFoundation*` and
+  /// similar Apple-shared classes are usable on tvOS (UIKit/UIDevice/
+  /// AVFoundation exist there).
+  bool _isCrossPlatformDart(String relPath) {
+    final String normalized = relPath.toLowerCase().replaceAll(r'\', '/');
+    const Set<String> nonApplePathSegments = <String>{
+      'web',
+      'web_impl',
+      'windows',
+      'linux',
+      'android',
+    };
+    for (final String segment in normalized.split('/')) {
+      if (nonApplePathSegments.contains(segment)) {
+        return true;
+      }
+    }
+    final String base = normalized.split('/').last;
+    final RegExp suffix = RegExp(
+      r'_(linux|windows|web|android|macos|osx|io)(?:_plugin)?\.dart$',
+    );
+    return suffix.hasMatch(base);
+  }
+
+  /// Removes any `import` / `export` directive in [source] whose target
+  /// path resolves to one of the [droppedRelPaths]. Handles three forms:
+  ///
+  /// 1. Plain relative: `import 'src/foo_linux.dart';`
+  /// 2. Self-package: `import 'package:<out>/src/foo_linux.dart';`
+  ///    (already rewritten from `package:<src>/...` by the caller — we
+  ///    also match the unrewritten form as a safety net).
+  /// 3. Conditional: `export 'src/foo_io.dart' if (dart.library.js_interop) 'src/foo_web.dart';`
+  ///    — if either branch points at a dropped file the whole directive
+  ///    is removed (a half-conditional has no meaning).
+  ///
+  /// Removed directives become `// (pruned)` comment placeholders so
+  /// line numbers in user-visible source stay stable.
+  String _scrubReferencesToDropped({
+    required String source,
+    required String fromRel,
+    required Set<String> droppedRelPaths,
+    required String srcPackageName,
+    required String outPackageName,
+  }) {
+    if (droppedRelPaths.isEmpty) {
+      return source;
+    }
+
+    // Normalise a path captured from an import/export literal into the
+    // same "relative-to-lib/" form droppedRelPaths uses. Returns null
+    // when the literal targets something outside `lib/` (e.g. an
+    // `import 'package:foo/bar.dart';` where `foo` isn't this package).
+    String? resolveToLibRel(String literal) {
+      final String trimmed = literal.trim();
+      // package: form — only ours counts.
+      const String pkgPrefix = 'package:';
+      if (trimmed.startsWith(pkgPrefix)) {
+        final String rest = trimmed.substring(pkgPrefix.length);
+        final int slash = rest.indexOf('/');
+        if (slash < 0) {
+          return null;
+        }
+        final String pkg = rest.substring(0, slash);
+        if (pkg != outPackageName && pkg != srcPackageName) {
+          return null;
+        }
+        return rest.substring(slash + 1);
+      }
+      // Relative form — resolve against the importer's directory.
+      final String fromDir = fromRel.contains('/')
+          ? fromRel.substring(0, fromRel.lastIndexOf('/'))
+          : '';
+      final List<String> parts = <String>[
+        if (fromDir.isNotEmpty) ...fromDir.split('/'),
+        ...trimmed.split('/'),
+      ];
+      final List<String> stack = <String>[];
+      for (final String part in parts) {
+        if (part.isEmpty || part == '.') {
+          continue;
+        }
+        if (part == '..') {
+          if (stack.isNotEmpty) {
+            stack.removeLast();
+          }
+          continue;
+        }
+        stack.add(part);
+      }
+      return stack.join('/');
+    }
+
+    // One regex covers `import 'X';`, `export 'X';`, and the conditional
+    // form with up to one `if (...) 'Y'` fork.
+    final RegExp directive = RegExp(
+      r"""^(\s*)(import|export)\s+(['"])([^'"]+)\3"""
+      r"""(\s+if\s*\(\s*[^)]*\)\s+(['"])([^'"]+)\6)?"""
+      r"""([^;\n]*);?\s*$""",
+      multiLine: true,
+    );
+
+    return source.replaceAllMapped(directive, (Match m) {
+      final String primary = m.group(4)!;
+      final String? fallback = m.group(7);
+      bool targetsDropped(String? literal) {
+        if (literal == null) {
+          return false;
+        }
+        final String? resolved = resolveToLibRel(literal);
+        return resolved != null && droppedRelPaths.contains(resolved);
+      }
+
+      if (!targetsDropped(primary) && !targetsDropped(fallback)) {
+        return m.group(0)!;
+      }
+      // Preserve indentation so blank-line padding in the file is stable.
+      final String indent = m.group(1) ?? '';
+      return '$indent// (pruned by flutter-tvos plugin port: '
+          'cross-platform Dart not used on tvOS)';
+    });
   }
 
   /// Walks the source's `<platform>/Classes/` directory and produces a list
@@ -443,6 +638,7 @@ class ScaffoldResult {
     required this.outputDirectory,
     required this.writtenPaths,
     required this.findings,
+    required this.prunedDartFiles,
     required this.reportPath,
     required this.dryRun,
   });
@@ -455,6 +651,13 @@ class ScaffoldResult {
   /// command uses this to decide whether to print the "manual review
   /// required" banner.
   final List<PortingFinding> findings;
+
+  /// Source-relative paths (under the upstream package's `lib/`) of
+  /// Dart files the porter dropped because they target a non-Apple
+  /// platform (Linux / Windows / Web / macOS / Android). Empty for
+  /// Apple-only source plugins. The report's "Cross-platform Dart
+  /// pruned" section is rendered from this list.
+  final List<String> prunedDartFiles;
 
   /// Absolute path of the generated `PORTING_REPORT.md`, or `null` when
   /// `--no-report` suppressed it.
