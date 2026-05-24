@@ -83,7 +83,7 @@ A tvOS build only loads plugins that declare this key. Plugins targeting only `i
 
 In practice each plugin with native code ships an extra federated package (e.g. `url_launcher` → `url_launcher_tvos`) that adds the tvOS implementation. The same model is used by `flutter-tizen`, and `flutter-elinux`.
 
-A FlutterTV-curated index of ported plugins is being assembled and will be published soon. In the meantime, `flutter-tvos plugin port` (coming next) can scaffold a federated `*_tvos` package from any existing iOS or macOS plugin so you can port the ones you depend on yourself.
+A FlutterTV-curated index of ported plugins is at [github.com/fluttertv/plugins](https://github.com/fluttertv/plugins) (also on pub.dev under the [`fluttertv.dev`](https://pub.dev/publishers/fluttertv.dev/packages) publisher). If a plugin you need isn't there, `flutter-tvos plugin port` scaffolds a federated `*_tvos` package from any iOS or macOS plugin — see [Porting an existing plugin](doc/port-plugin.md).
 
 ### Writing cross-platform apps (iOS + Android + tvOS)
 
@@ -149,39 +149,17 @@ Then inside `io_impl.dart`, branch on `Platform.isTvOS` vs `Platform.isIOS`.
 ## Add tvOS support to an existing plugin
 
 If a plugin already implements iOS or macOS, `flutter-tvos plugin port`
-scaffolds a federated `<plugin>_tvos` sibling package from it. The source
+scaffolds a federated `<plugin>_tvos` sibling package from it — the source
 plugin is never modified.
 
 ```sh
-# Port a local iOS plugin checkout.
-flutter-tvos plugin port ../url_launcher/packages/url_launcher_ios
-
-# Or fetch the source instead of cloning it yourself.
-flutter-tvos plugin port --from-pub url_launcher_ios
-flutter-tvos plugin port --from-git https://github.com/flutter/packages --ref main
-
-# Preview without writing anything.
-flutter-tvos plugin port ../url_launcher_ios --dry-run
+flutter-tvos plugin port --from-pub url_launcher_ios --output url_launcher_tvos
 ```
 
-What it does:
-
-- copies the native sources and runs them through a compatibility
-  database — Swift **and** Objective-C. tvOS-incompatible imports
-  (WebKit, UIPasteboard, LocalAuthentication, …) are commented out and
-  the method handlers that use them are stubbed with
-  `FlutterMethodNotImplemented`;
-- writes a `PORTING_REPORT.md` listing every stubbed/partial method and
-  removed import so you can review the gaps by hand (`--no-report` to
-  skip);
-- generates a complete package (`pubspec`, podspec, Dart entry, README,
-  CHANGELOG, tests) that builds and passes `dart analyze` out of the box.
-
-Useful flags: `--base-platform ios|macos`, `--output <dir>`, `--force`,
-`--include-example` (wires the source plugin's `example/` for tvOS),
-`--license-holder "<name>"`. The porter never auto-translates UIKit to
-tvOS — it stubs and reports, and you decide. Read `PORTING_REPORT.md`
-before publishing.
+See [Porting an existing plugin](doc/port-plugin.md) for the full flag
+reference, what the transformer does and doesn't do, and how to read the
+generated `PORTING_REPORT.md`. The [`fluttertv/plugins`](https://github.com/fluttertv/plugins)
+repo is 11 packages produced this way — useful as worked examples.
 
 ## Docs
 
@@ -195,6 +173,7 @@ before publishing.
 #### Plugin development
 
 - [Writing a tvOS plugin](doc/develop-plugin.md)
+- [Porting an existing plugin](doc/port-plugin.md)
 
 #### Project internals
 
