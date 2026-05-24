@@ -1,0 +1,149 @@
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/UIPressProxy.swift b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/UIPressProxy.swift
+index 6b0810f9..63a7c514 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/UIPressProxy.swift
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/UIPressProxy.swift
+@@ -7,7 +7,7 @@ import UIKit
+ /// A event class that is a wrapper around a UIPress and a UIEvent to allow
+ /// overriding for testing purposes, since UIKit doesn't allow creation of
+ /// UIEvent or UIPress directly.
+-@available(iOS 13.4, *)
++@available(iOS 13.4, tvOS 13.4, *)
+ @objc(FlutterUIPressProxy)
+ public class UIPressProxy: NSObject {
+   private var press: UIPress?
+diff --git a/engine/src/flutter/tools/gn b/engine/src/flutter/tools/gn
+index 726f1715..20b907f2 100755
+--- a/engine/src/flutter/tools/gn
++++ b/engine/src/flutter/tools/gn
+@@ -20,7 +20,9 @@ SRC_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
+ 
+ 
+ def get_out_dir(args):
+-  if args.target_os is not None:
++  if getattr(args, 'tvos', False):
++    target_dir = ['tvos']
++  elif args.target_os is not None:
+     target_dir = [args.target_os]
+   elif args.web:
+     target_dir = ['wasm']
+@@ -282,7 +284,9 @@ def setup_apple_sdks():
+   # Populate args for SDKs in //flutter/prebuilts/SDKs.
+   sdk_prefixes = [
+       ('MacOSX', 'mac_sdk_path'),
++      ('AppleTVOS', 'ios_device_sdk_path'),
+       ('iPhoneOS', 'ios_device_sdk_path'),
++      ('AppleTVSimulator', 'ios_simulator_sdk_path'),
+       ('iPhoneSimulator', 'ios_simulator_sdk_path'),
+       ('XcodeDefault.xctoolchain', 'mac_host_toolchain_path'),
+   ]
+@@ -292,11 +296,14 @@ def setup_apple_sdks():
+     for entry in sdk_entries:
+       if entry.startswith(prefix):
+         sdks_gn_args[arg] = os.path.join(sdks_path, entry)
++        break  # first match wins — AppleTV takes priority over iPhone when both present
+ 
+   # Populate args for SDKs in //flutter/prebuilts/Platforms.
+   platform_prefixes = [
+       ('MacOSX', 'mac_platform_path'),
++      ('AppleTVOS', 'ios_device_platform_path'),
+       ('iPhoneOS', 'ios_device_platform_path'),
++      ('AppleTVSimulator', 'ios_simulator_platform_path'),
+       ('iPhoneSimulator', 'ios_simulator_platform_path'),
+   ]
+   platforms_path = os.path.join(SRC_ROOT, 'flutter', 'prebuilts', 'Platforms')
+@@ -429,8 +436,8 @@ def get_concurrent_jobs(reserve_memory, memory_per_job):
+ 
+ def to_gn_args(args):
+   if args.simulator:
+-    if args.target_os != 'ios':
+-      raise Exception('--simulator is only supported for iOS')
++    if args.target_os != 'ios' and not getattr(args, 'tvos', False):
++      raise Exception('--simulator is only supported for iOS/tvOS')
+ 
+   runtime_mode = args.runtime_mode
+ 
+@@ -591,6 +598,11 @@ def to_gn_args(args):
+ 
+   gn_args['concurrent_toolchain_jobs'] = get_concurrent_jobs('1GB', '100MB')
+ 
++  # Hardcoding this avoids invoking a relatively expensive python script from
++  # GN, but removes the ability to use git-worktrees in the Dart checkout from
++  # within the Engine repo, but it's unlikely anyone is using that.
++  gn_args['default_git_folder'] = os.path.join(get_dart_path(), '.git')
++
+   # By default, the Dart GN build will invoke a relatively expensive python
+   # script to calculate an SDK "hash" that ensures compatibility between the
+   # Dart VM and the Dart front-end. This default hash calculation allows some
+@@ -610,7 +622,7 @@ def to_gn_args(args):
+   # Determine whether backtace support should be compiled in.
+   if args.backtrace:
+     gn_args['enable_backtrace'] = (
+-        is_host_build(args) or args.target_os in ['linux', 'mac', 'win'] or
++        args.target_os in ['linux', 'mac', 'win'] or
+         args.target_os == 'ios' and runtime_mode == 'debug'
+     )
+   else:
+@@ -799,6 +811,7 @@ def to_gn_args(args):
+   # There is a special case for Android on Windows because there we _only_ build
+   # gen_snapshot, but the build defines otherwise make it look like the build is
+   # for a host Windows build and make GN think we will be building ANGLE.
++  # Angle is not used on Mac hosts as there are no tests for the OpenGL backend.
+   if is_host_build(args) or (args.target_os == 'android' and get_host_os() == 'win'):
+     # Don't include git commit information.
+     gn_args['angle_enable_commit_id'] = False
+@@ -812,7 +825,9 @@ def to_gn_args(args):
+     if get_host_os() == 'win':
+       gn_args['angle_force_context_check_every_call'] = True
+     if get_host_os() == 'mac':
++      gn_args['angle_enable_metal'] = True
+       gn_args['angle_enable_gl'] = False
++      gn_args['angle_enable_vulkan'] = False
+ 
+     # ANGLE and SwiftShader share build flags to enable X11 and Wayland,
+     # but we only need these enabled for SwiftShader.
+@@ -893,9 +908,6 @@ def to_gn_wasm_args(args, gn_args):
+   gn_args['skia_canvaskit_profile_build'] = args.runtime_mode == 'profile'
+   gn_args['flutter_prebuilt_dart_sdk'] = True
+ 
+-  if get_host_os() == 'mac':
+-    gn_args.update(setup_apple_sdks())
+-
+ 
+ def parse_args(args):
+   args = args[1:]
+@@ -967,6 +979,12 @@ def parse_args(args):
+       '--android-cpu', type=str, choices=['arm', 'x64', 'x86', 'arm64', 'riscv64'], default='arm'
+   )
+   parser.add_argument('--ios', dest='target_os', action='store_const', const='ios')
++  parser.add_argument(
++      '--tvos',
++      action='store_true',
++      default=False,
++      help='Build for tvOS (uses iOS build pipeline with tvos output directory naming)'
++  )
+   parser.add_argument('--mac', dest='target_os', action='store_const', const='mac')
+   parser.add_argument('--mac-cpu', type=str, choices=['x64', 'arm64'], default='x64')
+   parser.add_argument('--simulator', action='store_true', default=False)
+@@ -1202,9 +1220,7 @@ def parse_args(args):
+   parser.add_argument(
+       '--stripped',
+       action='store_true',
+-      default=None,
+-      help='Strip debug symbols from the output. This defaults to true for all targets '
+-      'except android, and has no effect on iOS.'
++      help='Strip debug symbols from the output. This defaults to true and has no effect on iOS.'
+   )
+   parser.add_argument('--no-stripped', dest='stripped', action='store_false')
+ 
+@@ -1319,6 +1335,11 @@ def validate_args(args):
+ 
+ def main(argv):
+   args = parse_args(argv)
++
++  # --tvos uses the iOS build pipeline but names output directories tvos_*
++  if args.tvos:
++    args.target_os = 'ios'
++
+   validate_args(args)
+ 
+   exe = '.exe' if sys.platform.startswith(('cygwin', 'win')) else ''

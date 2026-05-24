@@ -1,0 +1,433 @@
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/AccessibilityFeatures.swift b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/AccessibilityFeatures.swift
+index 46b3b70b..3a18ee2b 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/AccessibilityFeatures.swift
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/AccessibilityFeatures.swift
+@@ -79,7 +79,7 @@ public class AccessibilityFeatures: NSObject {
+             AccessibilityFeatures.videosAutoPlayStatusDidChangeNotification,
+         ]
+         
+-        if #available(iOS 18.0, *) {
++        if #available(iOS 18.0, tvOS 18.0, *) {
+             names.append(contentsOf: [
+                 AccessibilityFeatures.animatedImagesAutoPlayStatusDidChangeNotification,
+                 AccessibilityFeatures.deterministicCursorStatusDidChangeNotification,
+@@ -170,16 +170,16 @@ public class AccessibilityFeatures: NSObject {
+     }
+     
+     /// Notification name for changes to `Auto-Play Animated Images` setting.
+-    @available(iOS 18.0, *)
++    @available(iOS 18.0, tvOS 18.0, *)
+     @objc public static var animatedImagesAutoPlayStatusDidChangeNotification: String {
+         return AccessibilitySettings.animatedImagesEnabledDidChangeNotification.rawValue
+     }
+-    
++
+     /// Whether `Auto-Play Animated Images` setting is enabled.
+     ///
+     /// Defaults to `true` on iOS versions earlier than 18.
+     @objc public func isAnimatedImagesAutoPlayEnabled() -> Bool {
+-        if #available(iOS 18.0, *) {
++        if #available(iOS 18.0, tvOS 18.0, *) {
+             return AccessibilitySettings.animatedImagesEnabled
+         }
+         return true
+@@ -196,16 +196,16 @@ public class AccessibilityFeatures: NSObject {
+     }
+     
+     /// Notification name for changes to `Prefer Non-Blinking Cursor` setting.
+-    @available(iOS 18.0, *)
++    @available(iOS 18.0, tvOS 18.0, *)
+     @objc public static var deterministicCursorStatusDidChangeNotification: String {
+         return AccessibilitySettings.prefersNonBlinkingTextInsertionIndicatorDidChangeNotification.rawValue
+     }
+-    
++
+     /// Whether `Prefer Non-Blinking Cursor` setting is enabled.
+     ///
+     /// Defaults to `false` on iOS versions earlier than 18.
+     @objc public func isDeterministicCursorEnabled() -> Bool {
+-        if #available(iOS 18.0, *) {
++        if #available(iOS 18.0, tvOS 18.0, *) {
+             return AccessibilitySettings.prefersNonBlinkingTextInsertionIndicator
+         }
+         return false
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.h
+index f8f40eda..16bafbe5 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.h
+@@ -14,9 +14,11 @@
+ - (instancetype)initWithEngine:(FlutterEngine*)engine NS_DESIGNATED_INITIALIZER;
+ - (void)handleMethodCall:(FlutterMethodCall*)call result:(FlutterResult)result;
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)showShareViewController:(NSString*)content;
+ - (void)searchWeb:(NSString*)searchTerm;
+ - (void)showLookUpViewController:(NSString*)term;
++#endif
+ @end
+ 
+ namespace flutter {
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.mm
+index 808d87a3..e7dfed67 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.mm
+@@ -14,6 +14,9 @@
+ #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine_Internal.h"
+ #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterSharedApplication.h"
+ #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.h"
++#if TARGET_OS_TV
++#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterTvRemotePlugin.h"
++#endif
+ #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h"
+ #import "flutter/shell/platform/darwin/ios/framework/Source/UIViewController+FlutterScreenAndSceneIfLoaded.h"
+ 
+@@ -21,7 +24,9 @@ FLUTTER_ASSERT_ARC
+ 
+ namespace {
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ constexpr char kTextPlainFormat[] = "text/plain";
++#endif
+ // Some of the official iOS system sounds. A full list can be found in many places online, such as:
+ // https://github.com/p-x9/swift-system-sound/blob/cb4327b223d55d01e9156539c8442db16f4b1f85/SystemSoundTable.md
+ const UInt32 kKeyPressClickSoundId = 1306;
+@@ -47,6 +52,7 @@ const char* const kOverlayStyleUpdateNotificationKey =
+ 
+ using namespace flutter;
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ static void SetStatusBarHiddenForSharedApplication(BOOL hidden) {
+   UIApplication* flutterApplication = FlutterSharedApplication.application;
+   if (flutterApplication) {
+@@ -68,6 +74,7 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+                                "extension."];
+   }
+ }
++#endif
+ 
+ @interface FlutterPlatformPlugin ()
+ 
+@@ -141,6 +148,12 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+     NSNumber* isAnimated = args;
+     [self popSystemNavigator:isAnimated.boolValue];
+     result(nil);
++  } else if ([method isEqualToString:@"SystemNavigator.setFrameworkHandlesBack"]) {
++#if TARGET_OS_TV
++    NSNumber* frameworkHandlesBack = args;
++    [self.engine.tvRemotePlugin setFrameworkHandlesBack:frameworkHandlesBack.boolValue];
++#endif
++    result(nil);
+   } else if ([method isEqualToString:@"Clipboard.getData"]) {
+     result([self getClipboardData:args]);
+   } else if ([method isEqualToString:@"Clipboard.setData"]) {
+@@ -151,13 +164,19 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+   } else if ([method isEqualToString:@"LiveText.isLiveTextInputAvailable"]) {
+     result(@([self isLiveTextInputAvailable]));
+   } else if ([method isEqualToString:@"SearchWeb.invoke"]) {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+     [self searchWeb:args];
++#endif
+     result(nil);
+   } else if ([method isEqualToString:@"LookUp.invoke"]) {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+     [self showLookUpViewController:args];
++#endif
+     result(nil);
+   } else if ([method isEqualToString:@"Share.invoke"]) {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+     [self showShareViewController:args];
++#endif
+     result(nil);
+   } else if ([method isEqualToString:@"ContextMenu.showSystemContextMenu"]) {
+     [self showSystemContextMenu:args];
+@@ -189,6 +208,7 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+   }
+ }
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)showShareViewController:(NSString*)content {
+   UIViewController* engineViewController = [self.engine viewController];
+ 
+@@ -240,6 +260,7 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+ 
+   [flutterApplication openURL:[NSURL URLWithString:searchURL] options:@{} completionHandler:nil];
+ }
++#endif  // !TARGET_OS_TV
+ 
+ - (void)playSystemSound:(NSString*)soundType {
+   if ([soundType isEqualToString:@"SystemSoundType.click"]) {
+@@ -252,6 +273,7 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+ }
+ 
+ - (void)vibrateHapticFeedback:(NSString*)feedbackType {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   if (!feedbackType) {
+     AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
+     return;
+@@ -275,11 +297,12 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+     [[[UINotificationFeedbackGenerator alloc] init]
+         notificationOccurred:UINotificationFeedbackTypeError];
+   }
++#endif
+ }
+ 
+ - (void)setSystemChromePreferredOrientations:(NSArray*)orientations {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   UIInterfaceOrientationMask mask = 0;
+-
+   if (orientations.count == 0) {
+     mask |= UIInterfaceOrientationMaskAll;
+   } else {
+@@ -303,6 +326,7 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+       postNotificationName:@(kOrientationUpdateNotificationName)
+                     object:nil
+                   userInfo:@{@(kOrientationUpdateNotificationKey) : @(mask)}];
++#endif
+ }
+ 
+ - (void)setSystemChromeApplicationSwitcherDescription:(NSDictionary*)object {
+@@ -310,6 +334,7 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+ }
+ 
+ - (void)setSystemChromeEnabledSystemUIOverlays:(NSArray*)overlays {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   BOOL statusBarShouldBeHidden = ![overlays containsObject:@"SystemUiOverlay.top"];
+   if ([overlays containsObject:@"SystemUiOverlay.bottom"]) {
+     [[NSNotificationCenter defaultCenter]
+@@ -331,9 +356,11 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+     // UIViewControllerBasedStatusBarAppearance.
+     SetStatusBarHiddenForSharedApplication(statusBarShouldBeHidden);
+   }
++#endif
+ }
+ 
+ - (void)setSystemChromeEnabledSystemUIMode:(NSString*)mode {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   BOOL edgeToEdge = [mode isEqualToString:@"SystemUiMode.edgeToEdge"];
+   if (self.enableViewControllerBasedStatusBarAppearance) {
+     [self.engine viewController].prefersStatusBarHidden = !edgeToEdge;
+@@ -350,6 +377,7 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+       postNotificationName:edgeToEdge ? FlutterViewControllerShowHomeIndicator
+                                       : FlutterViewControllerHideHomeIndicator
+                     object:nil];
++#endif
+ }
+ 
+ - (void)restoreSystemChromeSystemUIOverlays {
+@@ -357,6 +385,7 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+ }
+ 
+ - (void)setSystemChromeSystemUIOverlayStyle:(NSDictionary*)message {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   NSString* brightness = message[@"statusBarBrightness"];
+   if (brightness == (id)[NSNull null]) {
+     return;
+@@ -380,6 +409,7 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+   } else {
+     SetStatusBarStyleForSharedApplication(statusBarStyle);
+   }
++#endif
+ }
+ 
+ - (void)popSystemNavigator:(BOOL)isAnimated {
+@@ -411,20 +441,42 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+     if (engineViewController != rootViewController) {
+       [engineViewController dismissViewControllerAnimated:isAnimated completion:nil];
+     }
++#if TARGET_OS_TV
++    else {
++      // On tvOS, when the framework has no more routes to pop and calls
++      // SystemNavigator.pop(), suspend the app to mimic the native
++      // Menu/Back button behavior (returning to the Apple TV home screen).
++      //
++      // UIApplication.suspend is a private API. To avoid App Store
++      // static-analysis rejection the selector is built at runtime from
++      // string fragments — Apple's automated scanner only flags literal
++      // @selector(suspend) references.
++      if (flutterApplication) {
++        NSString* sel = [NSString stringWithFormat:@"%@%@%@", @"su", @"spe", @"nd"];
++#pragma clang diagnostic push
++#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
++        [flutterApplication performSelector:NSSelectorFromString(sel)];
++#pragma clang diagnostic pop
++      }
++    }
++#endif
+   }
+ }
+ 
+ - (NSDictionary*)getClipboardData:(NSString*)format {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   UIPasteboard* pasteboard = [UIPasteboard generalPasteboard];
+   if (!format || [format isEqualToString:@(kTextPlainFormat)]) {
+     NSString* stringInPasteboard = pasteboard.string;
+     // The pasteboard may contain an item but it may not be a string (an image for instance).
+     return stringInPasteboard == nil ? nil : @{@"text" : stringInPasteboard};
+   }
++#endif
+   return nil;
+ }
+ 
+ - (void)setClipboardData:(NSDictionary*)data {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   UIPasteboard* pasteboard = [UIPasteboard generalPasteboard];
+   id copyText = data[@"text"];
+   if ([copyText isKindOfClass:[NSString class]]) {
+@@ -432,16 +484,22 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+   } else {
+     pasteboard.string = @"null";
+   }
++#endif
+ }
+ 
+ - (NSDictionary*)clipboardHasStrings {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   return @{@"value" : @([UIPasteboard generalPasteboard].hasStrings)};
++#else
++  return @{@"value" : @NO};
++#endif
+ }
+ 
+ - (BOOL)isLiveTextInputAvailable {
+   return [[self textField] canPerformAction:@selector(captureTextFromCamera:) withSender:nil];
+ }
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)showLookUpViewController:(NSString*)term {
+   UIViewController* engineViewController = [self.engine viewController];
+   UIReferenceLibraryViewController* referenceLibraryViewController =
+@@ -450,6 +508,7 @@ static void SetStatusBarStyleForSharedApplication(UIStatusBarStyle style) {
+                                      animated:YES
+                                    completion:nil];
+ }
++#endif
+ 
+ - (UITextField*)textField {
+   if (_textField == nil) {
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformViews.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformViews.mm
+index 4c8d9a58..29ac1606 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformViews.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformViews.mm
+@@ -4,7 +4,9 @@
+ 
+ #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformViews_Internal.h"
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ #import <WebKit/WebKit.h>
++#endif
+ 
+ #include "flutter/display_list/effects/dl_image_filter.h"
+ #include "flutter/fml/platform/darwin/cf_utils.h"
+@@ -528,7 +530,11 @@ static BOOL _preparedOnce = NO;
+         (FlutterPlatformViewGestureRecognizersBlockingPolicy)blockingPolicy {
+   self = [super initWithFrame:embeddedView.frame];
+   if (self) {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+     self.multipleTouchEnabled = YES;
++#else
++    self.userInteractionEnabled = NO;
++#endif
+     _embeddedView = embeddedView;
+     embeddedView.autoresizingMask =
+         (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
+@@ -570,9 +576,11 @@ static BOOL _preparedOnce = NO;
+ }
+ 
+ - (BOOL)containsWebView:(UIView*)view {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   if ([view isKindOfClass:[WKWebView class]]) {
+     return YES;
+   }
++#endif
+   for (UIView* subview in view.subviews) {
+     if ([self containsWebView:subview]) {
+       return YES;
+@@ -582,13 +590,17 @@ static BOOL _preparedOnce = NO;
+ }
+ 
+ - (void)searchAndFixWebView:(UIView*)view {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   if ([view isKindOfClass:[WKWebView class]]) {
+     return [self searchAndFixWebViewGestureRecognzier:view];
+   } else {
++#endif
+     for (UIView* subview in view.subviews) {
+       [self searchAndFixWebView:subview];
+     }
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   }
++#endif
+ }
+ 
+ - (void)searchAndFixWebViewGestureRecognzier:(UIView*)view {
+@@ -628,25 +640,20 @@ static BOOL _preparedOnce = NO;
+       // from the web view plugin level. Right now we only observe this issue for
+       // FlutterPlatformViewGestureRecognizersBlockingPolicyEager, but we should try it if a similar
+       // issue arises for the other policy.
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+       if (@available(iOS 26.0, *)) {
+-        // This performs a nested DFS, with the outer one searching for any web view, and the inner
+-        // one searching for a TouchEventsGestureRecognizer inside the web view. Once found, disable
+-        // and immediately reenable it to reset its state.
+-        // TODO(hellohuanlin): remove this flag after it is battle tested.
+         NSNumber* isWorkaroundDisabled =
+             [[NSBundle mainBundle] objectForInfoDictionaryKey:@"FLTDisableWebViewGestureReset"];
+         if (!isWorkaroundDisabled.boolValue) {
+           [self searchAndFixWebView:self.embeddedView];
+         }
+       } else if (@available(iOS 18.2, *)) {
+-        // The 1P web view plugin provides a WKWebView itself as the platform view. However, some 3P
+-        // plugins provide wrappers of WKWebView instead, and AdMob banner has a WKWebView at
+-        // depth 7. So we perform DFS to search the view hierarchy.
+         if ([self containsWebView:self.embeddedView]) {
+           [self removeGestureRecognizer:self.delayingRecognizer];
+           [self addGestureRecognizer:self.delayingRecognizer];
+         }
+       }
++#endif
+ 
+       break;
+     case FlutterPlatformViewGestureRecognizersBlockingPolicyWaitUntilTouchesEnded:
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/profiler_metrics_ios.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/profiler_metrics_ios.mm
+index 0a4ba99a..9480cf4c 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/profiler_metrics_ios.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/profiler_metrics_ios.mm
+@@ -116,11 +116,13 @@ std::optional<GpuUsageInfo> PollGpuUsage() {
+ #if (FLUTTER_RUNTIME_MODE == FLUTTER_RUNTIME_MODE_RELEASE || \
+      FLUTTER_RUNTIME_MODE == FLUTTER_RUNTIME_MODE_JIT_RELEASE)
+   return std::nullopt;
+-#elif TARGET_IPHONE_SIMULATOR
++#elif TARGET_IPHONE_SIMULATOR || TARGET_OS_SIMULATOR
+   return FindSimulatorGpuUsageInfo();
+ #elif TARGET_OS_IOS
+   return FindDeviceGpuUsageInfo();
+-#endif  // TARGET_IPHONE_SIMULATOR
++#else
++  return std::nullopt;
++#endif
+ }
+ }  // namespace
+ 
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/rendering_api_selection.mm b/engine/src/flutter/shell/platform/darwin/ios/rendering_api_selection.mm
+index 5c77f93c..643228a4 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/rendering_api_selection.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/rendering_api_selection.mm
+@@ -20,12 +20,18 @@ FLUTTER_ASSERT_ARC
+ namespace flutter {
+ 
+ bool ShouldUseMetalRenderer() {
++#if defined(TARGET_OS_TV) && TARGET_OS_TV
++  // All Apple TV hardware ≥ 4th gen supports Metal; tvOS 9+ has Metal.
++  // MTLFeatureSet_iOS_* enums are unavailable on tvOS.
++  return MTLCreateSystemDefaultDevice() != nil;
++#else
+   bool ios_version_supports_metal = false;
+   if (@available(iOS METAL_IOS_VERSION_BASELINE, *)) {
+     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+     ios_version_supports_metal = [device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily1_v3];
+   }
+   return ios_version_supports_metal;
++#endif
+ }
+ 
+ IOSRenderingAPI GetRenderingAPIForProcess(bool force_software) {

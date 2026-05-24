@@ -1,0 +1,13 @@
+diff --git a/engine/src/flutter/shell/platform/darwin/common/framework/Source/Logger.swift b/engine/src/flutter/shell/platform/darwin/common/framework/Source/Logger.swift
+index 089b2068..e6b4df2a 100644
+--- a/engine/src/flutter/shell/platform/darwin/common/framework/Source/Logger.swift
++++ b/engine/src/flutter/shell/platform/darwin/common/framework/Source/Logger.swift
+@@ -49,7 +49,7 @@ import Foundation
+   }
+ 
+   public override convenience init() {
+-    #if os(iOS)
++    #if os(iOS) || os(tvOS)
+       // On iOS, the user has no access to stdout.
+       // Output can be read from the log by the user or the `flutter` tool.
+       self.init(outputWriter: SyslogOutputWriter(), logLevel: .info)

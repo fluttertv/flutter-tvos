@@ -1,0 +1,15 @@
+diff --git a/runtime/bin/process_macos.cc b/runtime/bin/process_macos.cc
+index 8aebf479..f8fae962 100644
+--- a/runtime/bin/process_macos.cc
++++ b/runtime/bin/process_macos.cc
+@@ -903,8 +903,8 @@ int Process::Exec(Namespace* namespc,
+                   const char* working_directory,
+                   char* errmsg,
+                   intptr_t errmsg_len) {
+-#if defined(DART_HOST_OS_WATCH)
+-  // execvp is not available on watchOS.
++#if defined(DART_HOST_OS_WATCH) || (defined(TARGET_OS_TV) && TARGET_OS_TV)
++  // execvp is not available on watchOS or tvOS.
+   Utils::StrError(ENOSYS, errmsg, errmsg_len);
+   return -1;
+ #else

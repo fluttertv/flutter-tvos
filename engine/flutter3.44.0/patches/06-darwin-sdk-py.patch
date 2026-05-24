@@ -1,0 +1,13 @@
+diff --git a/engine/src/build/mac/darwin_sdk.py b/engine/src/build/mac/darwin_sdk.py
+index 75568030..584c39ba 100644
+--- a/engine/src/build/mac/darwin_sdk.py
++++ b/engine/src/build/mac/darwin_sdk.py
+@@ -21,7 +21,7 @@ PREBUILTS = os.path.realpath(os.path.join(
+ ))
+ 
+ # Supported SDKs.
+-SDKS = ['iphoneos', 'iphonesimulator', 'macosx']
++SDKS = ['appletvos', 'appletvsimulator', 'macosx']
+ 
+ 
+ def parse_arguments():

@@ -1,0 +1,66 @@
+diff --git a/runtime/platform/globals.h b/runtime/platform/globals.h
+index 66c3f273..a0669dff 100644
+--- a/runtime/platform/globals.h
++++ b/runtime/platform/globals.h
+@@ -120,7 +120,10 @@
+ // Define the flavor of Mac OS we are running on.
+ #include <TargetConditionals.h>
+ #define DART_HOST_OS_MACOS 1
+-#if TARGET_OS_IPHONE
++#if TARGET_OS_TV
++#define DART_HOST_OS_TVOS 1
++#define DART_HOST_OS_IOS 1
++#elif TARGET_OS_IPHONE
+ #define DART_HOST_OS_IOS 1
+ #endif
+ #if TARGET_OS_WATCH
+@@ -709,6 +712,8 @@ DART_FORCE_INLINE D bit_copy(const S& source) {
+ #define kHostOperatingSystemName "android"
+ #elif defined(DART_HOST_OS_FUCHSIA)
+ #define kHostOperatingSystemName "fuchsia"
++#elif defined(DART_HOST_OS_TVOS)
++#define kHostOperatingSystemName "tvos"
+ #elif defined(DART_HOST_OS_IOS)
+ #define kHostOperatingSystemName "ios"
+ #elif defined(DART_HOST_OS_LINUX)
+diff --git a/runtime/vm/virtual_memory.h b/runtime/vm/virtual_memory.h
+index 821fd345..5be057a7 100644
+--- a/runtime/vm/virtual_memory.h
++++ b/runtime/vm/virtual_memory.h
+@@ -16,7 +16,8 @@
+ 
+ namespace dart {
+ 
+-#if defined(DART_HOST_OS_IOS) && !defined(DART_PRECOMPILED_RUNTIME) &&         \
++#if defined(DART_HOST_OS_IOS) && !defined(DART_HOST_OS_TVOS) &&                \
++    !defined(DART_PRECOMPILED_RUNTIME) &&                                       \
+     !defined(DART_HOST_OS_SIMULATOR)
+ // We might need RX workarounds to enable JIT on physical iOS devices.
+ //
+diff --git a/sdk/lib/io/platform.dart b/sdk/lib/io/platform.dart
+index 5ede922c..a348c778 100644
+--- a/sdk/lib/io/platform.dart
++++ b/sdk/lib/io/platform.dart
+@@ -165,9 +165,21 @@ abstract final class Platform {
+ 
+   /// Whether the operating system is a version of
+   /// [iOS](https://en.wikipedia.org/wiki/IOS).
++  ///
++  /// On tvOS this also returns `true`, because tvOS is an iOS-family
++  /// operating system. Use [isTvOS] or `operatingSystem == "tvos"` to
++  /// distinguish tvOS from phone/tablet iOS.
+   @pragma("vm:platform-const")
+   @pragma("vm:shared")
+-  static final bool isIOS = (operatingSystem == "ios");
++  static final bool isIOS =
++      (operatingSystem == "ios" || operatingSystem == "tvos");
++
++  /// Whether the operating system is a version of
++  /// [tvOS](https://en.wikipedia.org/wiki/TvOS).
++  ///
++  /// tvOS is an iOS-family OS, so [isIOS] is also `true` on tvOS.
++  @pragma("vm:platform-const")
++  static final bool isTvOS = (operatingSystem == "tvos");
+ 
+   /// Whether the operating system is a version of
+   /// [Fuchsia](https://en.wikipedia.org/wiki/Google_Fuchsia).

@@ -1,0 +1,38 @@
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/BUILD.gn b/engine/src/flutter/shell/platform/darwin/ios/BUILD.gn
+index 2930099a..ac751ec6 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/BUILD.gn
++++ b/engine/src/flutter/shell/platform/darwin/ios/BUILD.gn
+@@ -129,6 +129,13 @@ source_set("flutter_framework_source") {
+     "framework/Source/FlutterUndoManagerDelegate.h",
+     "framework/Source/FlutterUndoManagerPlugin.h",
+     "framework/Source/FlutterUndoManagerPlugin.mm",
++    "framework/Source/FlutterAccessibilitySelectionView.h",
++    "framework/Source/FlutterAccessibilitySelectionView.mm",
++    "framework/Source/FlutterTvRemotePlugin.h",
++    "framework/Source/FlutterTvRemotePlugin.mm",
++    "framework/Source/FlutterTvRemotePlugin_Internal.h",
++    "framework/Source/FlutterTvRemoteProtocol.h",
++    "framework/Source/FlutterTvRemoteProtocol.mm",
+     "framework/Source/FlutterView.h",
+     "framework/Source/FlutterView.mm",
+     "framework/Source/FlutterViewController.mm",
+@@ -184,13 +191,15 @@ source_set("flutter_framework_source") {
+     "CoreVideo.framework",
+     "IOSurface.framework",
+     "QuartzCore.framework",
+-    "WebKit.framework",
++    "GameController.framework",
++    "MediaPlayer.framework",
+     "UIKit.framework",
+   ]
+   if (flutter_runtime_mode == "profile" || flutter_runtime_mode == "debug") {
+-    # This is required by the profiler_metrics_ios.mm to get GPU statistics.
+-    # Usage in release builds will cause rejection from the App Store.
+-    frameworks += [ "IOKit.framework" ]
++    # IOKit is not available on tvOS device but is available on the simulator.
++    if (defined(use_ios_simulator) && use_ios_simulator) {
++      frameworks += [ "IOKit.framework" ]
++    }
+   }
+ 
+   deps = [

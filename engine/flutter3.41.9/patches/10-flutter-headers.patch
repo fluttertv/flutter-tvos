@@ -1,0 +1,126 @@
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterPlugin.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterPlugin.h
+index 24e83756..a8e103a6 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterPlugin.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterPlugin.h
+@@ -70,11 +70,13 @@ NS_ASSUME_NONNULL_BEGIN
+ /**
+  * Called if this has been registered for `UIApplicationDelegate` callbacks.
+  */
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)application:(UIApplication*)application
+     didRegisterUserNotificationSettings:(UIUserNotificationSettings*)notificationSettings
+     API_DEPRECATED(
+         "See -[UIApplicationDelegate application:didRegisterUserNotificationSettings:] deprecation",
+         ios(8.0, 10.0));
++#endif
+ 
+ /**
+  * Called if this has been registered for `UIApplicationDelegate` callbacks.
+@@ -100,11 +102,13 @@ NS_ASSUME_NONNULL_BEGIN
+ /**
+  * Calls all plugins registered for `UIApplicationDelegate` callbacks.
+  */
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)application:(UIApplication*)application
+     didReceiveLocalNotification:(UILocalNotification*)notification
+     API_DEPRECATED(
+         "See -[UIApplicationDelegate application:didReceiveLocalNotification:] deprecation",
+         ios(4.0, 10.0));
++#endif
+ 
+ /**
+  * Called if this has been registered for `UIApplicationDelegate` callbacks.
+@@ -137,10 +141,12 @@ NS_ASSUME_NONNULL_BEGIN
+  *
+  * @return `YES` if this handles the request.
+  */
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (BOOL)application:(UIApplication*)application
+     performActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                completionHandler:(void (^)(BOOL succeeded))completionHandler
+     API_AVAILABLE(ios(9.0));
++#endif
+ 
+ /**
+  * Called if this has been registered for `UIApplicationDelegate` callbacks.
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterPluginAppLifeCycleDelegate.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterPluginAppLifeCycleDelegate.h
+index 95d1e611..bad13d42 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterPluginAppLifeCycleDelegate.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterPluginAppLifeCycleDelegate.h
+@@ -42,11 +42,13 @@ FLUTTER_DARWIN_EXPORT
+ /**
+  * Called if this plugin has been registered for `UIApplicationDelegate` callbacks.
+  */
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)application:(UIApplication*)application
+     didRegisterUserNotificationSettings:(UIUserNotificationSettings*)notificationSettings
+     API_DEPRECATED(
+         "See -[UIApplicationDelegate application:didRegisterUserNotificationSettings:] deprecation",
+         ios(8.0, 10.0));
++#endif
+ 
+ /**
+  * Calls all plugins registered for `UIApplicationDelegate` callbacks.
+@@ -70,11 +72,13 @@ FLUTTER_DARWIN_EXPORT
+ /**
+  * Calls all plugins registered for `UIApplicationDelegate` callbacks.
+  */
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)application:(UIApplication*)application
+     didReceiveLocalNotification:(UILocalNotification*)notification
+     API_DEPRECATED(
+         "See -[UIApplicationDelegate application:didReceiveLocalNotification:] deprecation",
+         ios(4.0, 10.0));
++#endif
+ 
+ /**
+  * Calls all plugins registered for `UIApplicationDelegate` callbacks in order of registration until
+@@ -108,10 +112,12 @@ FLUTTER_DARWIN_EXPORT
+ /**
+  * Calls all plugins registered for `UIApplicationDelegate` callbacks.
+  */
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)application:(UIApplication*)application
+     performActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                completionHandler:(void (^)(BOOL succeeded))completionHandler
+     API_AVAILABLE(ios(9.0));
++#endif
+ 
+ /**
+  * Calls all plugins registered for `UIApplicationDelegate` callbacks in order of registration until
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterSceneLifeCycle.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterSceneLifeCycle.h
+index 72f1568a..a09f825f 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterSceneLifeCycle.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Headers/FlutterSceneLifeCycle.h
+@@ -84,6 +84,7 @@ API_AVAILABLE(ios(13.0))
+ 
+ #pragma mark - Performing tasks
+ 
++#if !TARGET_OS_TV
+ /**
+  * Tells the delegate that the user has selected a home screen quick action.
+  *
+@@ -95,6 +96,7 @@ API_AVAILABLE(ios(13.0))
+ - (BOOL)windowScene:(UIWindowScene*)windowScene
+     performActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                completionHandler:(void (^)(BOOL succeeded))completionHandler;
++#endif  // !TARGET_OS_TV
+ 
+ @end
+ 
+@@ -190,6 +192,7 @@ API_AVAILABLE(ios(13.0))
+ 
+ #pragma mark - Performing tasks
+ 
++#if !TARGET_OS_TV
+ /**
+  * Calls all plugins registered for `UIWindowScene` callbacks in order of registration until
+  * a plugin handles the request.
+@@ -197,6 +200,7 @@ API_AVAILABLE(ios(13.0))
+ - (void)windowScene:(UIWindowScene*)windowScene
+     performActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                completionHandler:(void (^)(BOOL succeeded))completionHandler;
++#endif  // !TARGET_OS_TV
+ 
+ @end
+ 

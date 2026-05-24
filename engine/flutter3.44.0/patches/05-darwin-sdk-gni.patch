@@ -1,0 +1,39 @@
+diff --git a/engine/src/build/config/darwin/darwin_sdk.gni b/engine/src/build/config/darwin/darwin_sdk.gni
+index 6c3cd0ce..9cd40c6e 100644
+--- a/engine/src/build/config/darwin/darwin_sdk.gni
++++ b/engine/src/build/config/darwin/darwin_sdk.gni
+@@ -136,17 +136,17 @@ if (is_ios) {
+   if (ios_platform_path == "" || ios_sdk_path == "") {
+     if (use_ios_simulator) {
+       if (ios_simulator_platform_path == "") {
+-        ios_simulator_platform_path = _sdk_result.iphonesimulator_platform_path
++        ios_simulator_platform_path = _sdk_result.appletvsimulator_platform_path
+       }
+       if (ios_simulator_sdk_path == "") {
+-        ios_simulator_sdk_path = _sdk_result.iphonesimulator_sdk_path
++        ios_simulator_sdk_path = _sdk_result.appletvsimulator_sdk_path
+       }
+     } else {
+       if (ios_device_platform_path == "") {
+-        ios_device_platform_path = _sdk_result.iphoneos_platform_path
++        ios_device_platform_path = _sdk_result.appletvos_platform_path
+       }
+       if (ios_device_sdk_path == "") {
+-        ios_device_sdk_path = _sdk_result.iphoneos_sdk_path
++        ios_device_sdk_path = _sdk_result.appletvos_sdk_path
+       }
+     }
+ 
+@@ -167,10 +167,10 @@ if (is_ios) {
+     ios_swift_lib_paths += [ rebase_path("$ios_sdk_path/usr/lib/swift") ]
+     if (use_ios_simulator) {
+       ios_swift_lib_paths += [ rebase_path(
+-              "$mac_host_toolchain_path/usr/lib/swift/iphonesimulator") ]
++              "$mac_host_toolchain_path/usr/lib/swift/appletvsimulator") ]
+     } else {
+       ios_swift_lib_paths +=
+-          [ rebase_path("$mac_host_toolchain_path/usr/lib/swift/iphoneos") ]
++          [ rebase_path("$mac_host_toolchain_path/usr/lib/swift/appletvos") ]
+     }
+   }
+ }

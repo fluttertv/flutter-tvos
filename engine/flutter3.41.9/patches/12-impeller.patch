@@ -1,0 +1,68 @@
+diff --git a/engine/src/flutter/impeller/renderer/backend/metal/allocator_mtl.mm b/engine/src/flutter/impeller/renderer/backend/metal/allocator_mtl.mm
+index 0b4f846d..d3fc1eb2 100644
+--- a/engine/src/flutter/impeller/renderer/backend/metal/allocator_mtl.mm
++++ b/engine/src/flutter/impeller/renderer/backend/metal/allocator_mtl.mm
+@@ -175,7 +175,7 @@ std::shared_ptr<Texture> AllocatorMTL::OnCreateTexture(
+   mtl_texture_desc.storageMode = ToMTLStorageMode(
+       desc.storage_mode, supports_memoryless_targets_, supports_uma_);
+ 
+-  if (@available(macOS 12.5, ios 15.0, *)) {
++  if (@available(macOS 12.5, ios 15.0, tvOS 16.0, *)) {
+     if (desc.compression_type == CompressionType::kLossy &&
+         SupportsLossyTextureCompression(device_)) {
+       mtl_texture_desc.compressionType = MTLTextureCompressionTypeLossy;
+diff --git a/engine/src/flutter/impeller/renderer/backend/metal/command_buffer_mtl.mm b/engine/src/flutter/impeller/renderer/backend/metal/command_buffer_mtl.mm
+index 8b6e5a3e..67d9d03d 100644
+--- a/engine/src/flutter/impeller/renderer/backend/metal/command_buffer_mtl.mm
++++ b/engine/src/flutter/impeller/renderer/backend/metal/command_buffer_mtl.mm
+@@ -14,7 +14,7 @@
+ 
+ namespace impeller {
+ 
+-API_AVAILABLE(ios(14.0), macos(11.0))
++API_AVAILABLE(ios(14.0), macos(11.0), tvos(14.0))
+ static NSString* MTLCommandEncoderErrorStateToString(
+     MTLCommandEncoderErrorState state) {
+   switch (state) {
+@@ -85,7 +85,7 @@ static bool LogMTLCommandBufferErrorIfPresent(id<MTLCommandBuffer> buffer) {
+            << std::endl;
+   }
+ 
+-  if (@available(iOS 14.0, macOS 11.0, *)) {
++  if (@available(iOS 14.0, macOS 11.0, tvOS 14.0, *)) {
+     NSArray<id<MTLCommandBufferEncoderInfo>>* infos =
+         buffer.error.userInfo[MTLCommandBufferEncoderInfoErrorKey];
+     for (id<MTLCommandBufferEncoderInfo> info in infos) {
+@@ -116,7 +116,7 @@ static bool LogMTLCommandBufferErrorIfPresent(id<MTLCommandBuffer> buffer) {
+ 
+ static id<MTLCommandBuffer> CreateCommandBuffer(id<MTLCommandQueue> queue) {
+ #ifndef FLUTTER_RELEASE
+-  if (@available(iOS 14.0, macOS 11.0, *)) {
++  if (@available(iOS 14.0, macOS 11.0, tvOS 14.0, *)) {
+     auto desc = [[MTLCommandBufferDescriptor alloc] init];
+     // Degrades CPU performance slightly but is well worth the cost for typical
+     // Impeller workloads.
+diff --git a/engine/src/flutter/impeller/renderer/backend/metal/sampler_library_mtl.mm b/engine/src/flutter/impeller/renderer/backend/metal/sampler_library_mtl.mm
+index 65caef79..c9aba154 100644
+--- a/engine/src/flutter/impeller/renderer/backend/metal/sampler_library_mtl.mm
++++ b/engine/src/flutter/impeller/renderer/backend/metal/sampler_library_mtl.mm
+@@ -31,7 +31,7 @@ raw_ptr<const Sampler> SamplerLibraryMTL::GetSampler(
+   desc.sAddressMode = ToMTLSamplerAddressMode(descriptor.width_address_mode);
+   desc.tAddressMode = ToMTLSamplerAddressMode(descriptor.height_address_mode);
+   desc.rAddressMode = ToMTLSamplerAddressMode(descriptor.depth_address_mode);
+-  if (@available(iOS 14.0, macos 10.12, *)) {
++  if (@available(iOS 14.0, macos 10.12, tvOS 16.0, *)) {
+     desc.borderColor = MTLSamplerBorderColorTransparentBlack;
+   }
+ #ifdef IMPELLER_DEBUG
+diff --git a/engine/src/flutter/impeller/renderer/backend/metal/swapchain_transients_mtl.h b/engine/src/flutter/impeller/renderer/backend/metal/swapchain_transients_mtl.h
+index 812bb6cb..0975d79f 100644
+--- a/engine/src/flutter/impeller/renderer/backend/metal/swapchain_transients_mtl.h
++++ b/engine/src/flutter/impeller/renderer/backend/metal/swapchain_transients_mtl.h
+@@ -53,4 +53,4 @@ class SwapchainTransientsMTL {
+ 
+ }  // namespace impeller
+ 
+-#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_METAL_SWAPCHAIN_TRANSIENTS_MTL_H_
+\ No newline at end of file
++#endif  // FLUTTER_IMPELLER_RENDERER_BACKEND_METAL_SWAPCHAIN_TRANSIENTS_MTL_H_

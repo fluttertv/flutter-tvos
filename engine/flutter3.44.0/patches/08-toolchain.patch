@@ -1,0 +1,31 @@
+diff --git a/engine/src/build/toolchain/mac/BUILD.gn b/engine/src/build/toolchain/mac/BUILD.gn
+index a3dfd6f2..67e2beaa 100644
+--- a/engine/src/build/toolchain/mac/BUILD.gn
++++ b/engine/src/build/toolchain/mac/BUILD.gn
+@@ -444,7 +444,7 @@ if (is_ios) {
+ 
+     sysroot_rel = rebase_path(ios_sdk_path, root_build_dir)
+     sysroot_flags =
+-        "-isysroot $sysroot_rel -miphoneos-version-min=$ios_deployment_target"
++        "-isysroot $sysroot_rel -mtvos-version-min=$ios_deployment_target"
+   }
+ 
+   # Toolchain used for iOS simulator targets (arm64).
+@@ -461,7 +461,7 @@ if (is_ios) {
+     is_clang = true
+ 
+     sysroot_rel = rebase_path(ios_sdk_path, root_build_dir)
+-    sysroot_flags = "-isysroot $sysroot_rel -mios-simulator-version-min=$ios_deployment_target"
++    sysroot_flags = "-isysroot $sysroot_rel -mappletvsimulator-version-min=$ios_deployment_target"
+   }
+ 
+   # Toolchain used for iOS simulator targets (x64).
+@@ -478,7 +478,7 @@ if (is_ios) {
+     is_clang = true
+ 
+     sysroot_rel = rebase_path(ios_sdk_path, root_build_dir)
+-    sysroot_flags = "-isysroot $sysroot_rel -mios-simulator-version-min=$ios_deployment_target"
++    sysroot_flags = "-isysroot $sysroot_rel -mappletvsimulator-version-min=$ios_deployment_target"
+   }
+ }
+ 

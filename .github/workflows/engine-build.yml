@@ -1,0 +1,36 @@
+name: Build tvOS Engine Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      flutter_version:
+        description: 'Flutter version (e.g. 3.44.0)'
+        required: true
+      publish:
+        description: 'Publish to fluttertv/engine-artifacts'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: self-hosted
+    timeout-minutes: 240
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build tvOS engine artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FLUTTER_VERSION: ${{ inputs.flutter_version }}
+          PUBLISH: ${{ inputs.publish }}
+          # Workspace lives outside the repo checkout — persists between runs
+          # so gclient sync and ninja cache are reused.
+          TVOS_ENGINE_WORKSPACE: ${{ runner.workspace }}/../tvos_engine_builds
+        run: |
+          chmod +x engine/build.sh
+          PUBLISH_FLAG=""
+          if [ "$PUBLISH" = "true" ]; then
+            PUBLISH_FLAG="--publish"
+          fi
+          ./engine/build.sh all --version "$FLUTTER_VERSION" $PUBLISH_FLAG

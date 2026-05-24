@@ -1,0 +1,55 @@
+diff --git a/runtime/platform/globals.h b/runtime/platform/globals.h
+index 124b85be8d6..ef24f05f1ec 100644
+--- a/runtime/platform/globals.h
++++ b/runtime/platform/globals.h
+@@ -119,7 +119,14 @@
+ // Define the flavor of Mac OS we are running on.
+ #include <TargetConditionals.h>
+ #define DART_HOST_OS_MACOS 1
+-#if TARGET_OS_IPHONE
++// On tvOS we define BOTH DART_HOST_OS_TVOS (so Platform.operatingSystem
++// returns "tvos") AND DART_HOST_OS_IOS (so the existing DART_HOST_OS_IOS
++// guards disable iOS-restricted syscalls like fork() — tvOS is at least
++// as restricted as iOS, so every one of those gates is still required).
++#if TARGET_OS_TV
++#define DART_HOST_OS_TVOS 1
++#define DART_HOST_OS_IOS 1
++#elif TARGET_OS_IPHONE
+ #define DART_HOST_OS_IOS 1
+ #endif
+ 
+@@ -741,6 +748,8 @@ DART_FORCE_INLINE D bit_copy(const S& source) {
+ #define kHostOperatingSystemName "android"
+ #elif defined(DART_HOST_OS_FUCHSIA)
+ #define kHostOperatingSystemName "fuchsia"
++#elif defined(DART_HOST_OS_TVOS)
++#define kHostOperatingSystemName "tvos"
+ #elif defined(DART_HOST_OS_IOS)
+ #define kHostOperatingSystemName "ios"
+ #elif defined(DART_HOST_OS_LINUX)
+diff --git a/sdk/lib/io/platform.dart b/sdk/lib/io/platform.dart
+index 0a532f21013..85ba22223a3 100644
+--- a/sdk/lib/io/platform.dart
++++ b/sdk/lib/io/platform.dart
+@@ -157,8 +157,20 @@ abstract final class Platform {
+ 
+   /// Whether the operating system is a version of
+   /// [iOS](https://en.wikipedia.org/wiki/IOS).
++  ///
++  /// On tvOS this also returns `true`, because tvOS is an iOS-family
++  /// operating system. Use [isTvOS] or `operatingSystem == "tvos"` to
++  /// distinguish tvOS from phone/tablet iOS.
++  @pragma("vm:platform-const")
++  static final bool isIOS =
++      (operatingSystem == "ios" || operatingSystem == "tvos");
++
++  /// Whether the operating system is a version of
++  /// [tvOS](https://en.wikipedia.org/wiki/TvOS).
++  ///
++  /// tvOS is an iOS-family OS, so [isIOS] is also `true` on tvOS.
+   @pragma("vm:platform-const")
+-  static final bool isIOS = (operatingSystem == "ios");
++  static final bool isTvOS = (operatingSystem == "tvos");
+ 
+   /// Whether the operating system is a version of
+   /// [Fuchsia](https://en.wikipedia.org/wiki/Google_Fuchsia).

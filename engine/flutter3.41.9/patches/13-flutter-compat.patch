@@ -1,0 +1,200 @@
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine.mm
+index 41c5a661..9e166f2b 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine.mm
+@@ -140,6 +140,9 @@ NSString* const kFlutterApplicationRegistrarKey = @"io.flutter.flutter.applicati
+ 
+ @property(nonatomic, strong) FlutterPlatformPlugin* platformPlugin;
+ @property(nonatomic, strong) FlutterTextInputPlugin* textInputPlugin;
++#if TARGET_OS_TV
++@property(nonatomic, strong, nullable) FlutterTvRemotePlugin* tvRemotePlugin;
++#endif
+ @property(nonatomic, strong) FlutterUndoManagerPlugin* undoManagerPlugin;
+ @property(nonatomic, strong) FlutterSpellCheckPlugin* spellCheckPlugin;
+ @property(nonatomic, strong) FlutterRestorationPlugin* restorationPlugin;
+@@ -702,6 +705,9 @@ NSString* const kFlutterApplicationRegistrarKey = @"io.flutter.flutter.applicati
+ 
+   self.undoManagerPlugin = [[FlutterUndoManagerPlugin alloc] initWithDelegate:self];
+   self.platformPlugin = [[FlutterPlatformPlugin alloc] initWithEngine:self];
++#if TARGET_OS_TV
++  self.tvRemotePlugin = [[FlutterTvRemotePlugin alloc] initWithEngine:self];
++#endif
+ 
+   self.restorationPlugin =
+       [[FlutterRestorationPlugin alloc] initWithChannel:self.restorationChannel
+@@ -1131,17 +1137,23 @@ static void SetEntryPoint(flutter::Settings* settings, NSString* entrypoint, NSS
+ 
+ - (void)flutterTextInputView:(FlutterTextInputView*)textInputView
+            shareSelectedText:(NSString*)selectedText {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   [self.platformPlugin showShareViewController:selectedText];
++#endif
+ }
+ 
+ - (void)flutterTextInputView:(FlutterTextInputView*)textInputView
+     searchWebWithSelectedText:(NSString*)selectedText {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   [self.platformPlugin searchWeb:selectedText];
++#endif
+ }
+ 
+ - (void)flutterTextInputView:(FlutterTextInputView*)textInputView
+           lookUpSelectedText:(NSString*)selectedText {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   [self.platformPlugin showLookUpViewController:selectedText];
++#endif
+ }
+ 
+ - (void)flutterTextInputView:(FlutterTextInputView*)textInputView
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine_Internal.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine_Internal.h
+index a1818b2d..aecf01cf 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine_Internal.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine_Internal.h
+@@ -28,6 +28,10 @@
+ #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.h"
+ #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterView.h"
+ 
++#if TARGET_OS_TV
++#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterTvRemotePlugin.h"
++#endif
++
+ NS_ASSUME_NONNULL_BEGIN
+ 
+ @interface FlutterEngine () <FlutterViewEngineDelegate>
+@@ -52,6 +56,9 @@ NS_ASSUME_NONNULL_BEGIN
+ 
+ - (FlutterPlatformPlugin*)platformPlugin;
+ - (FlutterTextInputPlugin*)textInputPlugin;
++#if TARGET_OS_TV
++- (FlutterTvRemotePlugin*)tvRemotePlugin;
++#endif
+ - (FlutterRestorationPlugin*)restorationPlugin;
+ - (FlutterEnginePluginSceneLifeCycleDelegate*)sceneLifeCycleDelegate;
+ - (void)launchEngine:(nullable NSString*)entrypoint
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.h
+index f8f40eda..16bafbe5 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformPlugin.h
+@@ -14,9 +14,11 @@
+ - (instancetype)initWithEngine:(FlutterEngine*)engine NS_DESIGNATED_INITIALIZER;
+ - (void)handleMethodCall:(FlutterMethodCall*)call result:(FlutterResult)result;
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)showShareViewController:(NSString*)content;
+ - (void)searchWeb:(NSString*)searchTerm;
+ - (void)showLookUpViewController:(NSString*)term;
++#endif
+ @end
+ 
+ namespace flutter {
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h
+index bc47d4ab..6ab82c04 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h
+@@ -57,7 +57,9 @@ typedef void (^FlutterKeyboardAnimationCallback)(fml::TimePoint);
+  *        This is ignored when `UIViewControllerBasedStatusBarAppearance` in info.plist
+  *        of the app project is `false`.
+  */
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ @property(nonatomic, assign, readwrite) BOOL prefersStatusBarHidden;
++#endif
+ 
+ @property(nonatomic, readonly) FlutterPlatformViewsController* platformViewsController;
+ 
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.h
+index 2c9e0516..e53e1af4 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.h
+@@ -178,11 +178,13 @@ constexpr float kScrollExtentMaxForInf = 1000;
+ 
+ @end
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ /// The semantics object for switch buttons. This class creates an UISwitch to interact with the
+ /// iOS.
+ @interface FlutterSwitchSemanticsObject : SemanticsObject
+ 
+ @end
++#endif  // !TARGET_OS_TV
+ 
+ /// The semantics object for scrollable. This class creates an UIScrollView to interact with the
+ /// iOS.
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.mm
+index cdcce174..797f2ed7 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.mm
+@@ -94,6 +94,7 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
+ 
+ }  // namespace
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ @interface FlutterSwitchSemanticsObject ()
+ @property(nonatomic, retain, readonly) UISwitch* nativeSwitch;
+ @end
+@@ -140,6 +141,7 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
+ }
+ 
+ @end  // FlutterSwitchSemanticsObject
++#endif  // !TARGET_OS_TV
+ 
+ @interface FlutterScrollableSemanticsObject ()
+ @property(nonatomic) FlutterSemanticsScrollView* scrollView;
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/accessibility_bridge.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/accessibility_bridge.mm
+index 202d54de..5e8514c6 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/accessibility_bridge.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/accessibility_bridge.mm
+@@ -272,7 +272,11 @@ static SemanticsObject* CreateObject(const flutter::SemanticsNode& node,
+   } else if (!node.flags.isInMutuallyExclusiveGroup &&
+              (node.flags.isToggled != flutter::SemanticsTristate::kNone ||
+               node.flags.isChecked != flutter::SemanticsCheckState::kNone)) {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+     return [[FlutterSwitchSemanticsObject alloc] initWithBridge:weak_ptr uid:node.id];
++#else
++    return [[FlutterSemanticsObject alloc] initWithBridge:weak_ptr uid:node.id];
++#endif
+   } else if (node.flags.hasImplicitScrolling) {
+     return [[FlutterScrollableSemanticsObject alloc] initWithBridge:weak_ptr uid:node.id];
+   } else if (node.IsPlatformViewNode()) {
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/profiler_metrics_ios.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/profiler_metrics_ios.mm
+index 0a4ba99a..9480cf4c 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/profiler_metrics_ios.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/profiler_metrics_ios.mm
+@@ -116,11 +116,13 @@ std::optional<GpuUsageInfo> PollGpuUsage() {
+ #if (FLUTTER_RUNTIME_MODE == FLUTTER_RUNTIME_MODE_RELEASE || \
+      FLUTTER_RUNTIME_MODE == FLUTTER_RUNTIME_MODE_JIT_RELEASE)
+   return std::nullopt;
+-#elif TARGET_IPHONE_SIMULATOR
++#elif TARGET_IPHONE_SIMULATOR || TARGET_OS_SIMULATOR
+   return FindSimulatorGpuUsageInfo();
+ #elif TARGET_OS_IOS
+   return FindDeviceGpuUsageInfo();
+-#endif  // TARGET_IPHONE_SIMULATOR
++#else
++  return std::nullopt;
++#endif
+ }
+ }  // namespace
+ 
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/rendering_api_selection.mm b/engine/src/flutter/shell/platform/darwin/ios/rendering_api_selection.mm
+index 5c77f93c..643228a4 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/rendering_api_selection.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/rendering_api_selection.mm
+@@ -20,12 +20,18 @@ FLUTTER_ASSERT_ARC
+ namespace flutter {
+ 
+ bool ShouldUseMetalRenderer() {
++#if defined(TARGET_OS_TV) && TARGET_OS_TV
++  // All Apple TV hardware ≥ 4th gen supports Metal; tvOS 9+ has Metal.
++  // MTLFeatureSet_iOS_* enums are unavailable on tvOS.
++  return MTLCreateSystemDefaultDevice() != nil;
++#else
+   bool ios_version_supports_metal = false;
+   if (@available(iOS METAL_IOS_VERSION_BASELINE, *)) {
+     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+     ios_version_supports_metal = [device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily1_v3];
+   }
+   return ios_version_supports_metal;
++#endif
+ }
+ 
+ IOSRenderingAPI GetRenderingAPIForProcess(bool force_software) {

@@ -1,0 +1,13 @@
+diff --git a/engine/src/build/config/darwin/BUILD.gn b/engine/src/build/config/darwin/BUILD.gn
+index 61c58c70..d63f339a 100644
+--- a/engine/src/build/config/darwin/BUILD.gn
++++ b/engine/src/build/config/darwin/BUILD.gn
+@@ -35,7 +35,7 @@ config("compiler") {
+ 
+   # OS and deployment target.
+   if (is_ios) {
+-    _triplet_os = "apple-ios"
++    _triplet_os = "apple-tvos"
+     _deployment_target = ios_deployment_target
+   } else if (is_mac) {
+     _triplet_os = "apple-macos"

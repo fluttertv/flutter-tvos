@@ -1,0 +1,13 @@
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/UIPressProxy.swift b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/UIPressProxy.swift
+index 6b0810f9..63a7c514 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/UIPressProxy.swift
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/UIPressProxy.swift
+@@ -7,7 +7,7 @@ import UIKit
+ /// A event class that is a wrapper around a UIPress and a UIEvent to allow
+ /// overriding for testing purposes, since UIKit doesn't allow creation of
+ /// UIEvent or UIPress directly.
+-@available(iOS 13.4, *)
++@available(iOS 13.4, tvOS 13.4, *)
+ @objc(FlutterUIPressProxy)
+ public class UIPressProxy: NSObject {
+   private var press: UIPress?

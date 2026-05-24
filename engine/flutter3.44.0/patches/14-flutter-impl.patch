@@ -1,0 +1,1569 @@
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterAppDelegate.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterAppDelegate.mm
+index 03bf0b3d..35f01b57 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterAppDelegate.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterAppDelegate.mm
+@@ -88,6 +88,7 @@ static NSString* const kBackgroundFetchCapatibility = @"fetch";
+ - (void)applicationWillTerminate:(UIApplication*)application {
+ }
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+ - (void)application:(UIApplication*)application
+@@ -96,6 +97,7 @@ static NSString* const kBackgroundFetchCapatibility = @"fetch";
+       didRegisterUserNotificationSettings:notificationSettings];
+ }
+ #pragma GCC diagnostic pop
++#endif
+ 
+ - (void)application:(UIApplication*)application
+     didRegisterForRemoteNotificationsWithDeviceToken:(NSData*)deviceToken {
+@@ -109,6 +111,7 @@ static NSString* const kBackgroundFetchCapatibility = @"fetch";
+       didFailToRegisterForRemoteNotificationsWithError:error];
+ }
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+ - (void)application:(UIApplication*)application
+@@ -116,7 +119,9 @@ static NSString* const kBackgroundFetchCapatibility = @"fetch";
+   [self.lifeCycleDelegate application:application didReceiveLocalNotification:notification];
+ }
+ #pragma GCC diagnostic pop
++#endif
+ 
++#if !TARGET_OS_TV
+ - (void)userNotificationCenter:(UNUserNotificationCenter*)center
+        willPresentNotification:(UNNotification*)notification
+          withCompletionHandler:
+@@ -140,6 +145,7 @@ static NSString* const kBackgroundFetchCapatibility = @"fetch";
+                              withCompletionHandler:completionHandler];
+   }
+ }
++#endif  // !TARGET_OS_TV
+ 
+ // This method is called when opening an URL with custom schemes.
+ - (BOOL)application:(UIApplication*)application
+@@ -197,6 +203,7 @@ static NSString* const kBackgroundFetchCapatibility = @"fetch";
+                                   annotation:annotation];
+ }
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)application:(UIApplication*)application
+     performActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                completionHandler:(void (^)(BOOL succeeded))completionHandler {
+@@ -204,6 +211,7 @@ static NSString* const kBackgroundFetchCapatibility = @"fetch";
+          performActionForShortcutItem:shortcutItem
+                     completionHandler:completionHandler];
+ }
++#endif
+ 
+ - (void)application:(UIApplication*)application
+     handleEventsForBackgroundURLSession:(nonnull NSString*)identifier
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine.mm
+index 6b4969ab..a0058b93 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine.mm
+@@ -140,6 +140,9 @@ NSString* const kFlutterApplicationRegistrarKey = @"io.flutter.flutter.applicati
+ 
+ @property(nonatomic, strong) FlutterPlatformPlugin* platformPlugin;
+ @property(nonatomic, strong) FlutterTextInputPlugin* textInputPlugin;
++#if TARGET_OS_TV
++@property(nonatomic, strong, nullable) FlutterTvRemotePlugin* tvRemotePlugin;
++#endif
+ @property(nonatomic, strong) FlutterUndoManagerPlugin* undoManagerPlugin;
+ @property(nonatomic, strong) FlutterSpellCheckPlugin* spellCheckPlugin;
+ @property(nonatomic, strong) FlutterRestorationPlugin* restorationPlugin;
+@@ -702,6 +705,9 @@ NSString* const kFlutterApplicationRegistrarKey = @"io.flutter.flutter.applicati
+ 
+   self.undoManagerPlugin = [[FlutterUndoManagerPlugin alloc] initWithDelegate:self];
+   self.platformPlugin = [[FlutterPlatformPlugin alloc] initWithEngine:self];
++#if TARGET_OS_TV
++  self.tvRemotePlugin = [[FlutterTvRemotePlugin alloc] initWithEngine:self];
++#endif
+ 
+   self.restorationPlugin =
+       [[FlutterRestorationPlugin alloc] initWithChannel:self.restorationChannel
+@@ -1131,17 +1137,23 @@ static void SetEntryPoint(flutter::Settings* settings, NSString* entrypoint, NSS
+ 
+ - (void)flutterTextInputView:(FlutterTextInputView*)textInputView
+            shareSelectedText:(NSString*)selectedText {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   [self.platformPlugin showShareViewController:selectedText];
++#endif
+ }
+ 
+ - (void)flutterTextInputView:(FlutterTextInputView*)textInputView
+     searchWebWithSelectedText:(NSString*)selectedText {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   [self.platformPlugin searchWeb:selectedText];
++#endif
+ }
+ 
+ - (void)flutterTextInputView:(FlutterTextInputView*)textInputView
+           lookUpSelectedText:(NSString*)selectedText {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+   [self.platformPlugin showLookUpViewController:selectedText];
++#endif
+ }
+ 
+ - (void)flutterTextInputView:(FlutterTextInputView*)textInputView
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine_Internal.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine_Internal.h
+index a1818b2d..aecf01cf 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine_Internal.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterEngine_Internal.h
+@@ -28,6 +28,10 @@
+ #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.h"
+ #import "flutter/shell/platform/darwin/ios/framework/Source/FlutterView.h"
+ 
++#if TARGET_OS_TV
++#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterTvRemotePlugin.h"
++#endif
++
+ NS_ASSUME_NONNULL_BEGIN
+ 
+ @interface FlutterEngine () <FlutterViewEngineDelegate>
+@@ -52,6 +56,9 @@ NS_ASSUME_NONNULL_BEGIN
+ 
+ - (FlutterPlatformPlugin*)platformPlugin;
+ - (FlutterTextInputPlugin*)textInputPlugin;
++#if TARGET_OS_TV
++- (FlutterTvRemotePlugin*)tvRemotePlugin;
++#endif
+ - (FlutterRestorationPlugin*)restorationPlugin;
+ - (FlutterEnginePluginSceneLifeCycleDelegate*)sceneLifeCycleDelegate;
+ - (void)launchEngine:(nullable NSString*)entrypoint
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPluginAppLifeCycleDelegate.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPluginAppLifeCycleDelegate.mm
+index cbd3d8b1..4f5d6c4e 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPluginAppLifeCycleDelegate.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPluginAppLifeCycleDelegate.mm
+@@ -205,9 +205,11 @@ static NSDictionary<UIApplicationLaunchOptionsKey, id>* ConvertConnectionOptions
+   NSMutableDictionary<UIApplicationLaunchOptionsKey, id>* convertedOptions =
+       [NSMutableDictionary dictionary];
+ 
++#if !TARGET_OS_TV
+   if (connectionOptions.shortcutItem) {
+     convertedOptions[UIApplicationLaunchOptionsShortcutItemKey] = connectionOptions.shortcutItem;
+   }
++#endif
+   if (connectionOptions.sourceApplication) {
+     convertedOptions[UIApplicationLaunchOptionsSourceApplicationKey] =
+         connectionOptions.sourceApplication;
+@@ -392,6 +394,7 @@ static NSDictionary<UIApplicationLaunchOptionsKey, id>* ConvertConnectionOptions
+   }
+ }
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+ - (void)application:(UIApplication*)application
+@@ -406,6 +409,7 @@ static NSDictionary<UIApplicationLaunchOptionsKey, id>* ConvertConnectionOptions
+   }
+ }
+ #pragma GCC diagnostic pop
++#endif
+ 
+ - (void)application:(UIApplication*)application
+     didRegisterForRemoteNotificationsWithDeviceToken:(NSData*)deviceToken {
+@@ -449,6 +453,7 @@ static NSDictionary<UIApplicationLaunchOptionsKey, id>* ConvertConnectionOptions
+   }
+ }
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ #pragma GCC diagnostic push
+ #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+ - (void)application:(UIApplication*)application
+@@ -463,6 +468,7 @@ static NSDictionary<UIApplicationLaunchOptionsKey, id>* ConvertConnectionOptions
+   }
+ }
+ #pragma GCC diagnostic pop
++#endif
+ 
+ - (void)userNotificationCenter:(UNUserNotificationCenter*)center
+        willPresentNotification:(UNNotification*)notification
+@@ -477,6 +483,7 @@ static NSDictionary<UIApplicationLaunchOptionsKey, id>* ConvertConnectionOptions
+   }
+ }
+ 
++#if !TARGET_OS_TV
+ - (void)userNotificationCenter:(UNUserNotificationCenter*)center
+     didReceiveNotificationResponse:(UNNotificationResponse*)response
+              withCompletionHandler:(void (^)(void))completionHandler {
+@@ -488,6 +495,7 @@ static NSDictionary<UIApplicationLaunchOptionsKey, id>* ConvertConnectionOptions
+     }
+   }
+ }
++#endif  // !TARGET_OS_TV
+ 
+ - (BOOL)application:(UIApplication*)application
+             openURL:(NSURL*)url
+@@ -544,11 +552,13 @@ static NSDictionary<UIApplicationOpenURLOptionsKey, id>* ConvertOptions(
+     convertedOptions[UIApplicationOpenURLOptionsAnnotationKey] = options.annotation;
+   }
+   convertedOptions[UIApplicationOpenURLOptionsOpenInPlaceKey] = @(options.openInPlace);
++#if !TARGET_OS_TV
+   if (@available(iOS 14.5, *)) {
+     if (options.eventAttribution) {
+       convertedOptions[UIApplicationOpenURLOptionsEventAttributionKey] = options.eventAttribution;
+     }
+   }
++#endif
+   return convertedOptions;
+ }
+ 
+@@ -586,6 +596,7 @@ static NSDictionary<UIApplicationOpenURLOptionsKey, id>* ConvertOptions(
+   return NO;
+ }
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ - (void)application:(UIApplication*)application
+     performActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                completionHandler:(void (^)(BOOL succeeded))completionHandler {
+@@ -627,6 +638,7 @@ static NSDictionary<UIApplicationOpenURLOptionsKey, id>* ConvertOptions(
+   }
+   return NO;
+ }
++#endif
+ 
+ - (BOOL)application:(UIApplication*)application
+     handleEventsForBackgroundURLSession:(nonnull NSString*)identifier
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPluginAppLifeCycleDelegate_internal.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPluginAppLifeCycleDelegate_internal.h
+index c68505a5..5aac94c9 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPluginAppLifeCycleDelegate_internal.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterPluginAppLifeCycleDelegate_internal.h
+@@ -84,6 +84,7 @@
+  */
+ - (BOOL)sceneFallbackContinueUserActivity:(NSUserActivity*)userActivity;
+ 
++#if !TARGET_OS_TV
+ /**
+  * Forwards the application equivalent lifecycle event of
+  * `windowScene:performActionForShortcutItem:completionHandler:` ->
+@@ -92,6 +93,7 @@
+  */
+ - (BOOL)sceneFallbackPerformActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                                 completionHandler:(void (^)(BOOL succeeded))completionHandler;
++#endif  // !TARGET_OS_TV
+ 
+ @end
+ ;
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneDelegate.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneDelegate.mm
+index 8973bd91..a66ee5ef 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneDelegate.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneDelegate.mm
+@@ -94,6 +94,7 @@ FLUTTER_ASSERT_ARC
+ 
+ #pragma mark - Performing tasks
+ 
++#if !TARGET_OS_TV
+ - (void)windowScene:(UIWindowScene*)windowScene
+     performActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                completionHandler:(void (^)(BOOL succeeded))completionHandler {
+@@ -101,6 +102,7 @@ FLUTTER_ASSERT_ARC
+               performActionForShortcutItem:shortcutItem
+                          completionHandler:completionHandler];
+ }
++#endif  // !TARGET_OS_TV
+ 
+ #pragma mark - Helpers
+ 
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneLifeCycle.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneLifeCycle.mm
+index 019de11b..dceda0e8 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneLifeCycle.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneLifeCycle.mm
+@@ -406,6 +406,7 @@ FLUTTER_ASSERT_ARC
+ 
+ #pragma mark - Performing tasks
+ 
++#if !TARGET_OS_TV
+ - (void)windowScene:(UIWindowScene*)windowScene
+     performActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                completionHandler:(void (^)(BOOL succeeded))completionHandler {
+@@ -426,6 +427,7 @@ FLUTTER_ASSERT_ARC
+                                 completionHandler:completionHandler];
+   }
+ }
++#endif  // !TARGET_OS_TV
+ 
+ #pragma mark - Helpers
+ 
+@@ -625,6 +627,7 @@ FLUTTER_ASSERT_ARC
+ 
+ #pragma mark - Performing tasks
+ 
++#if !TARGET_OS_TV
+ - (BOOL)windowScene:(UIWindowScene*)windowScene
+     performActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                completionHandler:(void (^)(BOOL succeeded))completionHandler {
+@@ -640,4 +643,5 @@ FLUTTER_ASSERT_ARC
+   }
+   return NO;
+ }
++#endif  // !TARGET_OS_TV
+ @end
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneLifeCycle_Internal.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneLifeCycle_Internal.h
+index 749c73b1..afad3f71 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneLifeCycle_Internal.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterSceneLifeCycle_Internal.h
+@@ -78,9 +78,11 @@
+ 
+ #pragma mark - Performing tasks
+ 
++#if !TARGET_OS_TV
+ - (BOOL)windowScene:(UIWindowScene*)windowScene
+     performActionForShortcutItem:(UIApplicationShortcutItem*)shortcutItem
+                completionHandler:(void (^)(BOOL succeeded))completionHandler;
++#endif  // !TARGET_OS_TV
+ 
+ @end
+ 
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.h
+index 6a49c7b8..a3e134ef 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.h
+@@ -30,14 +30,35 @@ typedef NS_ENUM(NSInteger, FlutterScribbleInteractionStatus) {
+   // NOLINTEND(readability-identifier-naming)
+ };
+ 
++#if TARGET_OS_TV
++@interface FlutterTextInputPlugin
++    : NSObject <FlutterKeySecondaryResponder>
++#else
+ @interface FlutterTextInputPlugin
+     : NSObject <FlutterKeySecondaryResponder, UIIndirectScribbleInteractionDelegate>
++#endif
+ 
+ @property(nonatomic, weak) UIViewController* viewController;
+ @property(nonatomic, weak) id<FlutterIndirectScribbleDelegate> indirectScribbleDelegate;
+ @property(nonatomic, strong)
+     NSMutableDictionary<UIScribbleElementIdentifier, NSValue*>* scribbleElements;
+ 
++#if TARGET_OS_TV
++/// YES when a text input client is active but the system keyboard has not been
++/// shown yet. On tvOS the keyboard should only appear on an explicit Select
++/// press, matching native UITextField behaviour.
++/// See: tvos_patches/TVOS_TEXT_INPUT_PATCH.md
++@property(nonatomic, readonly) BOOL tvosKeyboardPending;
++
++/// Activate the system virtual keyboard. Call from a user-interaction context
++/// (e.g. gesture recogniser) so the system honours becomeFirstResponder.
++/// Returns YES if the keyboard was activated.
++- (BOOL)tvosActivateKeyboard;
++
++/// Dismiss the system virtual keyboard and return focus to the view controller.
++- (void)tvosDismissKeyboard;
++#endif
++
+ - (instancetype)init NS_UNAVAILABLE;
+ + (instancetype)new NS_UNAVAILABLE;
+ 
+@@ -137,8 +158,12 @@ API_AVAILABLE(ios(13.0)) @interface FlutterTextPlaceholder : UITextPlaceholder
+ #if FLUTTER_RUNTIME_MODE == FLUTTER_RUNTIME_MODE_DEBUG
+ FLUTTER_DARWIN_EXPORT
+ #endif
++#if TARGET_OS_TV
++@interface FlutterTextInputView : UIView <UITextInput>
++#else
+ @interface FlutterTextInputView
+     : UIView <UITextInput, UIScribbleInteractionDelegate, UIEditMenuInteractionDelegate>
++#endif
+ 
+ // UITextInput
+ @property(nonatomic, readonly) NSMutableString* text;
+@@ -170,7 +195,9 @@ FLUTTER_DARWIN_EXPORT
+ @property(nonatomic) FlutterScribbleFocusStatus scribbleFocusStatus;
+ @property(nonatomic, strong) NSArray<FlutterTextSelectionRect*>* selectionRects;
+ 
++#if !TARGET_OS_TV
+ @property(nonatomic, strong) UIEditMenuInteraction* editMenuInteraction API_AVAILABLE(ios(16.0));
++#endif
+ - (void)resetScribbleInteractionStatusIfEnding;
+ - (BOOL)isScribbleAvailable;
+ 
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.mm
+index d454ada1..05f7a820 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.mm
+@@ -17,6 +17,14 @@
+ 
+ FLUTTER_ASSERT_ARC
+ 
++#if TARGET_OS_TV
++// Forward-declare the tvOS-only method on FlutterViewController so we can
++// access the accessibility selection view without importing the full header.
++@interface UIViewController (FlutterTvOSTextInput)
++- (UIView*)getAccessibilitySelectionView;
++@end
++#endif
++
+ static const char kTextAffinityDownstream[] = "TextAffinity.downstream";
+ static const char kTextAffinityUpstream[] = "TextAffinity.upstream";
+ // A delay before enabling the accessibility of FlutterTextInputView after
+@@ -825,7 +833,9 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+   bool _isFloatingCursorActive;
+   CGPoint _floatingCursorOffset;
+   bool _enableInteractiveSelection;
++#if !TARGET_OS_TV
+   UITextInteraction* _textInteraction API_AVAILABLE(ios(13.0));
++#endif
+ }
+ 
+ @synthesize tokenizer = _tokenizer;
+@@ -868,16 +878,20 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+       _inlinePredictionType = UITextInlinePredictionTypeNo;
+     }
+ 
++#if !TARGET_OS_TV
+     if (@available(iOS 14.0, *)) {
+       UIScribbleInteraction* interaction = [[UIScribbleInteraction alloc] initWithDelegate:self];
+       [self addInteraction:interaction];
+     }
++#endif
+   }
+ 
++#if !TARGET_OS_TV
+   if (@available(iOS 16.0, *)) {
+     _editMenuInteraction = [[UIEditMenuInteraction alloc] initWithDelegate:self];
+     [self addInteraction:_editMenuInteraction];
+   }
++#endif
+ 
+   return self;
+ }
+@@ -898,6 +912,7 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+ }
+ 
+ // DFS algorithm to search a UICommand from the menu tree.
++#if !TARGET_OS_TV
+ - (UICommand*)searchCommandWithSelector:(SEL)selector
+                                 element:(UIMenuElement*)element API_AVAILABLE(ios(16.0)) {
+   if ([element isKindOfClass:UICommand.class]) {
+@@ -1054,9 +1069,12 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+       [UIEditMenuConfiguration configurationWithIdentifier:nil sourcePoint:CGPointZero];
+   [self.editMenuInteraction presentEditMenuWithConfiguration:config];
+ }
++#endif
+ 
+ - (void)hideEditMenu API_AVAILABLE(ios(16.0)) {
++#if !TARGET_OS_TV
+   [self.editMenuInteraction dismissMenu];
++#endif
+ }
+ 
+ - (void)configureWithDictionary:(NSDictionary*)configuration {
+@@ -1172,6 +1190,7 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+   _hasPlaceholder = NO;
+ }
+ 
++#if !TARGET_OS_TV
+ - (UITextInteraction*)textInteraction API_AVAILABLE(ios(13.0)) {
+   if (!_textInteraction) {
+     _textInteraction = [UITextInteraction textInteractionForMode:UITextInteractionModeEditable];
+@@ -1179,6 +1198,7 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+   }
+   return _textInteraction;
+ }
++#endif
+ 
+ - (void)setTextInputState:(NSDictionary*)state {
+   // [UITextInteraction willMoveToView:] sometimes sets the textInput's inputDelegate
+@@ -1186,9 +1206,11 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+   // and selection changes when that happens, add a dummy UITextInteraction to this
+   // view so it sets a valid inputDelegate that we can call textWillChange et al. on.
+   // See https://github.com/flutter/engine/pull/32881.
++#if !TARGET_OS_TV
+   if (!self.inputDelegate && self.isFirstResponder) {
+     [self addInteraction:self.textInteraction];
+   }
++#endif
+ 
+   NSString* newText = state[@"text"];
+   BOOL textChanged = ![self.text isEqualToString:newText];
+@@ -1226,9 +1248,11 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+     [self.inputDelegate textDidChange:self];
+   }
+ 
++#if !TARGET_OS_TV
+   if (_textInteraction) {
+     [self removeInteraction:_textInteraction];
+   }
++#endif
+ }
+ 
+ // Forward touches to the viewResponder to allow tapping inside the UITextField as normal.
+@@ -1296,14 +1320,19 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+ // Checks whether Scribble features are possibly available – meaning this is an iPad running iOS
+ // 14 or higher.
+ - (BOOL)isScribbleAvailable {
++#if TARGET_OS_TV
++  return NO;
++#else
+   if (@available(iOS 14.0, *)) {
+     if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
+       return YES;
+     }
+   }
+   return NO;
++#endif
+ }
+ 
++#if !TARGET_OS_TV
+ - (void)scribbleInteractionWillBeginWriting:(UIScribbleInteraction*)interaction
+     API_AVAILABLE(ios(14.0)) {
+   _scribbleInteractionStatus = FlutterScribbleInteractionStatusStarted;
+@@ -1325,6 +1354,7 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+     API_AVAILABLE(ios(14.0)) {
+   return NO;
+ }
++#endif
+ 
+ #pragma mark - UIResponder Overrides
+ 
+@@ -1336,6 +1366,16 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+   return _textInputClient != 0;
+ }
+ 
++#if TARGET_OS_TV
++// tvOS focus engine requires canBecomeFocused=YES for becomeFirstResponder to
++// trigger the system virtual keyboard on non-UIControl views. UIView defaults
++// to NO; native UITextField inherits YES from UIControl.
++// See: tvos_patches/TVOS_TEXT_INPUT_PATCH.md
++- (BOOL)canBecomeFocused {
++  return _textInputClient != 0;
++}
++#endif
++
+ - (BOOL)resignFirstResponder {
+   BOOL success = [super resignFirstResponder];
+   if (success) {
+@@ -1348,6 +1388,9 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+ }
+ 
+ - (BOOL)canPerformAction:(SEL)action withSender:(id)sender {
++#if TARGET_OS_TV
++  return NO;
++#else
+   if (action == @selector(paste:)) {
+     // Forbid pasting images, memojis, or other non-string content.
+     return [UIPasteboard generalPasteboard].hasStrings;
+@@ -1363,24 +1406,31 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+     return NO;
+   }
+   return [super canPerformAction:action withSender:sender];
++#endif
+ }
+ 
+ #pragma mark - UIResponderStandardEditActions Overrides
+ 
+ - (void)cut:(id)sender {
++#if !TARGET_OS_TV
+   [UIPasteboard generalPasteboard].string = [self textInRange:_selectedTextRange];
+   [self replaceRange:_selectedTextRange withText:@""];
++#endif
+ }
+ 
+ - (void)copy:(id)sender {
++#if !TARGET_OS_TV
+   [UIPasteboard generalPasteboard].string = [self textInRange:_selectedTextRange];
++#endif
+ }
+ 
+ - (void)paste:(id)sender {
++#if !TARGET_OS_TV
+   NSString* pasteboardString = [UIPasteboard generalPasteboard].string;
+   if (pasteboardString != nil) {
+     [self insertText:pasteboardString];
+   }
++#endif
+ }
+ 
+ - (void)delete:(id)sender {
+@@ -1916,11 +1966,13 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+   // API (unlike iOS 17). So we return CGRectZero to hide it (unless if scribble is enabled).
+   // To support scribble's advanced gestures (e.g. insert a space with a vertical bar),
+   // at least 1 character's width is required.
++#if !TARGET_OS_TV
+   if (@available(iOS 17, *)) {
+     // No-op
+   } else if (![self isScribbleAvailable]) {
+     return CGRectZero;
+   }
++#endif
+ 
+   NSUInteger first = start;
+   if (end < start) {
+@@ -2486,8 +2538,32 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+ }
+ 
+ - (BOOL)accessibilityElementsHidden {
++#if TARGET_OS_TV
++  // On tvOS the accessibility system and focus engine are tightly coupled.
++  // Hiding children from accessibility also hides them from the focus engine,
++  // which prevents FlutterTextInputView from becoming first responder with the
++  // system virtual keyboard.
++  // See: tvos_patches/TVOS_TEXT_INPUT_PATCH.md
++  return NO;
++#else
+   return YES;
++#endif
++}
++
++#if TARGET_OS_TV
++// Direct the tvOS focus engine to the first focusable text input child.
++// Without this, the focus system stops at the hider view and never reaches
++// FlutterTextInputView, so becomeFirstResponder cannot trigger the keyboard.
++// See: tvos_patches/TVOS_TEXT_INPUT_PATCH.md
++- (NSArray<id<UIFocusEnvironment>>*)preferredFocusEnvironments {
++  for (UIView* subview in self.subviews) {
++    if ([subview canBecomeFocused]) {
++      return @[ subview ];
++    }
++  }
++  return @[];
+ }
++#endif
+ 
+ @end
+ 
+@@ -2516,6 +2592,9 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+ @end
+ 
+ @interface FlutterTextInputPlugin ()
++#if TARGET_OS_TV
++    <UITextFieldDelegate>
++#endif
+ // The current password-autofillable input fields that have yet to be saved.
+ @property(nonatomic, readonly)
+     NSMutableDictionary<NSString*, FlutterTextInputView*>* autofillContext;
+@@ -2544,6 +2623,18 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+   NSTimer* _enableFlutterTextInputViewAccessibilityTimer;
+   BOOL _pendingInputViewRemoval;
+   BOOL _pendingAutofillRemoval;
++#if TARGET_OS_TV
++  BOOL _tvosKeyboardPending;
++  BOOL _tvosKeyboardActive;
++  UITextField* _tvosKeyboardProxy;
++  CGRect _tvosSavedSelectionFrame;
++  int32_t _tvosSavedSelectionUid;
++  NSString* _tvosSavedSelectionLabel;
++  NSString* _tvosSavedSelectionHint;
++  NSString* _tvosSavedSelectionValue;
++  UIAccessibilityTraits _tvosSavedSelectionTraits;
++  BOOL _tvosHasSavedSelection;
++#endif
+ }
+ 
+ - (instancetype)initWithDelegate:(id<FlutterTextInputDelegate>)textInputDelegate {
+@@ -2554,22 +2645,26 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+     _autofillContext = [[NSMutableDictionary alloc] init];
+     _inputHider = [[FlutterTextInputViewAccessibilityHider alloc] init];
+     _scribbleElements = [[NSMutableDictionary alloc] init];
++#if !TARGET_OS_TV
+     _keyboardViewContainer = [[UIView alloc] init];
+ 
+     [[NSNotificationCenter defaultCenter] addObserver:self
+                                              selector:@selector(handleKeyboardWillShow:)
+                                                  name:UIKeyboardWillShowNotification
+                                                object:nil];
++#endif
+   }
+ 
+   return self;
+ }
+ 
++#if !TARGET_OS_TV
+ - (void)handleKeyboardWillShow:(NSNotification*)notification {
+   NSDictionary* keyboardInfo = [notification userInfo];
+   NSValue* keyboardFrameEnd = [keyboardInfo valueForKey:UIKeyboardFrameEndUserInfoKey];
+   _keyboardRect = [keyboardFrameEnd CGRectValue];
+ }
++#endif
+ 
+ - (void)dealloc {
+   [self reset];
+@@ -2767,12 +2862,14 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+   if (!self.activeView.isFirstResponder) {
+     return NO;
+   }
++#if !TARGET_OS_TV
+   NSDictionary<NSString*, NSNumber*>* encodedTargetRect = args[@"targetRect"];
+   CGRect globalTargetRect = CGRectMake(
+       [encodedTargetRect[@"x"] doubleValue], [encodedTargetRect[@"y"] doubleValue],
+       [encodedTargetRect[@"width"] doubleValue], [encodedTargetRect[@"height"] doubleValue]);
+   CGRect localTargetRect = [self.hostView convertRect:globalTargetRect toView:self.activeView];
+   [self.activeView showEditMenuWithTargetRect:localTargetRect items:args[@"items"]];
++#endif
+   return YES;
+ }
+ 
+@@ -2783,6 +2880,8 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+ - (void)setEditableSizeAndTransform:(NSDictionary*)dictionary {
+   NSArray* transform = dictionary[@"transform"];
+   [_activeView setEditableTransform:transform];
++
++#if !TARGET_OS_TV
+   const int leftIndex = 12;
+   const int topIndex = 13;
+   if ([_activeView isScribbleAvailable]) {
+@@ -2808,6 +2907,7 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+           CGRectMake([transform[leftIndex] intValue], [transform[topIndex] intValue], 0, 0);
+     }
+   }
++#endif
+ }
+ 
+ - (void)updateMarkedRect:(NSDictionary*)dictionary {
+@@ -2842,18 +2942,41 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+ }
+ 
+ - (void)startLiveTextInput {
++#if !TARGET_OS_TV
+   if (@available(iOS 15.0, *)) {
+     if (_activeView == nil || !_activeView.isFirstResponder) {
+       return;
+     }
+     [_activeView captureTextFromCamera:nil];
+   }
++#endif
+ }
+ 
+ - (void)showTextInput {
+   _activeView.viewResponder = _viewResponder;
+   [self addToInputParentViewIfNeeded:_activeView];
++#if TARGET_OS_TV
++  // On tvOS, DON'T show the keyboard immediately when a text field gains focus.
++  // Native UITextField shows only a focus ring on D-pad navigation; the keyboard
++  // appears only when the user presses Select. We replicate this by deferring
++  // becomeFirstResponder until tvosActivateKeyboard is called from the
++  // FlutterViewController's Select press gesture handler.
++  // See: tvos_patches/TVOS_TEXT_INPUT_PATCH.md
++
++  // Prepare the view so it's ready for activation. Both the hider and the
++  // active view need non-zero frames — the tvOS focus engine skips zero-sized
++  // views anywhere in the focus chain.
++  if (CGRectEqualToRect(_activeView.frame, CGRectZero)) {
++    _activeView.frame = CGRectMake(0, 0, 1, 1);
++  }
++  if (CGRectEqualToRect(_inputHider.frame, CGRectZero)) {
++    _inputHider.frame = CGRectMake(0, 0, 1, 1);
++  }
++  _tvosKeyboardPending = YES;
++  // Don't call becomeFirstResponder — wait for Select press.
++#else
+   [_activeView becomeFirstResponder];
++#endif
+ }
+ 
+ - (void)enableActiveViewAccessibility {
+@@ -2865,6 +2988,16 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+ 
+ - (void)hideTextInput {
+   [_activeView resignFirstResponder];
++#if TARGET_OS_TV
++  [self tvosCleanUpKeyboardProxy];
++  _tvosKeyboardPending = NO;
++  _tvosKeyboardActive = NO;
++  [self tvosRestoreSelectionView];
++  if (_viewController) {
++    [_viewController setNeedsFocusUpdate];
++    [_viewController updateFocusIfNeeded];
++  }
++#endif
+ 
+   // Remove the input view from the view hierarchy after resigning first responder.
+   // This flag is set by clearTextInputClient when autofillContext is empty.
+@@ -2877,6 +3010,150 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+   }
+ }
+ 
++#if TARGET_OS_TV
++- (BOOL)tvosKeyboardPending {
++  return _tvosKeyboardPending;
++}
++
++- (BOOL)tvosActivateKeyboard {
++  if (!_tvosKeyboardPending || _activeView == nil) {
++    return NO;
++  }
++  _tvosKeyboardPending = NO;
++  _tvosKeyboardActive = YES;
++
++  if ([_viewController respondsToSelector:@selector(getAccessibilitySelectionView)]) {
++    UIView* selectionView = [(id)_viewController getAccessibilitySelectionView];
++    if (selectionView) {
++      _tvosSavedSelectionFrame = selectionView.frame;
++      _tvosSavedSelectionLabel = [selectionView.accessibilityLabel copy];
++      _tvosSavedSelectionHint = [selectionView.accessibilityHint copy];
++      _tvosSavedSelectionValue = [selectionView.accessibilityValue copy];
++      _tvosSavedSelectionTraits = selectionView.accessibilityTraits;
++      _tvosHasSavedSelection = !CGRectEqualToRect(selectionView.frame, CGRectZero);
++      selectionView.hidden = YES;
++    }
++  }
++
++  static const NSInteger kFlutterTvOSKeyboardProxyTag = 0x464C5442;
++  _tvosKeyboardProxy = [[UITextField alloc] initWithFrame:CGRectMake(0, 0, 1, 1)];
++  _tvosKeyboardProxy.tag = kFlutterTvOSKeyboardProxyTag;
++  _tvosKeyboardProxy.alpha = 0.01;
++  _tvosKeyboardProxy.autocorrectionType = UITextAutocorrectionTypeNo;
++  _tvosKeyboardProxy.autocapitalizationType = UITextAutocapitalizationTypeNone;
++  _tvosKeyboardProxy.spellCheckingType = UITextSpellCheckingTypeNo;
++  _tvosKeyboardProxy.delegate = self;
++  [_tvosKeyboardProxy addTarget:self
++                         action:@selector(tvosProxyTextChanged:)
++               forControlEvents:UIControlEventEditingChanged];
++
++  _tvosKeyboardProxy.text = _activeView.text ? [_activeView.text copy] : @"";
++  _tvosKeyboardProxy.keyboardType = _activeView.keyboardType;
++  _tvosKeyboardProxy.secureTextEntry = _activeView.isSecureTextEntry;
++  _tvosKeyboardProxy.returnKeyType = _activeView.returnKeyType;
++
++  if (_tvosSavedSelectionLabel.length > 0) {
++    _tvosKeyboardProxy.placeholder = _tvosSavedSelectionLabel;
++  }
++
++  UIView* hostView = _viewController.view;
++  if (_tvosKeyboardProxy.superview != hostView) {
++    [hostView addSubview:_tvosKeyboardProxy];
++  }
++
++  BOOL result = [_tvosKeyboardProxy becomeFirstResponder];
++
++  if (_viewController) {
++    [_viewController setNeedsFocusUpdate];
++    [_viewController updateFocusIfNeeded];
++  }
++
++  return result;
++}
++
++- (void)tvosProxyTextChanged:(UITextField*)textField {
++  if (_activeView) {
++    NSString* newText = textField.text ?: @"";
++    NSUInteger length = newText.length;
++    NSDictionary* state = @{
++      @"text" : newText,
++      @"selectionBase" : @(length),
++      @"selectionExtent" : @(length),
++      @"composingBase" : @(-1),
++      @"composingExtent" : @(-1),
++    };
++    [_activeView setTextInputState:state];
++    [_activeView updateEditingState];
++  }
++}
++
++- (void)tvosDismissKeyboard {
++  _tvosKeyboardActive = NO;
++  [self tvosCleanUpKeyboardProxy];
++  [self tvosRestoreSelectionView];
++  [_activeView resignFirstResponder];
++  _tvosKeyboardPending = (_activeView != nil && _activeView.textInputClient != 0);
++  if (_viewController) {
++    [_viewController setNeedsFocusUpdate];
++    [_viewController updateFocusIfNeeded];
++  }
++}
++
++- (void)tvosCleanUpKeyboardProxy {
++  if (_tvosKeyboardProxy) {
++    _tvosKeyboardProxy.delegate = nil;
++    [_tvosKeyboardProxy removeTarget:self
++                              action:@selector(tvosProxyTextChanged:)
++                    forControlEvents:UIControlEventEditingChanged];
++    [_tvosKeyboardProxy resignFirstResponder];
++    [_tvosKeyboardProxy removeFromSuperview];
++    _tvosKeyboardProxy = nil;
++  }
++}
++
++- (void)tvosRestoreSelectionView {
++  if ([_viewController respondsToSelector:@selector(getAccessibilitySelectionView)]) {
++    UIView* selectionView = [(id)_viewController getAccessibilitySelectionView];
++    if (selectionView) {
++      if (_tvosHasSavedSelection && CGRectEqualToRect(selectionView.frame, CGRectZero)) {
++        selectionView.frame = _tvosSavedSelectionFrame;
++        selectionView.accessibilityFrame = _tvosSavedSelectionFrame;
++        selectionView.accessibilityLabel = _tvosSavedSelectionLabel ?: @"";
++        selectionView.accessibilityHint = _tvosSavedSelectionHint ?: @"";
++        selectionView.accessibilityValue = _tvosSavedSelectionValue;
++        selectionView.accessibilityTraits = _tvosSavedSelectionTraits;
++        selectionView.isAccessibilityElement = YES;
++        selectionView.userInteractionEnabled = YES;
++        [selectionView.superview bringSubviewToFront:selectionView];
++      }
++      selectionView.hidden = NO;
++      [selectionView setNeedsDisplay];
++      [selectionView setNeedsFocusUpdate];
++    }
++  }
++  _tvosHasSavedSelection = NO;
++}
++
++#pragma mark - UITextFieldDelegate (tvOS keyboard proxy)
++
++- (BOOL)textFieldShouldReturn:(UITextField*)textField {
++  [self tvosDismissKeyboard];
++  return NO;
++}
++
++- (void)textFieldDidEndEditing:(UITextField*)textField {
++  if (_tvosKeyboardActive) {
++    _tvosKeyboardActive = NO;
++    [self tvosRestoreSelectionView];
++    _tvosKeyboardPending = (_activeView != nil && _activeView.textInputClient != 0);
++    if (_viewController) {
++      [_viewController setNeedsFocusUpdate];
++      [_viewController updateFocusIfNeeded];
++    }
++  }
++}
++#endif
++
+ - (void)triggerAutofillSave:(BOOL)saveEntries {
+   [_activeView resignFirstResponder];
+ 
+@@ -2914,6 +3191,16 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+ }
+ 
+ - (void)setTextInputClient:(int)client withConfiguration:(NSDictionary*)configuration {
++#if TARGET_OS_TV
++  // If a keyboard proxy is active for the previous text field, clean it up
++  // before switching to the new active view.
++  if (_tvosKeyboardActive || _tvosKeyboardProxy.superview != nil) {
++    [self tvosCleanUpKeyboardProxy];
++    [self tvosRestoreSelectionView];
++    _tvosKeyboardActive = NO;
++    _tvosKeyboardPending = NO;
++  }
++#endif
+   [self resetAllClientIds];
+ 
+   // Reset pending removal flags set by the previous clearTextInputClient call.
+@@ -3204,6 +3491,7 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+ 
+ #pragma mark UIIndirectScribbleInteractionDelegate
+ 
++#if !TARGET_OS_TV
+ - (BOOL)indirectScribbleInteraction:(UIIndirectScribbleInteraction*)interaction
+                    isElementFocused:(UIScribbleElementIdentifier)elementIdentifier
+     API_AVAILABLE(ios(14.0)) {
+@@ -3279,11 +3567,13 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+                         completion(elements);
+                       }];
+ }
++#endif
+ 
+ #pragma mark - Methods related to Scribble support
+ 
+ - (void)setUpIndirectScribbleInteraction:(id<FlutterViewResponder>)viewResponder {
+   if (_viewResponder != viewResponder) {
++#if !TARGET_OS_TV
+     if (@available(iOS 14.0, *)) {
+       UIView* parentView = viewResponder.view;
+       if (parentView != nil) {
+@@ -3292,6 +3582,7 @@ static BOOL IsSelectionRectBoundaryCloserToPoint(CGPoint point,
+         [parentView addInteraction:scribbleInteraction];
+       }
+     }
++#endif
+   }
+   _viewResponder = viewResponder;
+ }
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterUndoManagerPlugin.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterUndoManagerPlugin.mm
+index 32810dca..0deb1ae1 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterUndoManagerPlugin.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterUndoManagerPlugin.mm
+@@ -100,8 +100,13 @@ static NSString* const kCanRedo = @"canRedo";
+     // This is needed to notify the iPadOS keyboard that it needs to update the
+     // state of the UIBarButtons. Otherwise, the state changes to NSUndoManager
+     // will not show up until the next keystroke (or other trigger).
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+     UITextInputAssistantItem* assistantItem = textInputView.inputAssistantItem;
+     assistantItem.leadingBarButtonGroups = assistantItem.leadingBarButtonGroups;
++#else
++    id<UITextInputDelegate> inputDelegate = textInputView.inputDelegate;
++    [inputDelegate selectionDidChange:textInputView];
++#endif
+   }
+   undoManager.groupsByEvent = groupsByEvent;
+ }
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController.mm
+index 831568de..4b064280 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController.mm
+@@ -9,6 +9,11 @@
+ #import <os/log.h>
+ #include <memory>
+ 
++#if TARGET_OS_TV
++#include <GameController/GameController.h>
++#include <MediaPlayer/MediaPlayer.h>
++#endif
++
+ #include "flutter/common/constants.h"
+ #include "flutter/fml/memory/weak_ptr.h"
+ #include "flutter/fml/message_loop.h"
+@@ -37,6 +42,9 @@
+ #import "flutter/shell/platform/darwin/ios/platform_view_ios.h"
+ #import "flutter/shell/platform/embedder/embedder.h"
+ #import "flutter/third_party/spring_animation/spring_animation.h"
++#if TARGET_OS_TV
++#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterAccessibilitySelectionView.h"
++#endif
+ 
+ FLUTTER_ASSERT_ARC
+ 
+@@ -64,7 +72,16 @@ typedef struct MouseState {
+ // This is left a FlutterBinaryMessenger privately for now to give people a chance to notice the
+ // change. Unfortunately unless you have Werror turned on, incompatible pointers as arguments are
+ // just a warning.
++#if TARGET_OS_TV
++// UIGestureRecognizerDelegate is retained because press recognizers
++// installed by FlutterTvRemotePlugin use `self.view` for hosting, and
++// some Flutter platform-view code inspects the VC's conformance.
++@interface FlutterViewController () <FlutterBinaryMessenger,
++                                     UIScrollViewDelegate,
++                                     UIGestureRecognizerDelegate>
++#else
+ @interface FlutterViewController () <FlutterBinaryMessenger, UIScrollViewDelegate>
++#endif
+ // TODO(dkwingsmt): Make the view ID property public once the iOS shell
+ // supports multiple views.
+ // https://github.com/flutter/flutter/issues/138168
+@@ -76,7 +93,9 @@ typedef struct MouseState {
+ @property(nonatomic, strong) void (^flutterViewRenderedCallback)(void);
+ 
+ @property(nonatomic, assign) UIInterfaceOrientationMask orientationPreferences;
++#if !TARGET_OS_TV
+ @property(nonatomic, assign) UIStatusBarStyle statusBarStyle;
++#endif
+ @property(nonatomic, assign) BOOL initialized;
+ @property(nonatomic, assign) BOOL engineNeedsLaunch;
+ @property(nonatomic, assign) BOOL awokenFromNib;
+@@ -85,8 +104,14 @@ typedef struct MouseState {
+ @property(nonatomic, assign) BOOL isHomeIndicatorHidden;
+ @property(nonatomic, assign) BOOL isPresentingViewControllerAnimating;
+ 
++#if TARGET_OS_TV
++@property(nonatomic, strong) FlutterAccessibilitySelectionView* selectionView;
++#endif
++
+ // Internal state backing override of UIView.prefersStatusBarHidden.
++#if !TARGET_OS_TV
+ @property(nonatomic, assign) BOOL flutterPrefersStatusBarHidden;
++#endif
+ 
+ @property(nonatomic, strong) NSMutableSet<NSNumber*>* ongoingTouches;
+ // This scroll view is a workaround to accommodate iOS 13 and higher.  There isn't a way to get
+@@ -138,6 +163,7 @@ typedef struct MouseState {
+  * Mouse and trackpad gesture recognizers
+  */
+ // Mouse and trackpad hover
++#if !TARGET_OS_TV
+ @property(nonatomic, strong)
+     UIHoverGestureRecognizer* hoverGestureRecognizer API_AVAILABLE(ios(13.4));
+ // Mouse wheel scrolling
+@@ -152,6 +178,7 @@ typedef struct MouseState {
+ // Trackpad rotating
+ @property(nonatomic, strong)
+     UIRotationGestureRecognizer* rotationGestureRecognizer API_AVAILABLE(ios(13.4));
++#endif
+ 
+ /// Creates and registers plugins used by this view controller.
+ - (void)addInternalPlugins;
+@@ -161,7 +188,9 @@ typedef struct MouseState {
+ - (void)onFirstFrameRendered;
+ 
+ /// Handles updating viewport metrics on keyboard animation.
++#if !TARGET_OS_TV
+ - (void)handleKeyboardAnimationCallbackWithTargetTime:(fml::TimePoint)targetTime;
++#endif
+ @end
+ 
+ @implementation FlutterViewController {
+@@ -357,8 +386,11 @@ typedef struct MouseState {
+   }
+ 
+   _initialized = YES;
++
++#if !TARGET_OS_TV
+   _orientationPreferences = UIInterfaceOrientationMaskAll;
+   _statusBarStyle = UIStatusBarStyleDefault;
++#endif
+ 
+   _accessibilityFeatures = [[FlutterAccessibilityFeatures alloc] init];
+ 
+@@ -369,6 +401,8 @@ typedef struct MouseState {
+ 
+ - (void)setUpNotificationCenterObservers {
+   NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
++
++#if !TARGET_OS_TV
+   [center addObserver:self
+              selector:@selector(onOrientationPreferencesUpdated:)
+                  name:@(flutter::kOrientationUpdateNotificationName)
+@@ -378,6 +412,7 @@ typedef struct MouseState {
+              selector:@selector(onPreferredStatusBarStyleUpdated:)
+                  name:@(flutter::kOverlayStyleUpdateNotificationName)
+                object:nil];
++#endif
+ 
+   if (FlutterSharedApplication.isAvailable) {
+     [self setUpApplicationLifecycleNotifications:center];
+@@ -385,6 +420,7 @@ typedef struct MouseState {
+     [self setUpSceneLifecycleNotifications:center];
+   }
+ 
++#if !TARGET_OS_TV
+   [center addObserver:self
+              selector:@selector(keyboardWillChangeFrame:)
+                  name:UIKeyboardWillChangeFrameNotification
+@@ -399,6 +435,7 @@ typedef struct MouseState {
+              selector:@selector(keyboardWillBeHidden:)
+                  name:UIKeyboardWillHideNotification
+                object:nil];
++#endif
+ 
+   for (NSString* notification in [self.accessibilityFeatures observedNotificationNames]) {
+     [center addObserver:self
+@@ -412,6 +449,7 @@ typedef struct MouseState {
+                  name:UIContentSizeCategoryDidChangeNotification
+                object:nil];
+ 
++#if !TARGET_OS_TV
+   [center addObserver:self
+              selector:@selector(onHideHomeIndicatorNotification:)
+                  name:FlutterViewControllerHideHomeIndicator
+@@ -421,6 +459,7 @@ typedef struct MouseState {
+              selector:@selector(onShowHomeIndicatorNotification:)
+                  name:FlutterViewControllerShowHomeIndicator
+                object:nil];
++#endif
+ }
+ 
+ - (void)setUpSceneLifecycleNotifications:(NSNotificationCenter*)center API_AVAILABLE(ios(13.0)) {
+@@ -471,10 +510,12 @@ typedef struct MouseState {
+                  name:UIApplicationDidEnterBackgroundNotification
+                object:nil];
+ 
++#if !TARGET_OS_TV
+   [center addObserver:self
+              selector:@selector(applicationWillEnterForeground:)
+                  name:UIApplicationWillEnterForegroundNotification
+                object:nil];
++#endif
+ }
+ 
+ - (void)setInitialRoute:(NSString*)route {
+@@ -499,7 +540,11 @@ static UIView* GetViewOrPlaceholder(UIView* existing_view) {
+   auto placeholder = [[UIView alloc] init];
+ 
+   placeholder.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
++#if !TARGET_OS_TV
+   placeholder.backgroundColor = UIColor.systemBackgroundColor;
++#else
++  placeholder.backgroundColor = UIColor.whiteColor;
++#endif
+   placeholder.autoresizesSubviews = YES;
+ 
+   // Only add the label when we know we have failed to enable tracing (and it was necessary).
+@@ -523,7 +568,9 @@ static UIView* GetViewOrPlaceholder(UIView* existing_view) {
+ 
+ - (void)loadView {
+   self.view = GetViewOrPlaceholder(self.flutterView);
++#if !TARGET_OS_TV
+   self.view.multipleTouchEnabled = YES;
++#endif
+   self.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+ 
+   [self installSplashScreenViewIfNecessary];
+@@ -792,6 +839,10 @@ static UIView* GetViewOrPlaceholder(UIView* existing_view) {
+ - (void)viewDidLoad {
+   TRACE_EVENT0("flutter", "viewDidLoad");
+ 
++#if TARGET_OS_TV
++  [self.engine.tvRemotePlugin attachToViewController:self];
++#endif  // TARGET_OS_TV
++
+   if (self.engine && self.engineNeedsLaunch) {
+     [self.engine launchEngine:nil libraryURI:nil entrypointArgs:nil];
+     [self.engine setViewController:self];
+@@ -806,6 +857,7 @@ static UIView* GetViewOrPlaceholder(UIView* existing_view) {
+   // Create a vsync client to correct delivery frame rate of touch events if needed.
+   [self createTouchRateCorrectionVSyncClientIfNeeded];
+ 
++#if !TARGET_OS_TV
+   if (@available(iOS 13.4, *)) {
+     _hoverGestureRecognizer =
+         [[UIHoverGestureRecognizer alloc] initWithTarget:self action:@selector(hoverEvent:)];
+@@ -815,10 +867,6 @@ static UIView* GetViewOrPlaceholder(UIView* existing_view) {
+     _discreteScrollingPanGestureRecognizer =
+         [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(discreteScrollEvent:)];
+     _discreteScrollingPanGestureRecognizer.allowedScrollTypesMask = UIScrollTypeMaskDiscrete;
+-    // Disallowing all touch types. If touch events are allowed here, touches to the screen will be
+-    // consumed by the UIGestureRecognizer instead of being passed through to flutter via
+-    // touchesBegan. Trackpad and mouse scrolls are sent by the platform as scroll events rather
+-    // than touch events, so they will still be received.
+     _discreteScrollingPanGestureRecognizer.allowedTouchTypes = @[];
+     _discreteScrollingPanGestureRecognizer.delegate = self;
+     [self.flutterView addGestureRecognizer:_discreteScrollingPanGestureRecognizer];
+@@ -839,8 +887,15 @@ static UIView* GetViewOrPlaceholder(UIView* existing_view) {
+     _rotationGestureRecognizer.delegate = self;
+     [self.flutterView addGestureRecognizer:_rotationGestureRecognizer];
+   }
++#endif
+ 
+   [super viewDidLoad];
++
++#if TARGET_OS_TV
++  self.selectionView =
++      [[FlutterAccessibilitySelectionView alloc] initWithFrame:CGRectMake(0, 0, 0, 0)];
++  [self.view addSubview:self.selectionView];
++#endif
+ }
+ 
+ - (void)addInternalPlugins {
+@@ -910,8 +965,10 @@ static UIView* GetViewOrPlaceholder(UIView* existing_view) {
+ - (void)viewDidDisappear:(BOOL)animated {
+   TRACE_EVENT0("flutter", "viewDidDisappear");
+   if (self.engine.viewController == self) {
++#if !TARGET_OS_TV
+     [self invalidateKeyboardAnimationVSyncClient];
+     [self ensureViewportMetricsIsCorrect];
++#endif
+     [self surfaceUpdated:NO];
+     [self.engine.lifecycleChannel sendMessage:@"AppLifecycleState.paused"];
+     [self flushOngoingTouches];
+@@ -1000,17 +1057,32 @@ static UIView* GetViewOrPlaceholder(UIView* existing_view) {
+   [self removeInternalPlugins];
+   [self deregisterNotifications];
+ 
++#if TARGET_OS_TV
++  // Only detach if we're still the plugin's active view controller.
++  // If the engine has been migrated to another VC via
++  // `setViewController:`, tearing off from our dealloc would kill
++  // remote input on the currently-active VC.
++  FlutterTvRemotePlugin* plugin = self.engine.tvRemotePlugin;
++  if (plugin.viewController == self) {
++    [plugin detach];
++  }
++#endif
++
++#if !TARGET_OS_TV
+   [self invalidateKeyboardAnimationVSyncClient];
++#endif
+   [self invalidateTouchRateCorrectionVSyncClient];
+ 
+   // TODO(cbracken): https://github.com/flutter/flutter/issues/156222
+   // Ensure all delegates are weak and remove this.
+   _scrollView.delegate = nil;
++#if !TARGET_OS_TV
+   _hoverGestureRecognizer.delegate = nil;
+   _discreteScrollingPanGestureRecognizer.delegate = nil;
+   _continuousScrollingPanGestureRecognizer.delegate = nil;
+   _pinchGestureRecognizer.delegate = nil;
+   _rotationGestureRecognizer.delegate = nil;
++#endif
+ }
+ 
+ #pragma mark - Application lifecycle notifications
+@@ -1293,6 +1365,7 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+     // Sweep direction is the same. Phase of M_PI_2.
+     pointer_data.orientation = [touch azimuthAngleInView:nil] - M_PI_2;
+ 
++#if !TARGET_OS_TV
+     if (@available(iOS 13.4, *)) {
+       if (event != nullptr) {
+         pointer_data.buttons = (((event.buttonMask & UIEventButtonMaskPrimary) > 0)
+@@ -1303,6 +1376,7 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+                                     : 0);
+       }
+     }
++#endif
+ 
+     packet->SetPointerData(pointer_index++, pointer_data);
+ 
+@@ -1317,19 +1391,47 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+ }
+ 
+ - (void)touchesBegan:(NSSet*)touches withEvent:(UIEvent*)event {
++#if TARGET_OS_TV
++  FlutterTvRemotePlugin* plugin = self.engine.tvRemotePlugin;
++  if (plugin != nil && plugin.viewController == self) {
++    [plugin handleTouches:touches phase:@"started" view:self.view];
++  }
++#else
+   [self dispatchTouches:touches pointerDataChangeOverride:nullptr event:event];
++#endif
+ }
+ 
+ - (void)touchesMoved:(NSSet*)touches withEvent:(UIEvent*)event {
++#if TARGET_OS_TV
++  FlutterTvRemotePlugin* plugin = self.engine.tvRemotePlugin;
++  if (plugin != nil && plugin.viewController == self) {
++    [plugin handleTouches:touches phase:@"move" view:self.view];
++  }
++#else
+   [self dispatchTouches:touches pointerDataChangeOverride:nullptr event:event];
++#endif
+ }
+ 
+ - (void)touchesEnded:(NSSet*)touches withEvent:(UIEvent*)event {
++#if TARGET_OS_TV
++  FlutterTvRemotePlugin* plugin = self.engine.tvRemotePlugin;
++  if (plugin != nil && plugin.viewController == self) {
++    [plugin handleTouches:touches phase:@"ended" view:self.view];
++  }
++#else
+   [self dispatchTouches:touches pointerDataChangeOverride:nullptr event:event];
++#endif
+ }
+ 
+ - (void)touchesCancelled:(NSSet*)touches withEvent:(UIEvent*)event {
++#if TARGET_OS_TV
++  FlutterTvRemotePlugin* plugin = self.engine.tvRemotePlugin;
++  if (plugin != nil && plugin.viewController == self) {
++    [plugin handleTouches:touches phase:@"cancelled" view:self.view];
++  }
++#else
+   [self dispatchTouches:touches pointerDataChangeOverride:nullptr event:event];
++#endif
+ }
+ 
+ - (void)forceTouchesCancelled:(NSSet*)touches {
+@@ -1441,6 +1543,11 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+                        }
+                      }];
+   }
++#if TARGET_OS_TV
++  // The selection view must remain the topmost view, otherwise the accessibility
++  // selection rectangle drawn by the system is not visible.
++  [self.view bringSubviewToFront:self.selectionView];
++#endif
+ }
+ 
+ - (BOOL)isAutoResizable {
+@@ -1567,6 +1674,8 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+ 
+ #pragma mark - Keyboard events
+ 
++#if !TARGET_OS_TV
++
+ - (void)keyboardWillShowNotification:(NSNotification*)notification {
+   // Immediately prior to a docked keyboard being shown or when a keyboard goes from
+   // undocked/floating to docked, this notification is triggered. This notification also happens
+@@ -1958,6 +2067,7 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+     [self updateViewportMetricsIfNeeded];
+   }
+ }
++#endif  // !TARGET_OS_TV
+ 
+ - (void)handlePressEvent:(FlutterUIPressProxy*)press
+               nextAction:(void (^)())next API_AVAILABLE(ios(13.4)) {
+@@ -2003,6 +2113,7 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+ // both places to capture keys both inside and outside of a text field, but have
+ // slightly different implementations.
+ 
++#if !TARGET_OS_TV
+ - (void)pressesBegan:(NSSet<UIPress*>*)presses
+            withEvent:(UIPressesEvent*)event API_AVAILABLE(ios(9.0)) {
+   if (@available(iOS 13.4, *)) {
+@@ -2063,8 +2174,32 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+   }
+ }
+ 
++#else   // TARGET_OS_TV
++
++- (void)pressesBegan:(NSSet<UIPress*>*)presses
++           withEvent:(UIPressesEvent*)event API_AVAILABLE(ios(9.0), tvos(10.0)) {
++  [super pressesBegan:presses withEvent:event];
++}
++
++- (void)pressesChanged:(NSSet<UIPress*>*)presses
++             withEvent:(UIPressesEvent*)event API_AVAILABLE(ios(9.0), tvos(10.0)) {
++  [super pressesChanged:presses withEvent:event];
++}
++
++- (void)pressesEnded:(NSSet<UIPress*>*)presses
++           withEvent:(UIPressesEvent*)event API_AVAILABLE(ios(9.0), tvos(10.0)) {
++  [super pressesEnded:presses withEvent:event];
++}
++
++- (void)pressesCancelled:(NSSet<UIPress*>*)presses
++               withEvent:(UIPressesEvent*)event API_AVAILABLE(ios(9.0), tvos(10.0)) {
++  [super pressesCancelled:presses withEvent:event];
++}
++#endif  // !TARGET_OS_TV
++
+ #pragma mark - Orientation updates
+ 
++#if !TARGET_OS_TV
+ - (void)onOrientationPreferencesUpdated:(NSNotification*)notification {
+   // Notifications may not be on the iOS UI thread
+   __weak FlutterViewController* weakSelf = self;
+@@ -2163,6 +2298,7 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+ - (BOOL)prefersHomeIndicatorAutoHidden {
+   return self.isHomeIndicatorHidden;
+ }
++#endif  // !TARGET_OS_TV
+ 
+ - (BOOL)shouldAutorotate {
+   return YES;
+@@ -2285,6 +2421,41 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+   }
+ }
+ 
++#if TARGET_OS_TV
++- (UIView*)getAccessibilitySelectionView {
++  return (UIView*)self.selectionView;
++}
++
++- (NSArray<id<UIFocusEnvironment>>*)preferredFocusEnvironments {
++  // When the tvOS keyboard proxy (UITextField) is active, direct focus to it
++  // so the system keyboard stays open. Tag 0x464C5442 ("FLTB") identifies it
++  // uniquely — avoids matching UITextFields from platform views (UiKitView).
++  // See: tvos_patches/TVOS_TEXT_INPUT_PATCH.md
++  static const NSInteger kFlutterTvOSKeyboardProxyTag = 0x464C5442;
++  UIView* proxyView = [self.view viewWithTag:kFlutterTvOSKeyboardProxyTag];
++  if (proxyView != nil && proxyView.isFirstResponder) {
++    return @[ proxyView ];
++  }
++
++  // When FlutterTextInputView is first responder (non-proxy path), direct
++  // focus to its container.
++  FlutterTextInputPlugin* tip = self.textInputPlugin;
++  if (tip != nil) {
++    UIView* textInputView = [tip textInputView];
++    if (textInputView != nil && textInputView.isFirstResponder && textInputView.superview != nil) {
++      return @[ textInputView.superview ];
++    }
++  }
++
++  // Focus must remain on selection view, otherwise the selection rectangle
++  // from the system will not be visible.
++  if (self.selectionView.hidden == NO) {
++    return @[ self.selectionView ];
++  }
++  return @[];
++}
++#endif  // TARGET_OS_TV
++
+ - (BOOL)supportsShowingSystemContextMenu {
+   if (@available(iOS 16.0, *)) {
+     return YES;
+@@ -2310,6 +2481,9 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+ // understood by the Flutter framework. See the settings system channel for more
+ // information.
+ - (NSString*)contrastMode {
++#if TARGET_OS_TV
++  return @"normal";
++#else
+   UIAccessibilityContrast contrast = self.traitCollection.accessibilityContrast;
+ 
+   if (contrast == UIAccessibilityContrastHigh) {
+@@ -2317,10 +2491,12 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+   } else {
+     return @"normal";
+   }
++#endif
+ }
+ 
+ #pragma mark - Status bar style
+ 
++#if !TARGET_OS_TV
+ - (UIStatusBarStyle)preferredStatusBarStyle {
+   return self.statusBarStyle;
+ }
+@@ -2358,6 +2534,7 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+ - (BOOL)prefersStatusBarHidden {
+   return self.flutterPrefersStatusBarHidden;
+ }
++#endif  // !TARGET_OS_TV
+ 
+ #pragma mark - Platform views
+ 
+@@ -2469,6 +2646,7 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+   return self.presentedViewController != nil || self.isPresentingViewControllerAnimating;
+ }
+ 
++#if !TARGET_OS_TV
+ - (flutter::PointerData)updateMousePointerDataFrom:(UIGestureRecognizer*)gestureRecognizer
+     API_AVAILABLE(ios(13.4)) {
+   CGPoint location = [gestureRecognizer locationInView:self.view];
+@@ -2679,6 +2857,7 @@ static flutter::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* touch)
+   packet->SetPointerData(/*i=*/0, pointer_data);
+   [self.engine dispatchPointerDataPacket:std::move(packet)];
+ }
++#endif  // !TARGET_OS_TV
+ 
+ #pragma mark - State Restoration
+ 
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h
+index e12b2638..10c4f1ba 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/FlutterViewController_Internal.h
+@@ -56,7 +56,9 @@ typedef void (^FlutterKeyboardAnimationCallback)(fml::TimePoint);
+  *        This is ignored when `UIViewControllerBasedStatusBarAppearance` in info.plist
+  *        of the app project is `false`.
+  */
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ @property(nonatomic, assign, readwrite) BOOL prefersStatusBarHidden;
++#endif
+ 
+ @property(nonatomic, readonly) FlutterPlatformViewsController* platformViewsController;
+ 
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.h b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.h
+index 2c9e0516..e53e1af4 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.h
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.h
+@@ -178,11 +178,13 @@ constexpr float kScrollExtentMaxForInf = 1000;
+ 
+ @end
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ /// The semantics object for switch buttons. This class creates an UISwitch to interact with the
+ /// iOS.
+ @interface FlutterSwitchSemanticsObject : SemanticsObject
+ 
+ @end
++#endif  // !TARGET_OS_TV
+ 
+ /// The semantics object for scrollable. This class creates an UIScrollView to interact with the
+ /// iOS.
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.mm
+index cdcce174..797f2ed7 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/SemanticsObject.mm
+@@ -94,6 +94,7 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
+ 
+ }  // namespace
+ 
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+ @interface FlutterSwitchSemanticsObject ()
+ @property(nonatomic, retain, readonly) UISwitch* nativeSwitch;
+ @end
+@@ -140,6 +141,7 @@ CGRect ConvertRectToGlobal(SemanticsObject* reference, CGRect local_rect) {
+ }
+ 
+ @end  // FlutterSwitchSemanticsObject
++#endif  // !TARGET_OS_TV
+ 
+ @interface FlutterScrollableSemanticsObject ()
+ @property(nonatomic) FlutterSemanticsScrollView* scrollView;
+diff --git a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/accessibility_bridge.mm b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/accessibility_bridge.mm
+index 202d54de..5e8514c6 100644
+--- a/engine/src/flutter/shell/platform/darwin/ios/framework/Source/accessibility_bridge.mm
++++ b/engine/src/flutter/shell/platform/darwin/ios/framework/Source/accessibility_bridge.mm
+@@ -272,7 +272,11 @@ static SemanticsObject* CreateObject(const flutter::SemanticsNode& node,
+   } else if (!node.flags.isInMutuallyExclusiveGroup &&
+              (node.flags.isToggled != flutter::SemanticsTristate::kNone ||
+               node.flags.isChecked != flutter::SemanticsCheckState::kNone)) {
++#if !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+     return [[FlutterSwitchSemanticsObject alloc] initWithBridge:weak_ptr uid:node.id];
++#else
++    return [[FlutterSemanticsObject alloc] initWithBridge:weak_ptr uid:node.id];
++#endif
+   } else if (node.flags.hasImplicitScrolling) {
+     return [[FlutterScrollableSemanticsObject alloc] initWithBridge:weak_ptr uid:node.id];
+   } else if (node.IsPlatformViewNode()) {
