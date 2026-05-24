@@ -14,11 +14,23 @@ import '../tvos_plugins.dart';
 
 class TvosBuildCommand extends BuildCommand {
   TvosBuildCommand({
+    required super.artifacts,
+    required super.cache,
     required super.fileSystem,
+    required super.flutterVersion,
     required super.buildSystem,
     required super.osUtils,
     required Logger logger,
     required super.androidSdk,
+    required super.config,
+    required super.platform,
+    required super.processUtils,
+    required super.processManager,
+    required super.fileSystemUtils,
+    required super.templateRenderer,
+    required super.terminal,
+    required super.plistParser,
+    required super.xcode,
     required bool verboseHelp,
   }) : super(logger: logger, verboseHelp: verboseHelp) {
     addSubcommand(BuildTvosCommand(logger: logger, verboseHelp: verboseHelp));
