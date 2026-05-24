@@ -6,8 +6,10 @@ import 'dart:convert';
 
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tvos/tvos_plugins.dart'
-    show TvosPlugin, recommendTvosPluginsToInstall;
+    show TvosPlugin, ensureReadyForTvosTooling, recommendTvosPluginsToInstall;
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -525,6 +527,77 @@ void main() {
         expect(messages, hasLength(2));
         expect(messages, anyElement(contains('video_player_tvos')));
         expect(messages, anyElement(contains('shared_preferences_tvos')));
+      },
+    );
+  });
+
+  group('ensureReadyForTvosTooling end-to-end', () {
+    // Guard against future refactors silently dropping the call to
+    // recommendTvosPluginsToInstall — the pure-function unit tests
+    // above won't catch a missing wire-up at the call site.
+    late BufferLogger logger;
+    setUp(() => logger = BufferLogger.test());
+    testUsingContext(
+      'walks the dep graph + prints a warning per missing fluttertv.dev plugin',
+      () async {
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        // tvos/ must exist or the function early-returns silently.
+        projectDir.childDirectory('tvos').createSync();
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+
+        // Two upstream packages the user pulls in, only one of which
+        // (`audioplayers`) has a published `*_tvos` sibling on
+        // fluttertv.dev; the other (`url_launcher`) is intentionally
+        // outside the curated list and must NOT produce a warning.
+        final Directory pluginsDir =
+            fileSystem.directory('/p/.dart_tool')..createSync();
+        for (final name in <String>['audioplayers', 'url_launcher']) {
+          final Directory pkgDir = fileSystem.directory('/pubcache/$name')..createSync(recursive: true);
+          pkgDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: $name
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: ${name}Plugin
+''');
+        }
+        pluginsDir.childFile('package_config.json').writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'packages': <Map<String, String>>[
+              <String, String>{'name': 'audioplayers', 'rootUri': 'file:///pubcache/audioplayers'},
+              <String, String>{'name': 'url_launcher', 'rootUri': 'file:///pubcache/url_launcher'},
+            ],
+          }),
+        );
+        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'dependencyGraph': <Map<String, String>>[
+              <String, String>{'name': 'audioplayers'},
+              <String, String>{'name': 'url_launcher'},
+            ],
+          }),
+        );
+
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+        await ensureReadyForTvosTooling(project);
+
+        expect(
+          logger.warningText,
+          contains('audioplayers_tvos is available on pub.dev'),
+          reason: 'audioplayers is in the curated list and the user has '
+              'no audioplayers_tvos in their deps yet',
+        );
+        expect(
+          logger.warningText,
+          isNot(contains('url_launcher')),
+          reason: 'url_launcher is not in the curated list — must stay silent',
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Logger: () => logger,
       },
     );
   });
