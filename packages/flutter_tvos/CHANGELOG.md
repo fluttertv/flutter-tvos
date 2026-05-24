@@ -1,3 +1,7 @@
+## 1.0.5
+
+- Updated compatibility with Flutter 3.44.0.
+
 ## 1.0.4
 
 - Fixed `dart:ffi` and `dart:io` compile errors on Web. `flutter_tvos` can now
