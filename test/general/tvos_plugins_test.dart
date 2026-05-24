@@ -6,7 +6,8 @@ import 'dart:convert';
 
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
-import 'package:flutter_tvos/tvos_plugins.dart' show TvosPlugin;
+import 'package:flutter_tvos/tvos_plugins.dart'
+    show TvosPlugin, recommendTvosPluginsToInstall;
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -446,6 +447,84 @@ void main() {
       overrides: <Type, Generator>{
         FileSystem: () => fileSystem,
         ProcessManager: () => processManager,
+      },
+    );
+  });
+
+  group('recommendTvosPluginsToInstall', () {
+    testWithoutContext('returns no messages when the dep graph is empty', () {
+      expect(
+        recommendTvosPluginsToInstall(allPluginNames: const <String>[]),
+        isEmpty,
+      );
+    });
+
+    testWithoutContext(
+      'suggests `<name>_tvos` for a known plugin the user has not added',
+      () {
+        final messages = recommendTvosPluginsToInstall(
+          allPluginNames: const <String>['audioplayers'],
+        );
+        expect(messages, hasLength(1));
+        expect(messages.first, contains('audioplayers_tvos'));
+        expect(messages.first, contains('pub.dev'));
+      },
+    );
+
+    testWithoutContext(
+      'matches only the user-facing aggregator name, not federated impls — '
+      'so an app on `audioplayers` (which transitively pulls in '
+      '`audioplayers_darwin`) gets exactly one suggestion',
+      () {
+        final messages = recommendTvosPluginsToInstall(
+          allPluginNames: const <String>['audioplayers', 'audioplayers_darwin'],
+        );
+        expect(messages, hasLength(1),
+            reason: 'aggregator key matches once; the _darwin sibling is not a key');
+        expect(messages.single, contains('audioplayers_tvos'));
+      },
+    );
+
+    testWithoutContext(
+      'stays silent when the user has already added `<name>_tvos`',
+      () {
+        final messages = recommendTvosPluginsToInstall(
+          allPluginNames: const <String>[
+            'audioplayers',
+            'audioplayers_darwin',
+            'audioplayers_tvos',
+          ],
+        );
+        expect(messages, isEmpty);
+      },
+    );
+
+    testWithoutContext(
+      'ignores plugins outside the curated list silently — we do not '
+      'speak about random plugins on every build',
+      () {
+        final messages = recommendTvosPluginsToInstall(
+          allPluginNames: const <String>['some_obscure_plugin', 'url_launcher'],
+        );
+        // url_launcher is not currently in `_kKnownTvosPlugins` either.
+        expect(messages, isEmpty);
+      },
+    );
+
+    testWithoutContext(
+      'fires once per known plugin in the dep graph',
+      () {
+        final messages = recommendTvosPluginsToInstall(
+          allPluginNames: const <String>[
+            'video_player',
+            'video_player_avfoundation',
+            'shared_preferences',
+            'shared_preferences_foundation',
+          ],
+        );
+        expect(messages, hasLength(2));
+        expect(messages, anyElement(contains('video_player_tvos')));
+        expect(messages, anyElement(contains('shared_preferences_tvos')));
       },
     );
   });
