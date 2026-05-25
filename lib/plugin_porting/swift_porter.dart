@@ -27,7 +27,7 @@ class SwiftPorter {
   /// Group 1 = the keyword (`@available`/`#available`), group 2 = the
   /// platform list between the parentheses.
   static final RegExp _availabilityClause =
-      RegExp(r'(@available|#available)\s*\(([^)]*)\)');
+      RegExp(r'(@available|#available)\s*\(([^)]*)\)', dotAll: true);
 
   /// An `iOS <version>` entry inside an availability clause. Group 1 is
   /// the version (`15`, `15.0`, `17.4`, …). The leading boundary avoids
@@ -142,7 +142,7 @@ class SwiftPorter {
     // independent of the API regex: a file that does `import WebKit` must
     // not keep that import on tvOS even when the specific call site (e.g.
     // a `WKWebView` subclass via `typealias`) slips past the usage regex.
-    // The compatibility DB's `stripImports` is the authoritative list of
+    // The compatibility DB's `stripSwiftImports` is the authoritative list of
     // import directives to comment out.
     for (var i = 0; i < originalLines.length; i++) {
       final String trimmed = originalLines[i].trim();
@@ -150,7 +150,7 @@ class SwiftPorter {
         continue;
       }
       for (final _CompiledPattern cp in _patterns) {
-        if (cp.entry.stripImports.contains(trimmed)) {
+        if (cp.entry.stripSwiftImports.contains(trimmed)) {
           outputLines[i] =
               '// ${originalLines[i]}  // removed by `flutter-tvos plugin port` (tvOS-incompatible)';
           strippedImports.add(trimmed);

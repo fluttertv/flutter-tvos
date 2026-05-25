@@ -15,7 +15,7 @@ import 'porting_result.dart';
 /// Two differences from Swift:
 ///   * Imports are `#import <Framework/...>` or `@import Framework;` rather
 ///     than `import Framework`. The banned framework list is derived from
-///     the same compatibility-database `stripImports` entries (the Swift
+///     the same compatibility-database `stripSwiftImports` entries (the Swift
 ///     `import Foo` form is mapped to the ObjC framework name `Foo`).
 ///   * Method dispatch is an `if ([call.method isEqualToString:@"x"])`
 ///     chain delimited by braces, not a `switch`/`case`. Handler extents
@@ -28,7 +28,7 @@ class ObjcPorter {
         ],
         _bannedFrameworks = <String, ApiPattern>{
           for (final ApiPattern p in database)
-            for (final String imp in p.stripImports)
+            for (final String imp in p.stripSwiftImports)
               if (imp.startsWith('import ')) imp.substring(7).trim(): p,
         };
 

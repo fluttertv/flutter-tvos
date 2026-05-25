@@ -475,10 +475,13 @@ class Scaffolder {
       return stack.join('/');
     }
 
-    // One regex covers `import 'X';`, `export 'X';`, and the conditional
-    // form with up to one `if (...) 'Y'` fork.
+    // One regex covers `import 'X';`, `export 'X';`, `part 'X';`, and the
+    // conditional form with up to one `if (...) 'Y'` fork.
+    // `part of 'parent.dart'` is intentionally excluded: the `of` keyword
+    // sits between `part` and the opening quote, so it does not match
+    // `(import|export|part)\s+(['"])`.
     final RegExp directive = RegExp(
-      r"""^(\s*)(import|export)\s+(['"])([^'"]+)\3"""
+      r"""^(\s*)(import|export|part)\s+(['"])([^'"]+)\3"""
       r"""(\s+if\s*\(\s*[^)]*\)\s+(['"])([^'"]+)\6)?"""
       r"""([^;\n]*);?\s*$""",
       multiLine: true,

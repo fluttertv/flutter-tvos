@@ -48,7 +48,7 @@ class ApiPattern {
     required this.pattern,
     required this.severity,
     required this.note,
-    this.stripImports = const <String>[],
+    this.stripSwiftImports = const <String>[],
   });
 
   /// Short, human-readable label that goes into the porting report
@@ -68,14 +68,18 @@ class ApiPattern {
   /// the feature must be omitted on tvOS.
   final String note;
 
-  /// Optional list of import lines (without the trailing newline) that
+  /// Optional list of Swift import lines (without the trailing newline) that
   /// should be stripped from the file when [pattern] is detected. Lets
   /// us drop, e.g., `import WebKit` when any `WKWebView` reference is
   /// found in the file.
   ///
+  /// **Swift syntax only** — entries must use the Swift `import Foo` form
+  /// (not ObjC `#import <Foo/Foo.h>` or `@import Foo;`). The ObjC porter
+  /// derives the framework name by stripping the `import ` prefix.
+  ///
   /// The porter does an exact-line match against trimmed source lines,
   /// so each entry should be the literal `import` directive.
-  final List<String> stripImports;
+  final List<String> stripSwiftImports;
 }
 
 /// The database. Append-only; existing entries should not be removed when
@@ -94,7 +98,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'or omit the feature on tvOS. Hand off the URL to '
         '`UIApplication.shared.open(url)` for the rare cases where another '
         'app on the device claims it.',
-    stripImports: <String>['import WebKit'],
+    stripSwiftImports: <String>['import WebKit'],
   ),
   ApiPattern(
     name: 'SafariServices',
@@ -105,7 +109,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'SafariServices and AuthenticationServices web auth APIs are not '
         'available on tvOS. For OAuth-style flows, use a device-pairing model '
         '(QR code on TV, browser on phone) rather than an in-app browser.',
-    stripImports: <String>[
+    stripSwiftImports: <String>[
       'import SafariServices',
       'import AuthenticationServices',
     ],
@@ -128,7 +132,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'tvOS has no biometric authentication. Use a remote-pairing flow if '
         'you need user identity (e.g. a sign-in code displayed on the TV that '
         'the user enters in a phone app).',
-    stripImports: <String>['import LocalAuthentication'],
+    stripSwiftImports: <String>['import LocalAuthentication'],
   ),
   ApiPattern(
     name: 'UIImagePicker',
@@ -138,7 +142,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'tvOS has no camera and no Photos library. Plugins that surface those '
         'features should be no-ops or return errors on tvOS — your iOS users '
         'have phones for this.',
-    stripImports: <String>['import PhotosUI'],
+    stripSwiftImports: <String>['import PhotosUI'],
   ),
   ApiPattern(
     name: 'CoreLocation',
@@ -149,7 +153,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'exists but every API call returns errors. If location is critical to '
         'your plugin, consider falling back to IP-geolocation via a network '
         'call (Dart-side, not a native plugin concern).',
-    stripImports: <String>['import CoreLocation'],
+    stripSwiftImports: <String>['import CoreLocation'],
   ),
   ApiPattern(
     name: 'Photos',
@@ -157,7 +161,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
     severity: Severity.unsupported,
     note:
         'No Photos library on tvOS. See `UIImagePicker` for the same reason.',
-    stripImports: <String>['import Photos'],
+    stripSwiftImports: <String>['import Photos'],
   ),
   ApiPattern(
     name: 'MailCompose',
@@ -166,7 +170,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
     note:
         'tvOS has no mail or messages composition UI. Shell out to a phone '
         'companion app or omit the feature.',
-    stripImports: <String>[
+    stripSwiftImports: <String>[
       'import MessageUI',
     ],
   ),
@@ -201,7 +205,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'tvOS does not run background tasks the way iOS does — the OS '
         'aggressively reaps Apple TV apps when not in foreground. Background '
         'work has to happen via the foreground UI or a network-side service.',
-    stripImports: <String>['import BackgroundTasks'],
+    stripSwiftImports: <String>['import BackgroundTasks'],
   ),
   ApiPattern(
     name: 'CaptiveNetwork',
@@ -223,7 +227,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'NetworkExtension hotspot APIs (NEHotspotNetwork / '
         'NEHotspotConfiguration) are not available on tvOS. There is no tvOS '
         'replacement; the feature has to be omitted on tvOS.',
-    stripImports: <String>['import NetworkExtension'],
+    stripSwiftImports: <String>['import NetworkExtension'],
   ),
   ApiPattern(
     name: 'StoreKitCodeRedemption',
@@ -256,7 +260,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         '`GoogleSignIn` module cannot be imported when building for tvOS. '
         'Google Sign-In on tvOS uses the device-pairing OAuth flow instead, '
         'which is a different implementation — there is no mechanical port.',
-    stripImports: <String>['import GoogleSignIn'],
+    stripSwiftImports: <String>['import GoogleSignIn'],
   ),
   ApiPattern(
     name: 'AVAudioSessionOptions',
@@ -282,7 +286,7 @@ const List<ApiPattern> compatibilityDatabase = <ApiPattern>[
         'CoreTelephony is not available on tvOS — an Apple TV has no '
         'cellular radio or carrier. There is no tvOS replacement; the '
         'carrier/cellular feature must be omitted on tvOS.',
-    stripImports: <String>['import CoreTelephony'],
+    stripSwiftImports: <String>['import CoreTelephony'],
   ),
   // ---------------------------------------------------------------------
   // `partial` entries — these compile on tvOS but behave differently or
