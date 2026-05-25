@@ -110,6 +110,11 @@ match v1.0.1.
 - `doc/` index gains "Porting an existing plugin" under "Plugin
   development".
 
+### Engine
+- Updated to Flutter **3.44.0** (`559ffa3f75e7402d65a8def9c28389a9b2e6fe42`).
+- Updated `bin/internal/engine.version` to `v1.0.0-flutter3.44.0`.
+- Bumped `packages/flutter_tvos` to `1.0.5`.
+
 ## [1.0.1] — 2026-05-20
 
 Patch release updating the pinned Flutter SDK and tvOS engine artifacts to Flutter 3.41.9.

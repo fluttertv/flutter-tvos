@@ -2,7 +2,7 @@
 
 ## Overview
 
-`flutter-tvos` is a Dart CLI tool that acts as a Flutter tvOS custom embedder. It wraps an unmodified Flutter 3.41.9 SDK and injects tvOS-specific overrides via Flutter's dependency injection system (`runner.run()` with `overrides: <Type, Generator>{}`). It follows the same architectural pattern as flutter-tizen, flutter-elinux, and flutter-webos.
+`flutter-tvos` is a Dart CLI tool that acts as a Flutter tvOS custom embedder. It wraps an unmodified Flutter 3.44.0 SDK and injects tvOS-specific overrides via Flutter's dependency injection system (`runner.run()` with `overrides: <Type, Generator>{}`). It follows the same architectural pattern as flutter-tizen, flutter-elinux, and flutter-webos.
 
 The CLI is designed to feel identical to the standard `flutter` CLI for end users — the same commands (`build`, `run`, `devices`, `doctor`, `clean`) work as expected, with the platform layer swapped out for tvOS.
 
@@ -177,7 +177,7 @@ FFI plugins are not added to the plugin registrant — they are linked and loade
 
 ## Implementation Notes
 
-- **Private fields in base classes** — `CachedArtifacts`, `FlutterBuildSystem`, and related Flutter 3.41.9 classes use private fields (`_fileSystem`, `_platform`). Subclasses must pass all named parameters directly to the `super()` constructor.
+- **Private fields in base classes** — `CachedArtifacts`, `FlutterBuildSystem`, and related Flutter 3.44.0 classes use private fields (`_fileSystem`, `_platform`). Subclasses must pass all named parameters directly to the `super()` constructor.
 - **`BuildMode` has no `.isDebug` getter** — compare explicitly: `buildMode == BuildMode.debug`.
 - **`Generator` typedef** — imported from `package:flutter_tools/src/context_runner.dart`; this import is required in `executable.dart`.
 - **Simulator builds require debug mode** — release and profile builds need `gen_snapshot` for AOT compilation, which targets a physical device.

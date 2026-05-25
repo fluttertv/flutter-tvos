@@ -11,6 +11,9 @@ bin/cache/
 engine_artifacts/
 artifacts/
 
+# Engine build workspaces (gclient sync output, lives outside repo by default)
+engine/flutter*/workspace/
+
 # Local engine source checkout for development (tracked in a separate repo)
 flutter_upstream_tvos_engine/
 

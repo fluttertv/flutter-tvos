@@ -86,7 +86,7 @@ class TvosFlutterCache extends FlutterCache {
 ///
 /// The GitHub Releases base URL can be overridden with the
 /// `TVOS_ENGINE_BASE_URL` environment variable. The release tag comes from
-/// `bin/internal/engine.version` (e.g. `v1.0.0-flutter3.41.9`).
+/// `bin/internal/engine.version` (e.g. `v1.0.0-flutter3.44.0`).
 class TvosEngineArtifacts extends EngineCachedArtifact {
   TvosEngineArtifacts(
     Cache cache, {
@@ -125,7 +125,7 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     return versionFile.existsSync() ? versionFile.readAsStringSync().trim() : null;
   }
 
-  /// The release tag, e.g. `v1.0.0-flutter3.41.9`.
+  /// The release tag, e.g. `v1.0.0-flutter3.44.0`.
   String get releaseTag {
     if (version == null || version!.isEmpty) {
       throwToolExit(
