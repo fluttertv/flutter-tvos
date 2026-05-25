@@ -1,0 +1,613 @@
+// Copyright 2026 The FlutterTV Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:yaml/yaml.dart';
+
+/// The native source language used by a plugin's existing iOS or macOS
+/// implementation.
+enum SourceLanguage { swift, objc, mixed, unknown }
+
+/// Result of inspecting a candidate source plugin directory.
+///
+/// Built by [SourceAnalyzer.analyze]. Drives the templates module and the
+/// eventual native-source porters by giving them the canonical interpretation
+/// of the source's pubspec and on-disk layout.
+class PluginSource {
+  PluginSource({
+    required this.directory,
+    required this.packageName,
+    required this.basePackageName,
+    required this.outputPackageName,
+    required this.sourceVersion,
+    required this.sourcePlatform,
+    required this.pluginClass,
+    required this.dartPluginClass,
+    required this.sourceLanguage,
+    required this.platformInterfacePackage,
+    required this.platformInterfaceConstraint,
+    required this.descriptionFromPubspec,
+    required this.licenseFile,
+    required this.classesDirectory,
+    this.ffiNativeAssets = false,
+    this.spmSourcesRoot,
+    this.spmModularHeaders = false,
+  });
+
+  /// Absolute source directory.
+  final Directory directory;
+
+  /// Pubspec name (e.g. `url_launcher_ios`).
+  final String packageName;
+
+  /// Base name with platform suffix stripped if any (e.g. `url_launcher` from
+  /// `url_launcher_ios`, `path_provider` from `path_provider_foundation`).
+  /// For non-federated plugins this equals [packageName].
+  final String basePackageName;
+
+  /// Suggested output package name for the generated `*_tvos` package.
+  final String outputPackageName;
+
+  /// `version:` from the source pubspec, used in the porting report's
+  /// provenance header. `null` when the source pubspec omits a version
+  /// (rare, but valid for path-only packages).
+  final String? sourceVersion;
+
+  /// Whichever of `ios` / `macos` we're modelling the port on (chosen by the
+  /// user via `--base-platform`, or the analyzer's default).
+  final String sourcePlatform;
+
+  /// Native plugin class name as declared in
+  /// `flutter.plugin.platforms.<sourcePlatform>.pluginClass`.
+  final String pluginClass;
+
+  /// Optional Dart plugin class declared on the same key. Federated plugins
+  /// usually set this.
+  final String? dartPluginClass;
+
+  /// Detected language of the existing native implementation.
+  final SourceLanguage sourceLanguage;
+
+  /// Name of the federated platform-interface package this plugin depends on
+  /// (e.g. `url_launcher_platform_interface`), or `null` if the plugin isn't
+  /// federated.
+  final String? platformInterfacePackage;
+
+  /// The version constraint the source declared for
+  /// [platformInterfacePackage] (e.g. `^2.4.0`), copied verbatim into the
+  /// generated pubspec so `pub get` resolves. `null` when unknown — the
+  /// template then falls back to `any`.
+  final String? platformInterfaceConstraint;
+
+  /// `description:` line from the source pubspec, used to seed the output
+  /// pubspec's description.
+  final String descriptionFromPubspec;
+
+  /// `LICENSE` file from the source if present, copied verbatim to the output.
+  final File? licenseFile;
+
+  /// Directory containing the native source files (`<sourcePlatform>/Classes`).
+  /// May not exist on disk if the plugin uses a non-standard layout.
+  final Directory classesDirectory;
+
+  /// True when the source is a dart:ffi / native-assets plugin (e.g.
+  /// `path_provider_foundation` via `package:objective_c`). These cannot
+  /// be built for tvOS by the toolchain, so the porter generates a
+  /// native federated `*_tvos` skeleton (Swift + method channel over the
+  /// platform interface) instead of copying the FFI source.
+  final bool ffiNativeAssets;
+
+  /// When the source uses a modern *modular* Swift Package Manager layout
+  /// — a single Dart package whose native code is split across several
+  /// SwiftPM targets under one `Sources/` directory (e.g. a Swift API
+  /// target plus sibling Objective-C `<pkg>_objc` / `<pkg>_ios` /
+  /// `<pkg>_macos` targets) — this points at that shared `Sources/`
+  /// directory. The scaffolder then copies *every* sibling target
+  /// (preserving structure, dropping the macOS-only target) and collapses
+  /// them into one CocoaPods module, mirroring how the upstream package's
+  /// own CocoaPods podspec ships. `null` for the common single-directory
+  /// layout where [classesDirectory] alone holds all the native code.
+  final Directory? spmSourcesRoot;
+
+  /// True when [spmSourcesRoot] is set — the source is a multi-target
+  /// modular SwiftPM package that must be collapsed into one module.
+  bool get isMultiTargetSpm => spmSourcesRoot != null;
+
+  /// True when the native sources use the SwiftPM modular-headers
+  /// convention — a single target that nonetheless ships its public
+  /// headers under an `include/<module>/` directory and `#import`s them
+  /// via that prefix (e.g. `sqflite_darwin`). Such packages need the
+  /// same collapsed-module podspec as [isMultiTargetSpm] (public headers
+  /// scoped to `include/`, `DEFINES_MODULE`), or the `include/…` import
+  /// paths break once CocoaPods flattens the framework headers.
+  final bool spmModularHeaders;
+}
+
+/// Inspects a candidate source plugin directory and produces a [PluginSource]
+/// describing how to port it.
+///
+/// Throws [PluginSourceError] for fatal misconfigurations:
+///   * missing/unreadable pubspec
+///   * not a Flutter plugin (no `flutter.plugin` key)
+///   * pure-Dart plugin (no `iOS`/`macOS` native implementation)
+///   * source already targets tvOS
+///
+/// The analyzer is deliberately tolerant about non-fatal oddities; it emits
+/// warnings on the supplied `warningSink` (caller decides how to surface
+/// them) and still returns a usable [PluginSource].
+class SourceAnalyzer {
+  SourceAnalyzer({required FileSystem fileSystem, void Function(String)? warningSink})
+    : _fs = fileSystem,
+      _warn = warningSink ?? ((_) {});
+
+  final FileSystem _fs;
+  final void Function(String) _warn;
+
+  /// Analyses [sourceDirectory], honouring [preferPlatform] when both
+  /// `ios` and `macos` are present (defaults to `ios`).
+  PluginSource analyze(Directory sourceDirectory, {String preferPlatform = 'ios'}) {
+    if (!sourceDirectory.existsSync()) {
+      throw PluginSourceError('Source directory does not exist: ${sourceDirectory.path}');
+    }
+
+    final File pubspecFile = sourceDirectory.childFile('pubspec.yaml');
+    if (!pubspecFile.existsSync()) {
+      throw PluginSourceError(
+        'No pubspec.yaml in ${sourceDirectory.path}. Pass a Flutter plugin directory.',
+      );
+    }
+
+    final YamlMap pubspec;
+    try {
+      pubspec = loadYaml(pubspecFile.readAsStringSync()) as YamlMap;
+    } on YamlException catch (e) {
+      throw PluginSourceError('Could not parse pubspec.yaml: $e');
+    }
+
+    final String packageName = (pubspec['name'] as String?) ?? '';
+    if (packageName.isEmpty) {
+      throw PluginSourceError('pubspec.yaml has no `name` field.');
+    }
+    if (packageName.endsWith('_tvos')) {
+      throw PluginSourceError(
+        '$packageName already targets tvOS. Pass an iOS or macOS plugin instead.',
+      );
+    }
+
+    final flutter = pubspec['flutter'] as YamlMap?;
+    final plugin = flutter?['plugin'] as YamlMap?;
+    if (plugin == null) {
+      throw PluginSourceError(
+        '$packageName is not a Flutter plugin (no `flutter.plugin` key).',
+      );
+    }
+    final platforms = plugin['platforms'] as YamlMap?;
+    if (platforms == null) {
+      throw PluginSourceError(
+        '$packageName has no `flutter.plugin.platforms` map. Pure-Dart plugins '
+        'do not need a separate `*_tvos` package — they federate through the '
+        'platform interface and work on tvOS as-is.',
+      );
+    }
+
+    // Pick the source platform we'll model the port on.
+    final bool hasIos = platforms.containsKey('ios');
+    final bool hasMacos = platforms.containsKey('macos');
+    if (!hasIos && !hasMacos) {
+      throw PluginSourceError(
+        '$packageName has neither an `ios` nor a `macos` platform implementation. '
+        'Add one of those before porting to tvOS.',
+      );
+    }
+    final String chosenPlatform;
+    if (preferPlatform == 'macos' && hasMacos) {
+      chosenPlatform = 'macos';
+    } else if (hasIos) {
+      chosenPlatform = 'ios';
+    } else {
+      chosenPlatform = 'macos';
+    }
+    if (preferPlatform == 'ios' && !hasIos && hasMacos) {
+      _warn(
+        '$packageName has no iOS implementation; modelling the port on its '
+        'macOS implementation instead.',
+      );
+    }
+
+    final platformConfig = platforms[chosenPlatform] as YamlMap?;
+    final bool sharedDarwin = platformConfig?['sharedDarwinSource'] == true;
+    final dartPluginClass = platformConfig?['dartPluginClass'] as String?;
+    String? pluginClass = platformConfig?['pluginClass'] as String?;
+    if (pluginClass != null && (pluginClass.isEmpty || pluginClass == 'none')) {
+      pluginClass = null;
+    }
+
+    // Locate the real native sources. Modern Flutter plugins put them under
+    // `<platform>/<pkg>/Sources/<pkg>` (Swift Package Manager) or
+    // `darwin/<pkg>/Sources/<pkg>` (`sharedDarwinSource: true`), not the
+    // legacy `<platform>/Classes`.
+    final Directory? sourcesDir = _resolveSourceDir(
+      sourceDirectory,
+      chosenPlatform,
+      packageName,
+      sharedDarwin: sharedDarwin,
+    );
+
+    if (sourcesDir == null && pluginClass == null) {
+      // No native iOS/macOS sources and no declared native class. Two
+      // very different sub-cases — and they were conflated before, which
+      // wrongly told users `path_provider_foundation` "just works":
+      final deps = pubspec['dependencies'] as YamlMap?;
+      bool hasDep(String n) => deps != null && deps.containsKey(n);
+      final bool usesFfi = hasDep('ffi') ||
+          hasDep('objective_c') ||
+          sourceDirectory
+              .childDirectory('hook')
+              .childFile('build.dart')
+              .existsSync();
+      if (usesFfi) {
+        // dart:ffi / native-assets plugin (e.g. modern
+        // path_provider_foundation via package:objective_c). The
+        // flutter-tvos toolchain can't build native-assets for tvOS, and
+        // we don't patch Flutter — so instead of a dead end, the porter
+        // generates a NATIVE federated `*_tvos` skeleton (Swift method
+        // channel over the platform interface). Flag it here; the
+        // scaffolder branches on `ffiNativeAssets`.
+        final String base = _stripPlatformSuffix(packageName);
+        String? iface;
+        String? ifaceConstraint;
+        if (deps != null) {
+          for (final Object? k in deps.keys) {
+            if (k is String && k.endsWith('_platform_interface')) {
+              iface = k;
+              final Object? v = deps[k];
+              if (v is String && v.trim().isNotEmpty) {
+                ifaceConstraint = v.trim();
+              }
+              break;
+            }
+          }
+        }
+        _warn(
+          '$packageName is a dart:ffi/native-assets plugin; generating a '
+          'native federated ${base}_tvos skeleton (Swift + method '
+          'channel) instead — the upstream FFI build is unsupported on '
+          'tvOS.',
+        );
+        return PluginSource(
+          directory: sourceDirectory,
+          packageName: packageName,
+          basePackageName: base,
+          outputPackageName: '${base}_tvos',
+          sourceVersion: (pubspec['version'] as String?)?.trim(),
+          sourcePlatform: chosenPlatform,
+          pluginClass: _defaultPluginClass(base),
+          dartPluginClass: '${_pascalCase(base)}Tvos',
+          sourceLanguage: SourceLanguage.swift,
+          platformInterfacePackage: iface,
+          platformInterfaceConstraint: ifaceConstraint,
+          descriptionFromPubspec:
+              (pubspec['description'] as String?)?.trim() ?? packageName,
+          licenseFile: sourceDirectory.childFile('LICENSE').existsSync()
+              ? sourceDirectory.childFile('LICENSE')
+              : null,
+          classesDirectory: sourceDirectory,
+          ffiNativeAssets: true,
+        );
+      }
+      // Genuinely pure-Dart (no ffi/native-assets): it federates through
+      // the platform interface's default Dart implementation and needs
+      // no `*_tvos` package.
+      throw PluginSourceError(
+        '$packageName has no native iOS/macOS sources and no dart:ffi — '
+        'it is a pure-Dart plugin that federates through its platform '
+        'interface; no `${_stripPlatformSuffix(packageName)}_tvos` '
+        'package is needed (the Dart implementation applies on tvOS).',
+        advisory: true,
+      );
+    }
+
+    if (sourcesDir != null && pluginClass == null) {
+      // sharedDarwinSource / federated-only plugins sometimes omit
+      // pluginClass. Recover the native registrant class from the sources.
+      pluginClass = _derivePluginClass(sourcesDir) ??
+          _defaultPluginClass(_stripPlatformSuffix(packageName));
+      _warn(
+        '$packageName declares no `pluginClass`; using `$pluginClass` '
+        'inferred from ${sourcesDir.path}.',
+      );
+    }
+
+    // When pluginClass is declared but no sources were found (e.g. Pigeon
+    // generates them at build time), fall back to the legacy
+    // `<platform>/Classes` path so the scaffolder emits the Phase-1 stub.
+    final Directory classesDir = sourcesDir ??
+        sourceDirectory.childDirectory(chosenPlatform).childDirectory('Classes');
+    final SourceLanguage lang = _detectLanguage(classesDir);
+    if (lang == SourceLanguage.unknown) {
+      _warn(
+        'Could not detect Swift or Objective-C sources under '
+        '${classesDir.path}. The scaffold will assume Swift; rename the stub '
+        'to .m if needed.',
+      );
+    }
+
+    // Best-effort: find the platform interface package AND carry its
+    // version constraint over verbatim. Hardcoding `^1.0.0` (the old
+    // behaviour) makes `pub get` fail for the many plugins whose
+    // interface is already past 1.x.
+    String? platformInterface;
+    String? platformInterfaceConstraint;
+    final deps = pubspec['dependencies'] as YamlMap?;
+    if (deps != null) {
+      for (final Object? key in deps.keys) {
+        if (key is String && key.endsWith('_platform_interface')) {
+          platformInterface = key;
+          final Object? v = deps[key];
+          if (v is String && v.trim().isNotEmpty) {
+            platformInterfaceConstraint = v.trim();
+          }
+          break;
+        }
+      }
+    }
+
+    final String basePackageName = _stripPlatformSuffix(packageName);
+    final outputPackageName = '${basePackageName}_tvos';
+
+    // Modern modular SwiftPM packages split native code across several
+    // sibling targets under one `Sources/` directory (a Swift API target
+    // plus Objective-C `<pkg>_objc` / `<pkg>_ios` / `<pkg>_macos`
+    // targets). `_resolveSourceDir` returns only the first such target,
+    // which silently drops the rest. Detect that here so the scaffolder
+    // can copy and collapse *all* of them.
+    final Directory? spmRoot = _detectSpmSourcesRoot(sourcesDir);
+
+    // SwiftPM modular-headers convention: public headers under an
+    // `include/<module>/` dir, `#import`ed via that prefix. Needs the
+    // collapsed-module podspec (public headers scoped to `include/`)
+    // even for a single target, or the `include/…` paths break once
+    // CocoaPods flattens the framework headers (e.g. sqflite_darwin).
+    final bool spmModular = spmRoot != null ||
+        (sourcesDir != null && _hasIncludeDir(sourcesDir));
+
+    final File license = sourceDirectory.childFile('LICENSE');
+
+    return PluginSource(
+      directory: sourceDirectory,
+      packageName: packageName,
+      basePackageName: basePackageName,
+      outputPackageName: outputPackageName,
+      sourceVersion: (pubspec['version'] as String?)?.trim(),
+      sourcePlatform: chosenPlatform,
+      pluginClass: pluginClass!,
+      dartPluginClass: dartPluginClass,
+      sourceLanguage: lang,
+      platformInterfacePackage: platformInterface,
+      platformInterfaceConstraint: platformInterfaceConstraint,
+      descriptionFromPubspec: (pubspec['description'] as String?)?.trim() ?? packageName,
+      licenseFile: license.existsSync() ? license : null,
+      classesDirectory: classesDir,
+      spmSourcesRoot: spmRoot,
+      spmModularHeaders: spmModular,
+    );
+  }
+
+  /// True when [dir] contains (at any depth) a directory named
+  /// `include` — the SwiftPM public-headers convention.
+  bool _hasIncludeDir(Directory dir) {
+    if (!dir.existsSync()) {
+      return false;
+    }
+    for (final FileSystemEntity e in dir.listSync(recursive: true)) {
+      if (e is Directory && _fs.path.basename(e.path) == 'include') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Returns the shared `Sources/` directory of a *modular* multi-target
+  /// SwiftPM package, or `null` for the common single-target layout.
+  ///
+  /// [sourcesDir] is whatever [_resolveSourceDir] picked — for a modular
+  /// package that is one target directory whose parent is `Sources/` and
+  /// whose siblings are the other targets. We treat it as multi-target
+  /// only when that `Sources/` parent has **more than one** child
+  /// directory that actually contains native files (a lone target is just
+  /// the ordinary SwiftPM layout the single-directory copy already
+  /// handles).
+  Directory? _detectSpmSourcesRoot(Directory? sourcesDir) {
+    if (sourcesDir == null) {
+      return null;
+    }
+    final Directory parent = sourcesDir.parent;
+    if (_fs.path.basename(parent.path) != 'Sources' || !parent.existsSync()) {
+      return null;
+    }
+    var nativeTargets = 0;
+    for (final FileSystemEntity e in parent.listSync()) {
+      if (e is Directory && _hasNativeFiles(e)) {
+        nativeTargets++;
+        if (nativeTargets > 1) {
+          return parent;
+        }
+      }
+    }
+    return null;
+  }
+
+  /// Finds the directory that actually holds the native sources, trying
+  /// (in order) the legacy `Classes/`, SPM `…/Sources/<pkg>`, any other
+  /// `Sources/<dir>`, and finally the platform root. When
+  /// `sharedDarwinSource` is set the shared `darwin/` tree is searched
+  /// before the platform-specific one. Returns `null` when there is no
+  /// native code anywhere (pure-Dart / FFI plugin).
+  Directory? _resolveSourceDir(
+    Directory source,
+    String platform,
+    String pkg, {
+    required bool sharedDarwin,
+  }) {
+    final List<String> roots =
+        sharedDarwin ? <String>['darwin', platform] : <String>[platform, 'darwin'];
+    final List<Directory> candidates = <Directory>[];
+    for (final String r in roots) {
+      final Directory root = source.childDirectory(r);
+      candidates.add(root.childDirectory('Classes'));
+      candidates.add(
+        root.childDirectory(pkg).childDirectory('Sources').childDirectory(pkg),
+      );
+      candidates.add(root.childDirectory('Sources').childDirectory(pkg));
+      for (final Directory srcRoot in <Directory>[
+        root.childDirectory(pkg).childDirectory('Sources'),
+        root.childDirectory('Sources'),
+      ]) {
+        if (srcRoot.existsSync()) {
+          for (final FileSystemEntity e in srcRoot.listSync()) {
+            if (e is Directory) {
+              candidates.add(e);
+            }
+          }
+        }
+      }
+      candidates.add(root); // legacy flat layout — last resort.
+    }
+    for (final Directory c in candidates) {
+      if (c.existsSync() && _hasNativeFiles(c)) {
+        return c;
+      }
+    }
+    return null;
+  }
+
+  /// True when [dir] (recursively) contains at least one Swift/ObjC source.
+  /// `Package.swift` / `Package.resolved` are SPM manifests, not plugin
+  /// code, so they don't count.
+  bool _hasNativeFiles(Directory dir) {
+    for (final FileSystemEntity e in dir.listSync(recursive: true)) {
+      if (e is! File) {
+        continue;
+      }
+      final String base = _fs.path.basename(e.path);
+      if (base == 'Package.swift' || base == 'Package.resolved') {
+        continue;
+      }
+      final String ext = _fs.path.extension(e.path).toLowerCase();
+      if (ext == '.swift' || ext == '.h' || ext == '.m' || ext == '.mm') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Best-effort scan for the class that registers with Flutter, so a
+  /// plugin that omits `pluginClass` from its pubspec still scaffolds.
+  /// Matches Swift `class X: … FlutterPlugin` and ObjC
+  /// `@interface X : … <FlutterPlugin>`.
+  String? _derivePluginClass(Directory dir) {
+    final RegExp swift =
+        RegExp(r'class\s+([A-Za-z_]\w*)\s*:\s*[^{]*\bFlutterPlugin\b');
+    final RegExp objc =
+        RegExp(r'@interface\s+([A-Za-z_]\w*)\s*:[^<]*<[^>]*\bFlutterPlugin\b');
+    for (final FileSystemEntity e in dir.listSync(recursive: true)) {
+      if (e is! File) {
+        continue;
+      }
+      final String ext = _fs.path.extension(e.path).toLowerCase();
+      if (ext != '.swift' && ext != '.h' && ext != '.m' && ext != '.mm') {
+        continue;
+      }
+      final String src = e.readAsStringSync();
+      final RegExpMatch? m =
+          swift.firstMatch(src) ?? objc.firstMatch(src);
+      if (m != null) {
+        return m.group(1);
+      }
+    }
+    return null;
+  }
+
+  /// `shared_preferences` → `SharedPreferencesPlugin`. Fallback when no
+  /// class could be detected in the sources.
+  String _defaultPluginClass(String base) => '${_pascalCase(base)}Plugin';
+
+  /// `path_provider` → `PathProvider`.
+  String _pascalCase(String base) => base
+      .split('_')
+      .where((String p) => p.isNotEmpty)
+      .map((String p) => p[0].toUpperCase() + p.substring(1))
+      .join();
+
+  SourceLanguage _detectLanguage(Directory dir) {
+    if (!dir.existsSync()) {
+      return SourceLanguage.unknown;
+    }
+    var hasSwift = false;
+    var hasObjc = false;
+    for (final FileSystemEntity entity in dir.listSync(recursive: true)) {
+      if (entity is File) {
+        final String ext = _fs.path.extension(entity.path).toLowerCase();
+        if (ext == '.swift') {
+          hasSwift = true;
+        } else if (ext == '.m' || ext == '.mm' || ext == '.h') {
+          hasObjc = true;
+        }
+      }
+    }
+    if (hasSwift && hasObjc) {
+      return SourceLanguage.mixed;
+    }
+    if (hasSwift) {
+      return SourceLanguage.swift;
+    }
+    if (hasObjc) {
+      return SourceLanguage.objc;
+    }
+    return SourceLanguage.unknown;
+  }
+
+  /// `url_launcher_ios` → `url_launcher`; `path_provider_foundation` →
+  /// `path_provider`; `audio_session` → `audio_session` (unchanged).
+  ///
+  /// Foundation is the umbrella name Flutter teams use when one package
+  /// implements both iOS and macOS (`shared_preferences_foundation`,
+  /// `path_provider_foundation`). We strip it the same way as `_ios`.
+  String _stripPlatformSuffix(String name) {
+    // Federated Apple-implementation naming conventions. Order matters:
+    // longer/more-specific suffixes first so `_avfoundation` is not
+    // shortened by `_foundation`.
+    const suffixes = <String>[
+      '_avfoundation',
+      '_foundation',
+      '_storekit',
+      '_apple',
+      '_ios',
+      '_macos',
+      '_darwin',
+    ];
+    for (final s in suffixes) {
+      if (name.endsWith(s) && name.length > s.length) {
+        return name.substring(0, name.length - s.length);
+      }
+    }
+    return name;
+  }
+}
+
+/// Thrown when the source directory can't be ported (missing pubspec, wrong
+/// package layout, already a tvOS plugin, etc).
+class PluginSourceError implements Exception {
+  PluginSourceError(this.message, {this.advisory = false});
+
+  final String message;
+
+  /// When true this is not a failure: the source legitimately needs no
+  /// `*_tvos` package (pure-Dart / dart:ffi). The command prints the
+  /// message and exits successfully rather than erroring.
+  final bool advisory;
+
+  @override
+  String toString() => 'PluginSourceError: $message';
+}

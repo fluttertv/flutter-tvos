@@ -8,7 +8,7 @@ A Flutter toolchain for building and running Flutter apps on **Apple TV (tvOS)**
 
 ## Current version
 
-- flutter-tvos: `1.0.2`
+- flutter-tvos: `1.1.0`
 - Flutter SDK: `3.44.0` (`559ffa3f75e7402d65a8def9c28389a9b2e6fe42`)
 - tvOS engine artifacts: `v1.0.0-flutter3.44.0`
 
@@ -83,7 +83,7 @@ A tvOS build only loads plugins that declare this key. Plugins targeting only `i
 
 In practice each plugin with native code ships an extra federated package (e.g. `url_launcher` → `url_launcher_tvos`) that adds the tvOS implementation. The same model is used by `flutter-tizen`, and `flutter-elinux`.
 
-A FlutterTV-curated index of ported plugins is being assembled and will be published soon. In the meantime, `flutter-tvos plugin port` (coming next) can scaffold a federated `*_tvos` package from any existing iOS or macOS plugin so you can port the ones you depend on yourself.
+A FlutterTV-curated index of ported plugins is at [github.com/fluttertv/plugins](https://github.com/fluttertv/plugins) (also on pub.dev under the [`fluttertv.dev`](https://pub.dev/publishers/fluttertv.dev/packages) publisher). If a plugin you need isn't there, `flutter-tvos plugin port` scaffolds a federated `*_tvos` package from any iOS or macOS plugin — see [Porting an existing plugin](doc/port-plugin.md).
 
 ### Writing cross-platform apps (iOS + Android + tvOS)
 
@@ -146,6 +146,21 @@ Then inside `io_impl.dart`, branch on `Platform.isTvOS` vs `Platform.isIOS`.
 - **Debug mode is simulator-only.** Physical Apple TV deployment runs in release/profile mode (AOT). Debug (JIT) is blocked on the device by Apple.
 - **Metal-only rendering.** No OpenGL backend. Apps relying on GL-specific platform views will not work.
 
+## Add tvOS support to an existing plugin
+
+If a plugin already implements iOS or macOS, `flutter-tvos plugin port`
+scaffolds a federated `<plugin>_tvos` sibling package from it — the source
+plugin is never modified.
+
+```sh
+flutter-tvos plugin port --from-pub url_launcher_ios --output url_launcher_tvos
+```
+
+See [Porting an existing plugin](doc/port-plugin.md) for the full flag
+reference, what the transformer does and doesn't do, and how to read the
+generated `PORTING_REPORT.md`. The [`fluttertv/plugins`](https://github.com/fluttertv/plugins)
+repo is 11 packages produced this way — useful as worked examples.
+
 ## Docs
 
 #### App development
@@ -158,6 +173,7 @@ Then inside `io_impl.dart`, branch on `Platform.isTvOS` vs `Platform.isIOS`.
 #### Plugin development
 
 - [Writing a tvOS plugin](doc/develop-plugin.md)
+- [Porting an existing plugin](doc/port-plugin.md)
 
 #### Project internals
 

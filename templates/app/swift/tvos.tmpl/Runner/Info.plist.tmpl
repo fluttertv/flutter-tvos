@@ -21,6 +21,17 @@
   <string>$(FLUTTER_BUILD_NAME)</string>
   <key>CFBundleVersion</key>
   <string>$(FLUTTER_BUILD_NUMBER)</string>
+  <!--
+    flutter-tvos copies `flutter_assets` to the app bundle root, but the
+    prebuilt tvOS device engine's `+[FlutterDartProject lookupKeyForAsset:]`
+    otherwise defaults to the iOS `Frameworks/App.framework/flutter_assets`
+    path. Without this override every plugin that resolves a bundled asset
+    via `lookupKeyForAsset:` (e.g. `VideoPlayerController.asset`) gets a
+    path that does not exist on a physical device. `FLTAssetsPath` points
+    the engine at the directory the build actually produces.
+  -->
+  <key>FLTAssetsPath</key>
+  <string>flutter_assets</string>
   <key>UIMainStoryboardFile</key>
   <string>Main</string>
   <key>UIRequiredDeviceCapabilities</key>

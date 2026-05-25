@@ -2,15 +2,133 @@
 
 All notable changes to flutter-tvos will be documented here.
 
-## [1.0.2] — 2026-05-24
+## [1.1.0] — 2026-05-24
+
+Minor release — the "porter release". Adds the entire
+`flutter-tvos plugin port` command for scaffolding federated
+`*_tvos` plugins from existing iOS / macOS plugins, first-class
+`flutter-tvos create --platforms=tvos`, a build-time nudge for
+plugins missing tvOS support, and a handful of build-pipeline
+fixes. No Flutter SDK or engine-artefact change — pinned versions
+match v1.0.1.
+
+### Added
+- **`flutter-tvos plugin port` — new command.** Scaffolds a
+  federated `<plugin>_tvos` sibling from any existing iOS or macOS
+  Flutter plugin. The source plugin is never modified. Source
+  loaders: positional local path, `--from-pub <name>`, or
+  `--from-git <url> --ref <ref>`. The 11 packages published at
+  [`fluttertv/plugins`](https://github.com/fluttertv/plugins) /
+  [pub.dev/publishers/fluttertv.dev](https://pub.dev/publishers/fluttertv.dev/packages)
+  were all produced this way. Built in 7 phases — scaffold → copy
+  native verbatim → Swift transformer → Objective-C transformer →
+  `--include-example` → fetch loaders → polish. The transformer:
+  - widens Swift `#if os(iOS)` / `#elseif os(macOS)` and
+    Objective-C `#if TARGET_OS_IOS` so tvOS follows the iOS branch
+    (UIKit / AVFoundation / Flutter embedder shape);
+  - widens `@available iOS X, *` / `#available` /
+    `API_AVAILABLE(ios())` to also list `tvOS X` (Apple ships
+    those symbols on tvOS at the same OS version);
+  - matches a compatibility database of tvOS-incompatible APIs
+    (WebKit, SafariServices, LocalAuthentication, CoreLocation,
+    CaptiveNetwork, NEHotspot, StoreKit code-redemption,
+    `UIPasteboard`, `AVAudioSession` Bluetooth / speaker options,
+    CoreTelephony, GoogleSignIn SDK, …) and either strips the
+    import + stubs the enclosing method-channel handler, or wraps
+    type-level uses behind `#if !os(tvOS)` (graceful partial port —
+    package still compiles with the feature disabled);
+  - collapses modern multi-target SwiftPM packages (Swift API +
+    `_objc` / `_ios` / `_macos` siblings) into one CocoaPods module,
+    dropping the macOS-only target;
+  - emits a buildable Swift skeleton for FFI / native-assets
+    plugins (`dart:ffi` + `package:objective_c` + `hook/build.dart`)
+    that the tvOS toolchain can't build for as-is, so the user
+    still gets a working scaffold to hand-finish;
+  - prunes cross-platform Dart from the generated `lib/` —
+    `_plus`-style packages bundle Linux / Windows / Web / macOS /
+    Android implementations alongside the iOS one; none reachable
+    at runtime on tvOS, and their transitive imports
+    (`package:web`, `flutter_web_plugins`, `win32`, `package:nm`,
+    …) aren't in the generated pubspec, so shipping them inflates
+    the package and breaks `pana` / `dart pub publish` analysis.
+  Every transformation is recorded in a `PORTING_REPORT.md`
+  written alongside the package.
+- **`flutter-tvos create --platforms=tvos` / `--tvos-only`** —
+  first-class tvOS-only project scaffold. No more
+  "create-iOS-then-strip" — the generated project ships a
+  `tvos/` Apple TV target only, with no iOS / Android / web /
+  desktop platforms to delete by hand.
+- **Build-time warning for plugins missing tvOS support.** During
+  `flutter-tvos build/run`, each plugin in the app's dep graph
+  that has a FlutterTV-published `<name>_tvos` sibling the user
+  hasn't added is surfaced as a one-line warning, e.g.
+  `audioplayers_tvos is available on pub.dev under the fluttertv.dev
+  verified publisher. Did you forget to add it to pubspec.yaml?`.
+  Keyed on the user-facing aggregator name, so the federated iOS
+  implementation (`audioplayers_darwin`) and platform-specific
+  siblings (`audioplayers_android`, `audioplayers_linux`, …) don't
+  produce duplicate or noisy warnings. Plugins outside the
+  curated list are silently ignored.
+- **`doc/port-plugin.md`** — proper user guide for `plugin port`,
+  matching the existing `doc/` style: quick start, full flag
+  reference, what the transformer does and doesn't do, after-
+  porting workflow, troubleshooting.
+
+### Fixed
+- `flutter-tvos build/run` now reads the app's `version:` from
+  `pubspec.yaml` and writes the parsed `FLUTTER_BUILD_NAME` /
+  `FLUTTER_BUILD_NUMBER` into `Generated.xcconfig` (`1.2.3+4` →
+  `1.2.3` / `4`). Previously they were hardcoded to `1.0.0` / `1`
+  unless explicitly passed via `--build-name` / `--build-number`,
+  which broke `package_info_plus` and any code reading
+  `CFBundleShortVersionString` / `CFBundleVersion`. Resolution
+  order now matches iOS via `xcode_backend.dart`: CLI flag →
+  `project.manifest.buildName` / `buildNumber` → canonical
+  default.
+- `FLTAssetsPath` is now baked into the generated `Info.plist` so
+  Flutter's plugin asset lookup (`Asset` / `lookupKey(forAsset:)`)
+  resolves correctly on a real Apple TV — previously only worked
+  on the simulator.
+- Device builds now pass `-allowProvisioningUpdates` to xcodebuild
+  so the first build on a fresh team / device can refresh
+  provisioning profiles itself instead of failing.
+- Tvos build skips the Dart native-assets target so an app that
+  transitively pulls in an FFI / native-assets plugin (e.g.
+  `path_provider_foundation`, `package_info_plus`) no longer
+  fails with `Target native_assets required define SdkRoot` on
+  first build (issue #3).
+
+### Documentation
+- README's plugin-porting section is now a 4-line pointer to
+  `doc/port-plugin.md`. The platform-key paragraph also points
+  at the published
+  [`fluttertv/plugins`](https://github.com/fluttertv/plugins) repo
+  and the
+  [`fluttertv.dev`](https://pub.dev/publishers/fluttertv.dev/packages)
+  verified publisher in place of the older "FlutterTV-curated
+  index being assembled and will be published soon" wording.
+- `doc/` index gains "Porting an existing plugin" under "Plugin
+  development".
+
+## [1.0.2] — 2026-05-25
 
 Patch release updating the pinned Flutter SDK and tvOS engine artifacts to Flutter 3.44.0.
+Adds engine patch infrastructure for reproducible engine builds.
 
 ### Changed
 - Updated `bin/internal/flutter.version` to Flutter `559ffa3f75e7402d65a8def9c28389a9b2e6fe42`.
 - Updated `bin/internal/engine.version` to `v1.0.0-flutter3.44.0`.
 - Bumped `packages/flutter_tvos` to version `1.0.5`.
 - Published matching tvOS engine artifacts for debug, profile, release, simulator, and host tooling (Dart 3.12.0).
+
+### Added
+- `engine/` directory with `build.sh`, `generate_patches.sh`, `gclient_config.py` for reproducible tvOS engine builds.
+- Engine patches for Flutter 3.44.0 and 3.41.9 archived in `engine/flutter*/patches/`.
+- `.github/workflows/engine-build.yml` — manual workflow for building engine artifacts on a self-hosted runner.
+
+### Fixed
+- Device builds: pass `-allowProvisioningUpdates` to xcodebuild so the CLI provisions the device automatically.
+- Example project: corrected Team ID and removed unused `UIMainStoryboardFile` from Info.plist.
 
 ## [1.0.1] — 2026-05-20
 
