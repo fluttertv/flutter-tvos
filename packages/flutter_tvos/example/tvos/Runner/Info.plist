@@ -21,8 +21,6 @@
   <string>$(FLUTTER_BUILD_NAME)</string>
   <key>CFBundleVersion</key>
   <string>$(FLUTTER_BUILD_NUMBER)</string>
-  <key>UIMainStoryboardFile</key>
-  <string>Main</string>
   <key>UIRequiredDeviceCapabilities</key>
   <array>
     <string>arm64</string>

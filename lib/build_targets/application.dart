@@ -283,6 +283,7 @@ class NativeTvosBundle extends Target {
         'COMPILER_INDEX_STORE_ENABLE=NO',
         'ARCHS=arm64',
         ...signingArgs,
+        if (!buildInfo.simulator) '-allowProvisioningUpdates',
         'build',
       ], workingDirectory: tvosProjectDir.path);
     } finally {
