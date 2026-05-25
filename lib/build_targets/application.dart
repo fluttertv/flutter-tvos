@@ -10,7 +10,6 @@ import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
-import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 
@@ -106,10 +105,40 @@ class TvosCopyFlutterBundle extends CopyFlutterBundle {
 
   @override
   List<Target> get dependencies => const <Target>[
-    DartBuildForNative(),
+    // NOTE: deliberately NOT depending on DartBuildForNative() /
+    // InstallCodeAssets(). The flutter-tvos toolchain cannot build Dart
+    // native-assets / code-assets for tvOS (flutter_tools' code-asset
+    // path is iOS/macOS-only and we don't patch it). Pulling those
+    // targets in makes the build run the build hooks of every
+    // native-assets plugin in the graph — including iOS-endorsed FFI
+    // plugins like `path_provider_foundation` that an app drags in
+    // transitively via `path_provider` — which fails with
+    // "Target native_assets required define SdkRoot" (issue #3).
+    //
+    // On tvOS those FFI Dart implementations are never used anyway:
+    // TvosDartPluginRegistrantTarget routes federated plugins to their
+    // native `*_tvos` package instead. So skipping the native-assets
+    // step is correct here, not a workaround — tvOS plugins are plain
+    // Swift built via CocoaPods, never via Dart code-assets.
     TvosKernelSnapshot(),
-    InstallCodeAssets(),
   ];
+
+  @override
+  Future<void> build(Environment environment) async {
+    // We skip the native-assets targets for tvOS (see `dependencies`),
+    // so `native_assets.json` is never produced. Upstream
+    // CopyFlutterBundle.build() unconditionally bundles it as
+    // `NativeAssetsManifest.json` and throws PathNotFound without it.
+    // Write the canonical empty manifest first — tvOS genuinely has no
+    // Dart native assets — so the upstream copy succeeds. (In-policy:
+    // our code writes a file; flutter_tools is untouched.)
+    final File manifest = environment.buildDir.childFile('native_assets.json');
+    if (!manifest.existsSync()) {
+      manifest.parent.createSync(recursive: true);
+      manifest.writeAsStringSync('{"format-version":[1,0,0],"native-assets":{}}');
+    }
+    await super.build(environment);
+  }
 }
 
 class DebugTvosApplication extends Target {
@@ -283,6 +312,13 @@ class NativeTvosBundle extends Target {
         'COMPILER_INDEX_STORE_ENABLE=NO',
         'ARCHS=arm64',
         ...signingArgs,
+        // Mirror upstream `flutter build ios`: let Xcode create/update
+        // the provisioning profile for automatic signing on a physical
+        // device. Without this, a device build fails with "Automatic
+        // signing is disabled and unable to generate a profile … pass
+        // -allowProvisioningUpdates". Not used for the simulator, which
+        // is not code-signed.
+        if (!buildInfo.simulator) '-allowProvisioningUpdates',
         'build',
       ], workingDirectory: tvosProjectDir.path);
     } finally {
@@ -801,12 +837,32 @@ class NativeTvosBundle extends Target {
     flutterDir.createSync(recursive: true);
 
     // Generated.xcconfig
+    //
+    // Resolution for FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER:
+    //   1. CLI flag (`--build-name`, `--build-number`) — already in
+    //      `buildInfo.buildInfo`.
+    //   2. Otherwise parse the app's `pubspec.yaml` `version:` field
+    //      (e.g. `1.2.3+4` → buildName `1.2.3`, buildNumber `4`).
+    //   3. Otherwise fall back to Flutter's canonical defaults
+    //      (`1.0.0` / `1`).
+    //
+    // The pubspec step matches what iOS does through `xcode_backend.dart`'s
+    // build phase script. Without it, every Apple TV build reports the
+    // default version, which breaks `package_info_plus` and any code
+    // that surfaces `CFBundleShortVersionString` / `CFBundleVersion`.
+    final String buildName = buildInfo.buildInfo.buildName
+        ?? project.manifest.buildName
+        ?? '1.0.0';
+    final String buildNumber = buildInfo.buildInfo.buildNumber
+        ?? project.manifest.buildNumber
+        ?? '1';
+
     final xcconfig = StringBuffer();
     xcconfig.writeln('FLUTTER_APPLICATION_PATH=${project.directory.path}');
     xcconfig.writeln('FLUTTER_TARGET=$targetFile');
     xcconfig.writeln('FLUTTER_BUILD_DIR=${project.directory.childDirectory('build').path}');
-    xcconfig.writeln('FLUTTER_BUILD_NAME=${buildInfo.buildInfo.buildName ?? '1.0.0'}');
-    xcconfig.writeln('FLUTTER_BUILD_NUMBER=${buildInfo.buildInfo.buildNumber ?? '1'}');
+    xcconfig.writeln('FLUTTER_BUILD_NAME=$buildName');
+    xcconfig.writeln('FLUTTER_BUILD_NUMBER=$buildNumber');
 
     flutterDir.childFile('Generated.xcconfig').writeAsStringSync(xcconfig.toString());
 

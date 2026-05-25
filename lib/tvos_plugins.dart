@@ -29,38 +29,89 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
 }
 ''';
 
-/// Discovers tvOS plugins by scanning all dependencies' pubspec.yaml
-/// and looking for `flutter.plugin.platforms.tvos`.
+/// Snapshot of the user-facing plugins for which a federated
+/// `<name>_tvos` package is published under the
+/// [`fluttertv.dev`](https://pub.dev/publishers/fluttertv.dev/packages)
+/// verified publisher.
 ///
-/// Flutter's built-in `findPlugins()` ignores unknown platform keys like `tvos`,
-/// so we read the dependencyGraph from .flutter-plugins-dependencies
-/// (which Flutter does populate) to get plugin names and paths,
-/// then parse each plugin's pubspec.yaml ourselves.
-List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
-  final tvosPlugins = <TvosPlugin>[];
+/// Keys are the **user-facing** pub package names — the aggregator the
+/// app pulls into its pubspec, not its iOS/macOS federated
+/// implementation. Users depend on `audioplayers`, never on
+/// `audioplayers_darwin` directly, so suggesting once on the
+/// aggregator name is enough — the `_darwin` sibling is not a key and
+/// will never match.
+///
+/// Values are alternative tvOS implementations the user might already
+/// have (e.g. one upstream plugin could in future have two competing
+/// `*_tvos` ports). Empty list means the canonical `<name>_tvos` is
+/// the only acceptable fix.
+///
+/// Source of truth: https://pub.dev/publishers/fluttertv.dev/packages.
+/// Update this table when the publisher gains or loses a package.
+const Map<String, List<String>> _kKnownTvosPlugins = <String, List<String>>{
+  'audioplayers': <String>[],
+  'connectivity_plus': <String>[],
+  'device_info_plus': <String>[],
+  'flutter_secure_storage': <String>[],
+  'flutter_tts': <String>[],
+  'package_info_plus': <String>[],
+  'path_provider': <String>[],
+  'shared_preferences': <String>[],
+  'sqflite': <String>[],
+  'video_player': <String>[],
+  'wakelock_plus': <String>[],
+};
 
-  // Read .flutter-plugins-dependencies to get dependencyGraph
-  // Flutter writes this even for unrecognized platforms — it lists all
-  // packages that declare flutter.plugin in their pubspec.
+/// One entry surfaced by [_walkPluginDependencies].
+class _DependencyPluginYaml {
+  _DependencyPluginYaml({
+    required this.name,
+    required this.path,
+    required this.pluginYaml,
+  });
+
+  /// Pub package name (e.g. `audioplayers`).
+  final String name;
+
+  /// Resolved absolute filesystem path to the plugin's checkout.
+  final String path;
+
+  /// The `flutter.plugin:` map from the plugin's `pubspec.yaml`.
+  final YamlMap pluginYaml;
+}
+
+/// Walks the project's plugin dependency graph and yields each entry
+/// that declares a `flutter.plugin:` block, regardless of platform.
+///
+/// Flutter's built-in [`findPlugins`](https://github.com/flutter/flutter/blob/master/packages/flutter_tools/lib/src/flutter_plugins.dart)
+/// ignores unknown platform keys like `tvos`, so we read the
+/// `dependencyGraph` from `.flutter-plugins-dependencies` (which
+/// Flutter does populate even for unrecognized platforms) to get
+/// plugin names, resolve each one's path through
+/// `.dart_tool/package_config.json`, and parse each pubspec ourselves.
+///
+/// Returns `[]` (not an error) if either input file is missing or
+/// malformed; callers degrade silently the same way Flutter itself
+/// does for plugin discovery.
+List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
+  final out = <_DependencyPluginYaml>[];
+
   final File depsFile = project.flutterPluginsDependenciesFile;
   if (!depsFile.existsSync()) {
-    return tvosPlugins;
+    return out;
   }
-
   Map<String, dynamic> depsJson;
   try {
     depsJson = json.decode(depsFile.readAsStringSync()) as Map<String, dynamic>;
   } on FormatException {
-    // Malformed JSON — treat as no plugins.
-    return tvosPlugins;
+    return out; // Malformed JSON — treat as no plugins.
   } on FileSystemException {
-    // File disappeared between existsSync() and read.
-    return tvosPlugins;
+    return out; // File disappeared between existsSync() and read.
   }
+  final List<dynamic> depGraph =
+      (depsJson['dependencyGraph'] as List<dynamic>?) ?? <dynamic>[];
 
-  final List<dynamic> depGraph = (depsJson['dependencyGraph'] as List<dynamic>?) ?? <dynamic>[];
-
-  // Build a name→path map from the pub package config
+  // Build a name→path map from .dart_tool/package_config.json.
   final packagePaths = <String, String>{};
   final File packageConfigFile = project.directory
       .childDirectory('.dart_tool')
@@ -69,12 +120,13 @@ List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
     try {
       final packageConfig =
           json.decode(packageConfigFile.readAsStringSync()) as Map<String, dynamic>;
-      final List<dynamic> packages = (packageConfig['packages'] as List<dynamic>?) ?? <dynamic>[];
+      final List<dynamic> packages =
+          (packageConfig['packages'] as List<dynamic>?) ?? <dynamic>[];
       for (final dynamic pkg in packages) {
         final pkgMap = pkg as Map<String, dynamic>;
         final name = pkgMap['name'] as String;
         var rootUri = pkgMap['rootUri'] as String;
-        // rootUri may be relative to .dart_tool/
+        // rootUri may be relative to .dart_tool/ or a file:// URI.
         if (rootUri.startsWith('../')) {
           rootUri = globals.fs.path.normalize(
             globals.fs.path.join(project.directory.path, '.dart_tool', rootUri),
@@ -85,10 +137,9 @@ List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
         packagePaths[name] = rootUri;
       }
     } on FormatException {
-      // Malformed package_config.json — leave packagePaths empty and let
-      // pubspec-based fallback handle plugin resolution.
+      // Malformed package_config.json — leave packagePaths empty.
     } on TypeError {
-      // Unexpected JSON shape (cast failure); fall through to pubspec fallback.
+      // Unexpected JSON shape; fall through with empty packagePaths.
     }
   }
 
@@ -99,58 +150,129 @@ List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
     if (pluginPath == null) {
       continue;
     }
-
-    // Read the plugin's pubspec.yaml for tvos platform
-    final File pubspecFile = globals.fs.file(globals.fs.path.join(pluginPath, 'pubspec.yaml'));
+    final File pubspecFile = globals.fs.file(
+      globals.fs.path.join(pluginPath, 'pubspec.yaml'),
+    );
     if (!pubspecFile.existsSync()) {
       continue;
     }
-
     try {
       final pubspec = loadYaml(pubspecFile.readAsStringSync()) as YamlMap;
       final flutter = pubspec['flutter'] as YamlMap?;
-      if (flutter == null) {
-        continue;
-      }
-
-      final plugin = flutter['plugin'] as YamlMap?;
+      final plugin = flutter?['plugin'] as YamlMap?;
       if (plugin == null) {
         continue;
       }
-
-      final platforms = plugin['platforms'] as YamlMap?;
-      if (platforms == null) {
-        continue;
-      }
-
-      final tvosConfig = platforms['tvos'] as YamlMap?;
-      if (tvosConfig == null) {
-        continue;
-      }
-
-      // Found a tvOS plugin
-      tvosPlugins.add(
-        TvosPlugin(
-          name: pluginName,
-          path: pluginPath,
-          pluginClass: tvosConfig['pluginClass'] as String?,
-          dartPluginClass: tvosConfig['dartPluginClass'] as String?,
-          ffiPlugin: tvosConfig[kFfiPlugin] as bool?,
-        ),
-      );
-
-      globals.logger.printTrace('Discovered tvOS plugin: $pluginName at $pluginPath');
+      out.add(_DependencyPluginYaml(
+        name: pluginName,
+        path: pluginPath,
+        pluginYaml: plugin,
+      ));
     } on YamlException {
       // Malformed pubspec.yaml — skip this plugin.
       continue;
     } on TypeError {
-      // pubspec layout doesn't match the expected schema (e.g. plugin.platforms
-      // is a list rather than a map); skip this plugin.
+      // pubspec layout doesn't match the expected schema (e.g.
+      // plugin.platforms is a list rather than a map); skip.
       continue;
     }
   }
 
+  return out;
+}
+
+/// Discovers plugins in [project] that declare a `flutter.plugin.platforms.tvos`
+/// block, parsing them into [TvosPlugin] instances.
+List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
+  final tvosPlugins = <TvosPlugin>[];
+  for (final dep in _walkPluginDependencies(project)) {
+    final platforms = dep.pluginYaml['platforms'];
+    if (platforms is! YamlMap) {
+      continue;
+    }
+    final tvosConfig = platforms['tvos'];
+    if (tvosConfig is! YamlMap) {
+      continue;
+    }
+    tvosPlugins.add(
+      TvosPlugin(
+        name: dep.name,
+        path: dep.path,
+        pluginClass: tvosConfig['pluginClass'] as String?,
+        dartPluginClass: tvosConfig['dartPluginClass'] as String?,
+        ffiPlugin: tvosConfig[kFfiPlugin] as bool?,
+      ),
+    );
+    globals.logger.printTrace(
+      'Discovered tvOS plugin: ${dep.name} at ${dep.path}',
+    );
+  }
   return tvosPlugins;
+}
+
+/// Returns the names of every dependency that declares `flutter.plugin`,
+/// regardless of whether it advertises a `tvos:` platform.
+///
+/// Used by [recommendTvosPluginsToInstall] to decide which entries from
+/// [_kKnownTvosPlugins] are worth suggesting and which the user has
+/// already satisfied.
+List<String> _findAllPluginNames(FlutterProject project) {
+  return <String>[
+    for (final dep in _walkPluginDependencies(project)) dep.name,
+  ];
+}
+
+/// Builds the developer-facing warning lines for any plugin in the
+/// project's dep graph that has a FlutterTV-published tvOS
+/// implementation the user hasn't added yet.
+///
+/// For each plugin in [allPluginNames] whose **base name** is a key
+/// of [_kKnownTvosPlugins], if the user hasn't already added the
+/// canonical `<name>_tvos` (or one of the listed alternatives), emit a
+/// one-line warning pointing at pub.dev.
+///
+/// Aggregator-vs-impl deduplication is handled implicitly by keying
+/// only on user-facing names — when an app pulls in `audioplayers`,
+/// `audioplayers_darwin` also lands in the dep graph but isn't a key,
+/// so the warning fires exactly once.
+///
+/// Public so tests can drive it without faking a project tree.
+List<String> recommendTvosPluginsToInstall({
+  required Iterable<String> allPluginNames,
+}) {
+  // Every plugin in the project's dep graph — used both as the
+  // iteration source AND as the "what does the user already have?"
+  // membership check. If the user added `<name>_tvos`, that package
+  // also lands here, so the canonical-or-alternative check below
+  // suppresses re-suggesting what's already installed.
+  final depGraph = allPluginNames.toSet();
+  final messages = <String>[];
+  for (final name in allPluginNames) {
+    final List<String>? alternatives = _kKnownTvosPlugins[name];
+    if (alternatives == null) {
+      continue;
+    }
+    final canonical = '${name}_tvos';
+    final satisfied = depGraph.contains(canonical)
+        || alternatives.any(depGraph.contains);
+    if (satisfied) {
+      continue;
+    }
+    if (alternatives.isEmpty) {
+      messages.add(
+        '$canonical is available on pub.dev under the fluttertv.dev '
+        'verified publisher. Did you forget to add it to pubspec.yaml?',
+      );
+    } else {
+      final List<String> options = <String>[canonical, ...alternatives];
+      final last = options.removeLast();
+      messages.add(
+        '[${options.join(', ')} or $last] is available on pub.dev. '
+        'Did you forget to add one to pubspec.yaml?',
+      );
+    }
+  }
+  return messages;
 }
 
 Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
@@ -160,6 +282,19 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   }
 
   final List<TvosPlugin> plugins = _discoverTvosPlugins(project);
+
+  // For each plugin in the app's dep graph that has a FlutterTV-
+  // published `<name>_tvos` sibling the user hasn't added yet, print
+  // a one-line "available on pub.dev — did you forget?". Plugins
+  // outside the curated list are silently ignored — we don't hard-fail
+  // on them, and we don't auto-recommend the porter for every random
+  // plugin (that would be presumptuous and noisy).
+  final recommendations = recommendTvosPluginsToInstall(
+    allPluginNames: _findAllPluginNames(project),
+  );
+  for (final message in recommendations) {
+    globals.logger.printWarning(message);
+  }
   final methodChannelPlugins = <Map<String, Object?>>[];
   final ffiPlugins = <Map<String, Object?>>[];
 

@@ -51,6 +51,7 @@ import 'commands/clean.dart';
 import 'commands/create.dart';
 import 'commands/devices.dart';
 import 'commands/drive.dart';
+import 'commands/plugin.dart';
 import 'commands/precache.dart';
 import 'commands/run.dart';
 import 'commands/test.dart';
@@ -60,6 +61,7 @@ import 'tvos_cache.dart';
 import 'tvos_device_discovery.dart';
 import 'tvos_doctor.dart';
 import 'tvos_logger.dart';
+import 'tvos_platform_args.dart';
 
 /// Main entry point for commands.
 ///
@@ -84,6 +86,11 @@ Future<void> main(List<String> args) async {
     '--no-version-check',
     ...args,
   ];
+
+  // Make `flutter-tvos create --platforms=tvos` first-class. Upstream
+  // Flutter's `--platforms` rejects `tvos` at parse time; rewrite it here
+  // (the one argv seam we own) before the runner parses.
+  args = expandTvosPlatformArgs(args);
 
   Cache.flutterRoot = join(rootPath, 'flutter');
 
@@ -155,6 +162,7 @@ Future<void> main(List<String> args) async {
         terminal: globals.terminal,
         outputPreferences: globals.outputPreferences,
       ),
+      TvosPluginCommand(verboseHelp: verboseHelp),
       TvosPrecacheCommand(
         verboseHelp: verboseHelp,
         cache: globals.cache,
