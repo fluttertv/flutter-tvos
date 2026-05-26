@@ -600,5 +600,194 @@ flutter:
         Logger: () => logger,
       },
     );
+
+    // Regression test for the bug where ensureReadyForTvosTooling was
+    // wiping `.flutter-plugins-dependencies` — replacing the file
+    // produced by stock `flutter pub get` with one that contained only
+    // the `tvos` key and an empty `dependencyGraph`. That broke every
+    // later `_discoverTvosPlugins` call (notably during the build
+    // pipeline), making every federated tvOS plugin with
+    // `dartPluginClass:` silently drop from `dart_plugin_registrant.dart`.
+    testUsingContext(
+      'preserves dependencyGraph and existing platform plugin keys',
+      () async {
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        projectDir.childDirectory('tvos').createSync();
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+
+        // Simulate exactly what stock `flutter pub get` writes: a
+        // populated `dependencyGraph` (used by `_discoverTvosPlugins`
+        // to walk the project's deps) and existing `ios`/`android`
+        // plugin lists that must NOT be lost.
+        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'info': 'This is a generated file; do not edit or check into version control.',
+            'plugins': <String, dynamic>{
+              'ios': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'name': 'shared_preferences_foundation',
+                  'path': '/pubcache/shared_preferences_foundation',
+                  'dependencies': <String>[],
+                },
+              ],
+              'android': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'name': 'shared_preferences_android',
+                  'path': '/pubcache/shared_preferences_android',
+                  'dependencies': <String>[],
+                },
+              ],
+            },
+            'dependencyGraph': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'name': 'shared_preferences',
+                'dependencies': <String>['shared_preferences_foundation'],
+              },
+              <String, dynamic>{
+                'name': 'shared_preferences_foundation',
+                'dependencies': <String>[],
+              },
+              <String, dynamic>{
+                'name': 'shared_preferences_android',
+                'dependencies': <String>[],
+              },
+            ],
+            'date_created': '2026-05-26 00:00:00.000',
+            'version': '3.44.0',
+            'swift_package_manager_enabled': false,
+          }),
+        );
+
+        // Minimal `.dart_tool/package_config.json` — required by
+        // `_discoverTvosPlugins`'s name→path resolution step, but no
+        // tvOS plugins are present so the resolved tvos list is `[]`.
+        fileSystem.directory('/p/.dart_tool').createSync();
+        fileSystem
+            .file('/p/.dart_tool/package_config.json')
+            .writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+        await ensureReadyForTvosTooling(project);
+
+        // Re-read what was written back to disk.
+        final after = json.decode(
+          projectDir.childFile('.flutter-plugins-dependencies').readAsStringSync(),
+        ) as Map<String, dynamic>;
+
+        // dependencyGraph must survive untouched.
+        expect(
+          after['dependencyGraph'],
+          isA<List<dynamic>>().having((l) => l.length, 'length', 3),
+          reason: 'dependencyGraph from stock pub get must NOT be replaced with []',
+        );
+
+        // ios + android plugin lists must survive intact.
+        final pluginsAfter = after['plugins'] as Map<String, dynamic>;
+        expect(
+          pluginsAfter.containsKey('ios'),
+          isTrue,
+          reason: 'plugins.ios entries must NOT be wiped',
+        );
+        expect(
+          pluginsAfter.containsKey('android'),
+          isTrue,
+          reason: 'plugins.android entries must NOT be wiped',
+        );
+        expect(
+          (pluginsAfter['ios'] as List<dynamic>).first as Map<String, dynamic>,
+          containsPair('name', 'shared_preferences_foundation'),
+        );
+
+        // The new `tvos` key must be added alongside (empty in this
+        // test because no tvOS plugin is in deps), not as a replacement.
+        expect(pluginsAfter.containsKey('tvos'), isTrue);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Logger: () => logger,
+      },
+    );
+
+    // The two read-time defences flagged in code review on PR #15:
+    // a `.flutter-plugins-dependencies` whose root JSON isn't an
+    // object (e.g. `[]`, `null`, a bare number) must not crash the
+    // build with a `TypeError` — we fall back to a fresh skeleton
+    // and warn instead.
+    testUsingContext(
+      'falls back when .flutter-plugins-dependencies root is not an object',
+      () async {
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        projectDir.childDirectory('tvos').createSync();
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+        // Valid JSON, but the root is an array — would crash on
+        // a blind `as Map<String, dynamic>` cast.
+        projectDir
+            .childFile('.flutter-plugins-dependencies')
+            .writeAsStringSync('[]');
+        fileSystem.directory('/p/.dart_tool').createSync();
+        fileSystem
+            .file('/p/.dart_tool/package_config.json')
+            .writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+
+        // Should NOT throw — should warn and regenerate from skeleton.
+        await ensureReadyForTvosTooling(project);
+
+        expect(
+          logger.warningText,
+          contains('.flutter-plugins-dependencies is not a JSON object'),
+        );
+        // The fallback skeleton was written, with the `tvos` key grafted on.
+        final after = json.decode(
+          projectDir.childFile('.flutter-plugins-dependencies').readAsStringSync(),
+        ) as Map<String, dynamic>;
+        expect((after['plugins'] as Map<String, dynamic>).containsKey('tvos'), isTrue);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Logger: () => logger,
+      },
+    );
+
+    testUsingContext(
+      'falls back when plugins key exists but is not a map',
+      () async {
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        projectDir.childDirectory('tvos').createSync();
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+        // Root IS a map this time, but `plugins` is the wrong shape
+        // (an array). The cast `as Map<String, dynamic>?` would
+        // throw `TypeError` outside the try/catch; the type-check
+        // pattern degrades gracefully instead.
+        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'plugins': <dynamic>[], // wrong: should be a map
+            'dependencyGraph': <dynamic>[],
+          }),
+        );
+        fileSystem.directory('/p/.dart_tool').createSync();
+        fileSystem
+            .file('/p/.dart_tool/package_config.json')
+            .writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+        await ensureReadyForTvosTooling(project);
+
+        final after = json.decode(
+          projectDir.childFile('.flutter-plugins-dependencies').readAsStringSync(),
+        ) as Map<String, dynamic>;
+        // Wrong-shaped plugins replaced with a fresh map containing tvos.
+        expect(after['plugins'], isA<Map<String, dynamic>>());
+        expect((after['plugins'] as Map<String, dynamic>).containsKey('tvos'), isTrue);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Logger: () => logger,
+      },
+    );
   });
 }

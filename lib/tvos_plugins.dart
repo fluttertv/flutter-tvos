@@ -102,14 +102,23 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
   }
   Map<String, dynamic> depsJson;
   try {
-    depsJson = json.decode(depsFile.readAsStringSync()) as Map<String, dynamic>;
+    final decoded = json.decode(depsFile.readAsStringSync());
+    if (decoded is! Map<String, dynamic>) {
+      // Root JSON is valid but not an object (e.g. `[]`, `null`, a
+      // bare number). A blind `as Map` cast would throw `TypeError`
+      // outside the try/catch — degrade silently here the same way
+      // we do for malformed JSON.
+      return out;
+    }
+    depsJson = decoded;
   } on FormatException {
     return out; // Malformed JSON — treat as no plugins.
   } on FileSystemException {
     return out; // File disappeared between existsSync() and read.
   }
+  final rawGraph = depsJson['dependencyGraph'];
   final List<dynamic> depGraph =
-      (depsJson['dependencyGraph'] as List<dynamic>?) ?? <dynamic>[];
+      rawGraph is List<dynamic> ? rawGraph : <dynamic>[];
 
   // Build a name→path map from .dart_tool/package_config.json.
   final packagePaths = <String, String>{};
@@ -318,17 +327,38 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   final File depsFile = project.flutterPluginsDependenciesFile;
   if (depsFile.existsSync()) {
     try {
-      dependenciesJson = json.decode(depsFile.readAsStringSync()) as Map<String, dynamic>;
-    } on FormatException {
-      // Malformed file — fall back to a fresh skeleton (defined above).
-    } on FileSystemException {
-      // File disappeared between existsSync() and read — same fallback.
+      final decoded = json.decode(depsFile.readAsStringSync());
+      if (decoded is Map<String, dynamic>) {
+        dependenciesJson = decoded;
+      } else {
+        // Valid JSON whose root isn't an object (e.g. `[]`, `null`,
+        // a bare number). A blind `as Map<String, dynamic>` would
+        // throw `TypeError` and crash the build — fall back to the
+        // fresh skeleton instead, and surface a warning so the
+        // bad file isn't silently masked.
+        globals.logger.printWarning(
+          '.flutter-plugins-dependencies is not a JSON object; regenerating from scratch.',
+        );
+      }
+    } on FormatException catch (e) {
+      globals.logger.printWarning(
+        '.flutter-plugins-dependencies contains malformed JSON ($e); regenerating from scratch.',
+      );
+    } on FileSystemException catch (e) {
+      globals.logger.printWarning(
+        '.flutter-plugins-dependencies disappeared before it could be read ($e); regenerating from scratch.',
+      );
     }
   }
   // Ensure `plugins` exists and graft the tvOS list onto it. iOS / Android
-  // / etc. entries that stock pub get wrote stay intact.
-  final pluginsMap =
-      (dependenciesJson['plugins'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+  // / etc. entries that stock pub get wrote stay intact. Use a runtime
+  // type check rather than `as Map<String, dynamic>?` so a wrong-shaped
+  // value (e.g. `"plugins": []`) falls back to an empty map instead of
+  // throwing `TypeError` outside the try/catch above.
+  final rawPlugins = dependenciesJson['plugins'];
+  final pluginsMap = rawPlugins is Map<String, dynamic>
+      ? rawPlugins
+      : <String, dynamic>{};
   pluginsMap['tvos'] = tvosPluginEntries;
   dependenciesJson['plugins'] = pluginsMap;
 
