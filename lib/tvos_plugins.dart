@@ -102,14 +102,23 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
   }
   Map<String, dynamic> depsJson;
   try {
-    depsJson = json.decode(depsFile.readAsStringSync()) as Map<String, dynamic>;
+    final decoded = json.decode(depsFile.readAsStringSync());
+    if (decoded is! Map<String, dynamic>) {
+      // Root JSON is valid but not an object (e.g. `[]`, `null`, a
+      // bare number). A blind `as Map` cast would throw `TypeError`
+      // outside the try/catch — degrade silently here the same way
+      // we do for malformed JSON.
+      return out;
+    }
+    depsJson = decoded;
   } on FormatException {
     return out; // Malformed JSON — treat as no plugins.
   } on FileSystemException {
     return out; // File disappeared between existsSync() and read.
   }
+  final rawGraph = depsJson['dependencyGraph'];
   final List<dynamic> depGraph =
-      (depsJson['dependencyGraph'] as List<dynamic>?) ?? <dynamic>[];
+      rawGraph is List<dynamic> ? rawGraph : <dynamic>[];
 
   // Build a name→path map from .dart_tool/package_config.json.
   final packagePaths = <String, String>{};
@@ -300,11 +309,58 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
 
   // Tightly-typed inner list lets us avoid dynamic dispatch on `.add(...)`.
   final tvosPluginEntries = <Map<String, dynamic>>[];
-  final dependenciesJson = <String, dynamic>{
+
+  // CRITICAL: preserve the existing `.flutter-plugins-dependencies` rather
+  // than overwriting it. Stock `flutter pub get` writes ios/android/...
+  // plugin lists AND the `dependencyGraph` array we need for later
+  // `_discoverTvosPlugins` calls (e.g. from `writeTvosDartPluginRegistrant`
+  // during the build pipeline). Wiping `dependencyGraph: []` here caused
+  // every federated tvOS plugin with `dartPluginClass:` to silently
+  // disappear from the registrant — producing runtime
+  // `MissingPluginException` and `Bad state: <X>Platform.instance must
+  // be set` errors. See bug investigation 2026-05-26.
+  var dependenciesJson = <String, dynamic>{
     'info': 'This is a generated file; do not edit or check into version control.',
-    'plugins': <String, dynamic>{'tvos': tvosPluginEntries},
+    'plugins': <String, dynamic>{},
     'dependencyGraph': <dynamic>[],
   };
+  final File depsFile = project.flutterPluginsDependenciesFile;
+  if (depsFile.existsSync()) {
+    try {
+      final decoded = json.decode(depsFile.readAsStringSync());
+      if (decoded is Map<String, dynamic>) {
+        dependenciesJson = decoded;
+      } else {
+        // Valid JSON whose root isn't an object (e.g. `[]`, `null`,
+        // a bare number). A blind `as Map<String, dynamic>` would
+        // throw `TypeError` and crash the build — fall back to the
+        // fresh skeleton instead, and surface a warning so the
+        // bad file isn't silently masked.
+        globals.logger.printWarning(
+          '.flutter-plugins-dependencies is not a JSON object; regenerating from scratch.',
+        );
+      }
+    } on FormatException catch (e) {
+      globals.logger.printWarning(
+        '.flutter-plugins-dependencies contains malformed JSON ($e); regenerating from scratch.',
+      );
+    } on FileSystemException catch (e) {
+      globals.logger.printWarning(
+        '.flutter-plugins-dependencies disappeared before it could be read ($e); regenerating from scratch.',
+      );
+    }
+  }
+  // Ensure `plugins` exists and graft the tvOS list onto it. iOS / Android
+  // / etc. entries that stock pub get wrote stay intact. Use a runtime
+  // type check rather than `as Map<String, dynamic>?` so a wrong-shaped
+  // value (e.g. `"plugins": []`) falls back to an empty map instead of
+  // throwing `TypeError` outside the try/catch above.
+  final rawPlugins = dependenciesJson['plugins'];
+  final pluginsMap = rawPlugins is Map<String, dynamic>
+      ? rawPlugins
+      : <String, dynamic>{};
+  pluginsMap['tvos'] = tvosPluginEntries;
+  dependenciesJson['plugins'] = pluginsMap;
 
   final pluginsBuffer = StringBuffer();
 
