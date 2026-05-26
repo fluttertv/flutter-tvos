@@ -300,11 +300,37 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
 
   // Tightly-typed inner list lets us avoid dynamic dispatch on `.add(...)`.
   final tvosPluginEntries = <Map<String, dynamic>>[];
-  final dependenciesJson = <String, dynamic>{
+
+  // CRITICAL: preserve the existing `.flutter-plugins-dependencies` rather
+  // than overwriting it. Stock `flutter pub get` writes ios/android/...
+  // plugin lists AND the `dependencyGraph` array we need for later
+  // `_discoverTvosPlugins` calls (e.g. from `writeTvosDartPluginRegistrant`
+  // during the build pipeline). Wiping `dependencyGraph: []` here caused
+  // every federated tvOS plugin with `dartPluginClass:` to silently
+  // disappear from the registrant — producing runtime
+  // `MissingPluginException` and `Bad state: <X>Platform.instance must
+  // be set` errors. See bug investigation 2026-05-26.
+  var dependenciesJson = <String, dynamic>{
     'info': 'This is a generated file; do not edit or check into version control.',
-    'plugins': <String, dynamic>{'tvos': tvosPluginEntries},
+    'plugins': <String, dynamic>{},
     'dependencyGraph': <dynamic>[],
   };
+  final File depsFile = project.flutterPluginsDependenciesFile;
+  if (depsFile.existsSync()) {
+    try {
+      dependenciesJson = json.decode(depsFile.readAsStringSync()) as Map<String, dynamic>;
+    } on FormatException {
+      // Malformed file — fall back to a fresh skeleton (defined above).
+    } on FileSystemException {
+      // File disappeared between existsSync() and read — same fallback.
+    }
+  }
+  // Ensure `plugins` exists and graft the tvOS list onto it. iOS / Android
+  // / etc. entries that stock pub get wrote stay intact.
+  final pluginsMap =
+      (dependenciesJson['plugins'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+  pluginsMap['tvos'] = tvosPluginEntries;
+  dependenciesJson['plugins'] = pluginsMap;
 
   final pluginsBuffer = StringBuffer();
 
