@@ -46,7 +46,16 @@ void main() {
   });
 
   testWithoutContext('passes --obfuscate when kDartObfuscation is true', () {
-    final List<String> args = argsFor(<String, String>{kDartObfuscation: 'true'});
+    // The helper is tested in isolation. In production, obfuscation always
+    // arrives paired with split-debug-info: upstream FlutterCommand.getBuildInfo
+    // rejects `--obfuscate` without `--split-debug-info` (throwToolExit) before
+    // the defines ever reach this helper, so we use the reachable combination.
+    // Note the helper still emits `--obfuscate` independently of split-debug-info,
+    // matching AOTSnapshotter.build (build.dart) which does not gate one on the other.
+    final List<String> args = argsFor(<String, String>{
+      kDartObfuscation: 'true',
+      kSplitDebugInfo: '/symbols',
+    });
     expect(args, contains('--obfuscate'));
   });
 
@@ -61,7 +70,7 @@ void main() {
       final List<String> args = argsFor(<String, String>{kSplitDebugInfo: '/symbols'});
       expect(args, contains('--dwarf-stack-traces'));
       expect(args, contains('--resolve-dwarf-paths'));
-      expect(args, contains('--save-debugging-info=/symbols/app.ios-arm64.symbols'));
+      expect(args, contains('--save-debugging-info=/symbols/app.tvos-arm64.symbols'));
     },
   );
 
@@ -87,7 +96,7 @@ void main() {
       kExtraGenSnapshotOptions: '--write-v8-snapshot-profile-to=/tmp/p.json',
     });
     expect(args, contains('--obfuscate'));
-    expect(args, contains('--save-debugging-info=/symbols/app.ios-arm64.symbols'));
+    expect(args, contains('--save-debugging-info=/symbols/app.tvos-arm64.symbols'));
     expect(args, contains('--write-v8-snapshot-profile-to=/tmp/p.json'));
     expect(args.last, '/out/app.dill');
   });

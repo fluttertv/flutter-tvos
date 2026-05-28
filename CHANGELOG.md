@@ -15,7 +15,7 @@ versions match v1.1.0.
   `App` binary kept readable Dart symbols and the split-debug-info
   directory stayed empty. The gen_snapshot invocation now forwards
   `--obfuscate`, the `--dwarf-stack-traces` / `--resolve-dwarf-paths` /
-  `--save-debugging-info=<dir>/app.ios-arm64.symbols` trio, and any
+  `--save-debugging-info=<dir>/app.tvos-arm64.symbols` trio, and any
   `--extra-gen-snapshot-options`, matching upstream
   `AOTSnapshotter.build` (issue #10).
 

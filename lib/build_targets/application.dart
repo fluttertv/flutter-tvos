@@ -842,7 +842,7 @@ class NativeTvosBundle extends Target {
       kExtraGenSnapshotOptions,
     );
     final String? saveDebuggingInfoArg = shouldSplitDebugInfo
-        ? '--save-debugging-info=${fileSystem.path.join(splitDebugInfo, 'app.ios-arm64.symbols')}'
+        ? '--save-debugging-info=${fileSystem.path.join(splitDebugInfo, 'app.tvos-arm64.symbols')}'
         : null;
     return <String>[
       genSnapshotPath,
