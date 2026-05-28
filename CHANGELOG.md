@@ -2,6 +2,23 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.1.1] — 2026-05-28
+
+Patch release. No Flutter SDK or engine-artefact change — pinned
+versions match v1.1.0.
+
+### Fixed
+- `--obfuscate` and `--split-debug-info` are now honoured by
+  release/profile (AOT) builds. The tvOS AOT step runs `gen_snapshot`
+  directly (rather than going through upstream `AOTSnapshotter`), and
+  previously dropped these flags entirely — the build succeeded but the
+  `App` binary kept readable Dart symbols and the split-debug-info
+  directory stayed empty. The gen_snapshot invocation now forwards
+  `--obfuscate`, the `--dwarf-stack-traces` / `--resolve-dwarf-paths` /
+  `--save-debugging-info=<dir>/app.ios-arm64.symbols` trio, and any
+  `--extra-gen-snapshot-options`, matching upstream
+  `AOTSnapshotter.build` (issue #10).
+
 ## [1.1.0] — 2026-05-24
 
 Minor release — the "porter release". Adds the entire

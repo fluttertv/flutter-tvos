@@ -12,6 +12,7 @@ import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
+import 'package:meta/meta.dart';
 
 import '../tvos_artifacts.dart';
 import '../tvos_build_info.dart';
@@ -706,14 +707,22 @@ class NativeTvosBundle extends Target {
 
     final String assemblyPath = globals.fs.path.join(aotDir.path, 'snapshot_assembly.S');
 
+    // The --split-debug-info directory must exist before gen_snapshot writes to it.
+    final String? splitDebugInfo = environment.defines[kSplitDebugInfo];
+    if (splitDebugInfo != null && splitDebugInfo.isNotEmpty) {
+      globals.fs.directory(splitDebugInfo).createSync(recursive: true);
+    }
+
     // Run gen_snapshot to produce assembly
-    final ProcessResult genSnapshotResult = await globals.processManager.run(<String>[
-      genSnapshotPath,
-      '--deterministic',
-      '--snapshot_kind=app-aot-assembly',
-      '--assembly=$assemblyPath',
-      kernelSnapshot.path,
-    ]);
+    final ProcessResult genSnapshotResult = await globals.processManager.run(
+      tvosGenSnapshotArgs(
+        fileSystem: globals.fs,
+        genSnapshotPath: genSnapshotPath,
+        assemblyPath: assemblyPath,
+        kernelSnapshotPath: kernelSnapshot.path,
+        defines: environment.defines,
+      ),
+    );
 
     if (genSnapshotResult.exitCode != 0) {
       globals.logger.printError('gen_snapshot failed:');
@@ -808,6 +817,47 @@ class NativeTvosBundle extends Target {
         );
 
     globals.logger.printTrace('AOT compilation complete: ${appFramework.path}');
+  }
+
+  /// Builds the gen_snapshot command line for the tvOS AOT assembly step.
+  ///
+  /// Forwards obfuscation / split-debug-info / extra gen_snapshot options from
+  /// the build [defines]. Without this, `--obfuscate` and `--split-debug-info`
+  /// parse at the command level but never reach gen_snapshot, so they silently
+  /// no-op. Mirrors `AOTSnapshotter.build` in
+  /// `flutter_tools/lib/src/base/build.dart`.
+  @visibleForTesting
+  static List<String> tvosGenSnapshotArgs({
+    required FileSystem fileSystem,
+    required String genSnapshotPath,
+    required String assemblyPath,
+    required String kernelSnapshotPath,
+    required Map<String, String> defines,
+  }) {
+    final dartObfuscation = defines[kDartObfuscation] == 'true';
+    final String? splitDebugInfo = defines[kSplitDebugInfo];
+    final bool shouldSplitDebugInfo = splitDebugInfo != null && splitDebugInfo.isNotEmpty;
+    final List<String> extraGenSnapshotOptions = decodeCommaSeparated(
+      defines,
+      kExtraGenSnapshotOptions,
+    );
+    final String? saveDebuggingInfoArg = shouldSplitDebugInfo
+        ? '--save-debugging-info=${fileSystem.path.join(splitDebugInfo, 'app.ios-arm64.symbols')}'
+        : null;
+    return <String>[
+      genSnapshotPath,
+      '--deterministic',
+      '--snapshot_kind=app-aot-assembly',
+      '--assembly=$assemblyPath',
+      ...extraGenSnapshotOptions,
+      if (shouldSplitDebugInfo) ...<String>[
+        '--dwarf-stack-traces',
+        '--resolve-dwarf-paths',
+        saveDebuggingInfoArg!,
+      ],
+      if (dartObfuscation) '--obfuscate',
+      kernelSnapshotPath,
+    ];
   }
 
   /// Returns the SDK path for the given SDK name.
