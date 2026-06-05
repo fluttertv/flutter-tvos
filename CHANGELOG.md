@@ -31,6 +31,33 @@ lldb→Xcode-debugger launch flow.
   and the `flutter_tvos` example. Newly created / regenerated projects no
   longer carry the interposer source or the bridging-header entry.
 
+### Fixed
+- **App.framework is now embedded for App Store / TestFlight builds**
+  ([#18](https://github.com/fluttertv/flutter-tvos/issues/18)). Embedding the
+  AOT `App.framework` was previously a post-build step inside the CLI, so it
+  only patched the `Runner.app` left in `SYMROOT` and never ran for an Xcode
+  `archive`. Archived builds therefore shipped without `App.framework` and
+  crashed on launch on a real Apple TV. Embedding now happens inside the Xcode
+  project as an **"Embed App.framework" build phase**, which runs for build,
+  run, *and* archive, and codesigns the framework with Xcode's resolved
+  identity (`${EXPANDED_CODE_SIGN_IDENTITY}`). Projects created before this
+  phase existed are unaffected for CLI builds: a backward-compatible fallback
+  in `flutter-tvos build/run` still embeds + signs `App.framework` when the
+  build phase is absent. (To archive a legacy project directly through Xcode
+  for TestFlight, regenerate the tvOS project so it picks up the build phase.)
+- **App.framework's `Info.plist` now passes App Store validation**
+  ([#18](https://github.com/fluttertv/flutter-tvos/issues/18)). The generated
+  plist gained `CFBundleShortVersionString`, `CFBundleSupportedPlatforms`
+  (`AppleTVOS`), `DTPlatformName`, `UIDeviceFamily` (`[3]`), and a tvOS
+  `MinimumOSVersion`, so the framework no longer fails archive validation for
+  missing keys.
+- **`flutter_assets` are no longer duplicated one level deep on rebuilds**
+  ([#18](https://github.com/fluttertv/flutter-tvos/issues/18)). The asset copy
+  used `cp -R <src>/assets <target>/assets` without clearing the target, so a
+  second build nested the tree into the existing directory
+  (`flutter_assets/assets/assets/…`). The copy now wipes the target first and
+  uses a pure-Dart recursive copy, producing an exact mirror every time.
+
 ### Engine
 - Updated to Flutter **3.44.1**
   (`924134a44c189315be2148659913dda1671cbe99`, Dart 3.12.1).

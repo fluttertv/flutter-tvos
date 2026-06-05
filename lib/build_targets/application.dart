@@ -333,83 +333,119 @@ class NativeTvosBundle extends Target {
         ? '$configuration-appletvsimulator'
         : '$configuration-appletvos';
 
-    // For release/profile (AOT) builds, embed App.framework into the .app
-    // bundle. The Xcode project template only embeds Flutter.framework, but
-    // FlutterDartProject.mm looks for `Frameworks/App.framework/App` to load
-    // the AOT VM/isolate snapshots via dlsym. Without this, the engine
-    // reports "VM snapshot invalid and could not be inferred from settings"
-    // and aborts.
+    // For release/profile (AOT) builds, FlutterDartProject.mm loads the AOT
+    // VM/isolate snapshots from `Frameworks/App.framework/App` via dlsym, so
+    // the framework must live in the app bundle.
+    //
+    // Newly created / regenerated projects embed it via the "Embed
+    // App.framework" Xcode build phase (see the app template's project.pbxproj),
+    // which runs for build, run, AND archive — fixing the TestFlight crash where
+    // the old CLI-only embed never ran for `xcodebuild archive` (issue #18).
+    //
+    // Projects created BEFORE that build phase existed have no such phase, so we
+    // keep a CLI-side fallback here for backward compatibility: if the build
+    // phase did not embed App.framework, embed + codesign it now exactly as we
+    // used to. This only fires for legacy projects (the guard below skips it
+    // when the phase already did the work), so it never double-signs a freshly
+    // generated project. NOTE: the fallback cannot help a legacy project that is
+    // archived directly through Xcode — those projects must be regenerated (or
+    // have the build phase added) to ship to TestFlight.
     if (!buildInfo.buildInfo.isDebug) {
-      final Directory builtApp = globals.fs
-          .directory(symroot)
-          .childDirectory(platformSuffix)
-          .childDirectory('Runner.app');
-      final Directory generatedAppFramework = tvosProjectDir
-          .childDirectory('Flutter')
-          .childDirectory('App.framework');
-      if (builtApp.existsSync() && generatedAppFramework.existsSync()) {
-        final Directory destFrameworks = builtApp.childDirectory('Frameworks');
-        destFrameworks.createSync(recursive: true);
-        final Directory destAppFramework = destFrameworks.childDirectory('App.framework');
-        if (destAppFramework.existsSync()) {
-          destAppFramework.deleteSync(recursive: true);
-        }
-        // Use `cp -R` to preserve structure / symlinks.
-        final ProcessResult cpResult = await globals.processManager.run(<String>[
-          'cp',
-          '-R',
-          generatedAppFramework.path,
-          destFrameworks.path,
-        ]);
-        if (cpResult.exitCode != 0) {
-          throw Exception('Failed to embed App.framework into Runner.app: ${cpResult.stderr}');
-        }
-
-        // Codesign App.framework for device builds. The on-device installer
-        // verifies every Mach-O inside the bundle, so an unsigned (or
-        // ad-hoc-signed) App.framework will fail with
-        // "0xe8008014 The executable contains an invalid signature."
-        // Reuse the identity that xcodebuild used for Flutter.framework —
-        // it's already embedded and signed correctly.
-        if (!buildInfo.simulator) {
-          final File flutterBinary = builtApp
-              .childDirectory('Frameworks')
-              .childDirectory('Flutter.framework')
-              .childFile('Flutter');
-          String? identity;
-          if (flutterBinary.existsSync()) {
-            final ProcessResult displayResult = await globals.processManager.run(<String>[
-              'codesign',
-              '-d',
-              '--verbose=2',
-              flutterBinary.path,
-            ]);
-            // codesign writes its display info to stderr.
-            final info = '${displayResult.stdout}\n${displayResult.stderr}';
-            final Match? authorityMatch = RegExp(r'Authority=(.+)').firstMatch(info);
-            identity = authorityMatch?.group(1)?.trim();
-          }
-          identity ??= 'Apple Development';
-          final ProcessResult signResult = await globals.processManager.run(<String>[
-            'codesign',
-            '--force',
-            '--sign',
-            identity,
-            '--timestamp=none',
-            '--generate-entitlement-der',
-            destAppFramework.path,
-          ]);
-          if (signResult.exitCode != 0) {
-            globals.logger.printError(
-              'codesign App.framework failed (identity="$identity"): ${signResult.stderr}',
-            );
-            throw Exception('Failed to codesign App.framework');
-          }
-        }
-      }
+      await _embedAppFrameworkFallback(tvosProjectDir, symroot, platformSuffix);
     }
 
     globals.logger.printTrace('tvOS application built: build/tvos/$platformSuffix/Runner.app');
+  }
+
+  /// Embeds + codesigns `App.framework` into the built `Runner.app` for
+  /// projects that lack the "Embed App.framework" Xcode build phase.
+  ///
+  /// This is a backward-compatibility fallback only. Projects generated from
+  /// the current template embed App.framework via a build phase (which also
+  /// covers `xcodebuild archive`), and this method detects that case and does
+  /// nothing. For older projects without the phase it reproduces the previous
+  /// post-build embed so `flutter-tvos build/run` keeps working unchanged.
+  Future<void> _embedAppFrameworkFallback(
+    Directory tvosProjectDir,
+    String symroot,
+    String platformSuffix,
+  ) async {
+    final Directory builtApp = globals.fs
+        .directory(symroot)
+        .childDirectory(platformSuffix)
+        .childDirectory('Runner.app');
+    final Directory generatedAppFramework = tvosProjectDir
+        .childDirectory('Flutter')
+        .childDirectory('App.framework');
+    if (!builtApp.existsSync() || !generatedAppFramework.existsSync()) {
+      return;
+    }
+
+    final Directory destFrameworks = builtApp.childDirectory('Frameworks');
+    final Directory destAppFramework = destFrameworks.childDirectory('App.framework');
+
+    // The "Embed App.framework" build phase already handled it (current
+    // template). Nothing to do — and importantly, don't re-sign over it.
+    if (destAppFramework.existsSync()) {
+      return;
+    }
+
+    globals.logger.printTrace(
+      'App.framework was not embedded by an Xcode build phase (legacy project); '
+      'embedding via CLI fallback. Regenerate the tvOS project to embed it as a '
+      'build phase so `xcodebuild archive` (TestFlight) works too.',
+    );
+
+    destFrameworks.createSync(recursive: true);
+    // Use `cp -R` to preserve structure / symlinks.
+    final ProcessResult cpResult = await globals.processManager.run(<String>[
+      'cp',
+      '-R',
+      generatedAppFramework.path,
+      destFrameworks.path,
+    ]);
+    if (cpResult.exitCode != 0) {
+      throw Exception('Failed to embed App.framework into Runner.app: ${cpResult.stderr}');
+    }
+
+    // Codesign for device builds. The on-device installer verifies every
+    // Mach-O in the bundle, so an unsigned App.framework fails with
+    // "0xe8008014 The executable contains an invalid signature." Reuse the
+    // identity xcodebuild already used for the embedded Flutter.framework.
+    if (!buildInfo.simulator) {
+      final File flutterBinary = destFrameworks
+          .childDirectory('Flutter.framework')
+          .childFile('Flutter');
+      String? identity;
+      if (flutterBinary.existsSync()) {
+        final ProcessResult displayResult = await globals.processManager.run(<String>[
+          'codesign',
+          '-d',
+          '--verbose=2',
+          flutterBinary.path,
+        ]);
+        // codesign writes its display info to stderr.
+        final info = '${displayResult.stdout}\n${displayResult.stderr}';
+        final Match? authorityMatch = RegExp(r'Authority=(.+)').firstMatch(info);
+        identity = authorityMatch?.group(1)?.trim();
+      }
+      identity ??= 'Apple Development';
+      final ProcessResult signResult = await globals.processManager.run(<String>[
+        'codesign',
+        '--force',
+        '--sign',
+        identity,
+        '--timestamp=none',
+        '--generate-entitlement-der',
+        destAppFramework.path,
+      ]);
+      if (signResult.exitCode != 0) {
+        globals.logger.printError(
+          'codesign App.framework failed (identity="$identity"): ${signResult.stderr}',
+        );
+        throw Exception('Failed to codesign App.framework');
+      }
+    }
   }
 
   /// Resolves code signing arguments for xcodebuild.
@@ -558,25 +594,44 @@ class NativeTvosBundle extends Target {
         .childDirectory('flutter_assets');
 
     if (flutterAssetsSource != null) {
-      flutterAssetsTarget.createSync(recursive: true);
-
-      // Copy kernel_blob.bin and other flutter assets
-      for (final FileSystemEntity entity in flutterAssetsSource.listSync()) {
-        final String name = globals.fs.path.basename(entity.path);
-        // Skip xcodebuild output directories
-        if (entity is Directory && (name.contains('Debug-') || name.contains('Release-'))) {
-          continue;
-        }
-        final String destPath = globals.fs.path.join(flutterAssetsTarget.path, name);
-        if (entity is File) {
-          entity.copySync(destPath);
-        } else if (entity is Directory) {
-          globals.processManager.runSync(<String>['cp', '-R', entity.path, destPath]);
-        }
-      }
+      copyFlutterAssetsTree(source: flutterAssetsSource, target: flutterAssetsTarget);
       globals.logger.printTrace('Copied flutter_assets to ${flutterAssetsTarget.path}');
     } else {
       globals.logger.printTrace('flutter_assets not found in build output, skipping.');
+    }
+  }
+
+  /// Mirrors the build output's flutter_assets tree into [target].
+  ///
+  /// The target is wiped first so the result is an exact mirror of [source].
+  /// This is critical: an earlier version copied each top-level subdirectory
+  /// with `cp -R <src>/assets <target>/assets` *without* cleaning the target.
+  /// On a second build the destination `assets/` already existed, so `cp -R`
+  /// nested the source *inside* it, producing `flutter_assets/assets/assets/…`
+  /// (issue #18). Using a clean target plus a pure-Dart recursive copy removes
+  /// that footgun entirely and keeps the function unit-testable on an
+  /// in-memory file system (no shelling out to `cp`).
+  ///
+  /// xcodebuild output dirs (`Debug-*`, `Release-*`) that may sit alongside
+  /// the assets in `build/tvos/` are skipped — they are not Flutter assets.
+  @visibleForTesting
+  static void copyFlutterAssetsTree({required Directory source, required Directory target}) {
+    if (target.existsSync()) {
+      target.deleteSync(recursive: true);
+    }
+    target.createSync(recursive: true);
+
+    for (final FileSystemEntity entity in source.listSync()) {
+      final String name = source.fileSystem.path.basename(entity.path);
+      if (entity is Directory && (name.contains('Debug-') || name.contains('Release-'))) {
+        continue;
+      }
+      final String destPath = target.fileSystem.path.join(target.path, name);
+      if (entity is File) {
+        entity.copySync(destPath);
+      } else if (entity is Directory) {
+        copyDirectory(entity, target.fileSystem.directory(destPath));
+      }
     }
   }
 
@@ -751,36 +806,85 @@ class NativeTvosBundle extends Target {
       throw Exception('Linking App.framework failed');
     }
 
-    // Write Info.plist for App.framework
+    // Write Info.plist for App.framework. Because we hand-build this framework
+    // and copy it into the bundle (rather than letting Xcode process it), none
+    // of the metadata Xcode would normally inject is present — so we must emit a
+    // plist complete enough to pass App Store / TestFlight validation. See #18:
+    // a minimal plist uploaded fine but failed validation for missing keys.
     appFramework
         .childFile('Info.plist')
         .writeAsStringSync(
-          '<?xml version="1.0" encoding="UTF-8"?>\n'
-          '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-          '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-          '<plist version="1.0">\n'
-          '<dict>\n'
-          '\t<key>CFBundleDevelopmentRegion</key>\n'
-          '\t<string>en</string>\n'
-          '\t<key>CFBundleExecutable</key>\n'
-          '\t<string>App</string>\n'
-          '\t<key>CFBundleIdentifier</key>\n'
-          '\t<string>io.flutter.flutter.app</string>\n'
-          '\t<key>CFBundleInfoDictionaryVersion</key>\n'
-          '\t<string>6.0</string>\n'
-          '\t<key>CFBundleName</key>\n'
-          '\t<string>App</string>\n'
-          '\t<key>CFBundlePackageType</key>\n'
-          '\t<string>FMWK</string>\n'
-          '\t<key>CFBundleVersion</key>\n'
-          '\t<string>1.0</string>\n'
-          '\t<key>MinimumOSVersion</key>\n'
-          '\t<string>13.0</string>\n'
-          '</dict>\n'
-          '</plist>\n',
+          buildAppFrameworkInfoPlist(
+            shortVersion: buildInfo.buildInfo.buildName ?? project.manifest.buildName ?? '1.0.0',
+            bundleVersion: buildInfo.buildInfo.buildNumber ?? project.manifest.buildNumber ?? '1',
+          ),
         );
 
     globals.logger.printTrace('AOT compilation complete: ${appFramework.path}');
+  }
+
+  /// Minimum tvOS version the embedded App.framework declares. Must match the
+  /// `TVOS_DEPLOYMENT_TARGET` baked into the Xcode project template, otherwise
+  /// App Store validation rejects the binary for a deployment-target mismatch.
+  static const String _kTvosMinimumOSVersion = '13.0';
+
+  /// Generates the `Info.plist` embedded inside `App.framework`.
+  ///
+  /// We assemble `App.framework` by hand (gen_snapshot → clang → dylib) and
+  /// copy it into the app bundle via an Xcode build phase, so it never passes
+  /// through Xcode's framework-processing pipeline that would otherwise inject
+  /// platform metadata. The keys below are the ones App Store / TestFlight
+  /// validation requires on every Mach-O bundle in a tvOS archive (issue #18):
+  ///
+  /// - `CFBundleShortVersionString` — required; the old plist only emitted
+  ///   `CFBundleVersion`, which fails validation.
+  /// - `CFBundleSupportedPlatforms = [AppleTVOS]` — must be the tvOS platform,
+  ///   not the `iPhoneOS` value Xcode would write for an iOS framework.
+  /// - `MinimumOSVersion` — Apple requires this on every embedded framework.
+  /// - `UIDeviceFamily = [3]` — the Apple TV device family.
+  /// - `DTPlatformName = appletvos` — platform identification.
+  @visibleForTesting
+  static String buildAppFrameworkInfoPlist({
+    required String shortVersion,
+    required String bundleVersion,
+  }) {
+    return '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n'
+        '<dict>\n'
+        '\t<key>CFBundleDevelopmentRegion</key>\n'
+        '\t<string>en</string>\n'
+        '\t<key>CFBundleExecutable</key>\n'
+        '\t<string>App</string>\n'
+        '\t<key>CFBundleIdentifier</key>\n'
+        '\t<string>io.flutter.flutter.app</string>\n'
+        '\t<key>CFBundleInfoDictionaryVersion</key>\n'
+        '\t<string>6.0</string>\n'
+        '\t<key>CFBundleName</key>\n'
+        '\t<string>App</string>\n'
+        '\t<key>CFBundlePackageType</key>\n'
+        '\t<string>FMWK</string>\n'
+        '\t<key>CFBundleShortVersionString</key>\n'
+        '\t<string>$shortVersion</string>\n'
+        '\t<key>CFBundleSignature</key>\n'
+        '\t<string>????</string>\n'
+        '\t<key>CFBundleVersion</key>\n'
+        '\t<string>$bundleVersion</string>\n'
+        '\t<key>CFBundleSupportedPlatforms</key>\n'
+        '\t<array>\n'
+        '\t\t<string>AppleTVOS</string>\n'
+        '\t</array>\n'
+        '\t<key>DTPlatformName</key>\n'
+        '\t<string>appletvos</string>\n'
+        '\t<key>MinimumOSVersion</key>\n'
+        '\t<string>$_kTvosMinimumOSVersion</string>\n'
+        '\t<key>UIDeviceFamily</key>\n'
+        '\t<array>\n'
+        '\t\t<integer>3</integer>\n'
+        '\t</array>\n'
+        '</dict>\n'
+        '</plist>\n';
   }
 
   /// Builds the gen_snapshot command line for the tvOS AOT assembly step.
