@@ -33,7 +33,6 @@ import 'package:flutter_tools/src/commands/screenshot.dart';
 import 'package:flutter_tools/src/commands/shell_completion.dart';
 import 'package:flutter_tools/src/commands/symbolize.dart';
 import 'package:flutter_tools/src/commands/update_packages.dart';
-import 'package:flutter_tools/src/commands/upgrade.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/features.dart';
@@ -55,6 +54,7 @@ import 'commands/plugin.dart';
 import 'commands/precache.dart';
 import 'commands/run.dart';
 import 'commands/test.dart';
+import 'commands/upgrade.dart';
 import 'tvos_application_package.dart';
 import 'tvos_artifacts.dart';
 import 'tvos_cache.dart';
@@ -130,8 +130,11 @@ Future<void> main(List<String> args) async {
       ShellCompletionCommand(),
       SymbolizeCommand(stdio: globals.stdio, fileSystem: globals.fs),
       UpdatePackagesCommand(verboseHelp: verboseHelp),
-      UpgradeCommand(verboseHelp: verboseHelp),
       // Commands extended for tvOS.
+      // `upgrade` is overridden so it upgrades the flutter-tvos toolchain to its
+      // latest release tag instead of moving the pinned Flutter SDK upstream
+      // (which stock UpgradeCommand would do, breaking the engine-artifact pin).
+      TvosUpgradeCommand(verboseHelp: verboseHelp),
       TvosAttachCommand(
         verboseHelp: verboseHelp,
         stdio: globals.stdio,

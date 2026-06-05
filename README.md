@@ -46,7 +46,7 @@ flutter-tvos run -d <device_id> --release
 
 - See [Supported commands](doc/commands.md) for all available commands and usage examples.
 - See [Getting started](doc/get-started.md) to create your first app and try **hot reload**.
-- To **update** flutter-tvos, run `git pull` in the cloned directory.
+- To **update** flutter-tvos to the latest released version, run `flutter-tvos upgrade` (use `flutter-tvos upgrade --verify-only` to just check).
 
 ## Platform identity & limitations
 
