@@ -16,7 +16,6 @@ import 'package:meta/meta.dart';
 
 import '../tvos_artifacts.dart';
 import '../tvos_build_info.dart';
-import '../tvos_cache.dart';
 import '../tvos_plugins.dart';
 
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with tvOS-
@@ -240,29 +239,25 @@ class NativeTvosBundle extends Target {
     // 1. Copy Flutter.framework from engine artifacts
     _copyFlutterFramework(tvosProjectDir);
 
-    // 2. Copy tvos_metallibs from CLI templates into the project (binary files
-    //    can't be processed by Flutter's template system)
-    _copyMetalLibs(tvosProjectDir);
-
-    // 4. Copy flutter_assets into tvos/Flutter/
+    // 2. Copy flutter_assets into tvos/Flutter/
     _copyFlutterAssets(project, tvosProjectDir);
 
     // 3. Generate GeneratedPluginRegistrant
     _generatePluginRegistrant(tvosProjectDir);
 
-    // 3b. For release/profile: compile AOT snapshot via gen_snapshot → App.framework
+    // 4. For release/profile: compile AOT snapshot via gen_snapshot → App.framework
     if (!buildInfo.buildInfo.isDebug) {
       await _compileAotSnapshot(project, tvosProjectDir, environment);
     }
 
-    // 4. Generate xcconfig files
+    // 5. Generate xcconfig files
     _generateXcconfigs(project, tvosProjectDir);
 
-    // 5. Generate tvOS plugin dependencies (must run AFTER Flutter's pub get
+    // 6. Generate tvOS plugin dependencies (must run AFTER Flutter's pub get
     //    which overwrites .flutter-plugins-dependencies without tvos key)
     await ensureReadyForTvosTooling(project);
 
-    // 6. Run pod install if Podfile exists
+    // 7. Run pod install if Podfile exists
     if (tvosProjectDir.childFile('Podfile').existsSync()) {
       // Use a Status spinner so the user sees timing the same way stock
       // iOS `flutter run` reports it.
@@ -281,7 +276,7 @@ class NativeTvosBundle extends Target {
       }
     }
 
-    // 7. Run xcodebuild — wrap in a Status spinner so the user sees the
+    // 8. Run xcodebuild — wrap in a Status spinner so the user sees the
     //    same "Running Xcode build... / Xcode build done." cadence stock
     //    `flutter run` for iOS produces.
     globals.logger.printTrace('Executing xcodebuild for tvOS (${buildInfo.sdkName})...');
@@ -537,37 +532,6 @@ class NativeTvosBundle extends Target {
     } else {
       globals.logger.printError('Flutter.framework not found at $frameworkPath');
       throw Exception('Flutter.framework not found. Run flutter-tvos precache first.');
-    }
-  }
-
-  /// Copies tvos_metallibs/ (pre-compiled tvOS Metal shaders) from the CLI
-  /// template directory into Runner/tvos_metallibs/ inside the tvOS project.
-  /// These binary files cannot be processed by Flutter's template system.
-  void _copyMetalLibs(Directory tvosProjectDir) {
-    final Directory runnerDir = tvosProjectDir.childDirectory('Runner');
-    final Directory targetDir = runnerDir.childDirectory('tvos_metallibs');
-
-    if (targetDir.existsSync()) {
-      return; // Already present
-    }
-
-    // tvosToolRootDirectory() = flutter-tvos/; templates are at flutter-tvos/templates/
-    final Directory cliRoot = tvosToolRootDirectory(globals.fs);
-    final Directory sourceDir = cliRoot
-        .childDirectory('templates')
-        .childDirectory('app')
-        .childDirectory('swift')
-        .childDirectory('tvos.tmpl')
-        .childDirectory('Runner')
-        .childDirectory('tvos_metallibs');
-
-    if (sourceDir.existsSync()) {
-      globals.processManager.runSync(<String>['cp', '-R', sourceDir.path, targetDir.path]);
-      globals.logger.printTrace('Copied tvos_metallibs to ${targetDir.path}');
-    } else {
-      globals.logger.printTrace(
-        'tvos_metallibs not found at ${sourceDir.path} — Metal shaders will not be available.',
-      );
     }
   }
 

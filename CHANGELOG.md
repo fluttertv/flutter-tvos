@@ -2,6 +2,62 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.2.0] — 2026-06-05
+
+Minor release. Upgrades the pinned engine to Flutter **3.44.1**, makes
+Impeller's Metal shaders tvOS-native (retiring the per-app
+`MetalLibInterposer` hack), and makes on-device **debug + hot reload +
+DevTools work over a wireless Apple TV** by mirroring stock Flutter iOS's
+lldb→Xcode-debugger launch flow.
+
+### Added
+- **On-device wireless debugging that works like stock Flutter iOS.**
+  `TvosDevice` now mirrors `IOSDevice._startAppOnCoreDevice`: it attaches
+  lldb first and, when the wireless CoreDevice tunnel stalls
+  ("LLDB is taking longer than expected") or drops, **falls back to the
+  Xcode debugger** (`XcodeDebug.debugApp` driven via AppleScript against
+  the generated `tvos/Runner.xcworkspace` + `Runner` scheme). The VM
+  Service is then resolved over mDNS at the device's LAN IP, so hot
+  reload (`r`), hot restart (`R`), and DevTools (`d`) come for free from
+  the base `HotRunner`. The first run prompts to allow controlling Xcode
+  (Settings ▸ Privacy & Security ▸ Automation), same as stock iOS.
+
+### Changed
+- **Impeller Metal shaders are now compiled tvOS-native in the engine
+  artifact** and embedded in `Flutter.framework`, loading directly on the
+  Apple TV GPU exactly like iOS. The per-app `tvos_metallibs/` directory
+  and the `MetalLibInterposer` (which swizzled `newLibraryWithData:` to
+  swap shaders matched by byte size) are **removed** from the app template
+  and the `flutter_tvos` example. Newly created / regenerated projects no
+  longer carry the interposer source or the bridging-header entry.
+
+### Engine
+- Updated to Flutter **3.44.1**
+  (`924134a44c189315be2148659913dda1671cbe99`, Dart 3.12.1).
+- Updated `bin/internal/engine.version` to `v1.0.0-flutter3.44.1`.
+- Matching tvOS engine artifacts published at
+  [`fluttertv/engine-artifacts@v1.0.0-flutter3.44.1`](https://github.com/fluttertv/engine-artifacts/releases/tag/v1.0.0-flutter3.44.1).
+  Engine-side changes live in
+  [`fluttertv/engine#1`](https://github.com/fluttertv/engine/pull/1):
+  tvOS-native Impeller metallibs, and an Impeller `StrokedCircle` fix
+  that no longer aborts (a debug-build `DCHECK`) when the stroke
+  half-width ≥ radius — e.g. the widget inspector outlining a small
+  circular element.
+
+### Compatibility
+- **Existing apps keep working without changes.** Apps built with an
+  older template still ship a `MetalLibInterposer`; against the 3.44.1
+  engine its byte-size-keyed swizzle simply finds no match and goes
+  inert — the engine's own tvOS-native shaders are used instead. To drop
+  the now-dead interposer files, recreate the `tvos/` runner or delete
+  `Runner/MetalLibInterposer.*`, `Runner/tvos_metallibs/`, and the
+  bridging-header `#import`.
+
+### Tests
+- Added `TvosDevice.parseDeviceUdid` unit coverage (extract UDID from
+  `devicectl` JSON, null on missing / malformed) in
+  `tvos_physical_device_test.dart`.
+
 ## [1.1.1] — 2026-05-28
 
 Patch release. No Flutter SDK or engine-artefact change — pinned

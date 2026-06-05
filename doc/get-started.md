@@ -51,7 +51,7 @@ Run `flutter-tvos doctor` to check that all required components are in place. On
 ```
 $ flutter-tvos doctor
 Doctor summary (to see all details, run flutter-tvos doctor -v):
-[✓] Flutter (Channel unknown, 3.44.0, on macOS, locale en-US)
+[✓] Flutter (Channel unknown, 3.44.1, on macOS, locale en-US)
 [✓] Xcode - develop for iOS and tvOS (Xcode 15.4)
 [✓] Connected device (1 available)
 ```
