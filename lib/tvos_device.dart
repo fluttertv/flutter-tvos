@@ -16,6 +16,7 @@ import 'package:flutter_tools/src/device_port_forwarder.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/lldb.dart';
 import 'package:flutter_tools/src/ios/xcode_debug.dart';
+import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/mdns_discovery.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/protocol_discovery.dart';
@@ -709,16 +710,38 @@ class TvosDevice extends Device {
         // Xcode launched the app; its console output isn't routed through our
         // log reader, so resolve the VM Service purely via mDNS (Bonjour) using
         // the device's LAN IP — exactly how stock iOS resolves it for wireless.
-        final Uri? xcodeUri = await MDnsVmServiceDiscovery.instance!.getVMServiceUriForAttach(
-          bundleId,
-          this,
-          useDeviceIPAsHost: true,
-          timeout: const Duration(seconds: 60),
-        );
+        //
+        // This can throwToolExit (multiple Dart VM services on the LAN, or
+        // denied macOS Local Network permission). The app is already running
+        // under the Xcode debugger at this point, so a throw escaping here would
+        // crash `run` and leave that debug session attached with no teardown.
+        // Catch it and degrade gracefully to a launched-but-no-hot-reload
+        // result with an actionable warning (see below).
+        Uri? xcodeUri;
+        try {
+          xcodeUri = await MDnsVmServiceDiscovery.instance!.getVMServiceUriForAttach(
+            bundleId,
+            this,
+            useDeviceIPAsHost: true,
+            timeout: const Duration(seconds: 60),
+          );
+        } on Object catch (e) {
+          logger.printTrace('mDNS VM Service lookup failed: $e');
+        }
         if (xcodeUri != null) {
           logger.printTrace('VM service (via Xcode + mDNS) available at: $xcodeUri');
           return LaunchResult.succeeded(vmServiceUri: xcodeUri);
         }
+        // Returning succeeded() with no vmServiceUri makes the resident runner
+        // report success while hot reload / DevTools silently do nothing — warn
+        // so the user isn't left with a mute, broken-feeling session.
+        logger.printWarning(
+          'App launched via Xcode, but its Dart VM Service was not found over '
+          'mDNS within 60s — hot reload, hot restart, and DevTools will be '
+          'unavailable. Check that this Mac has Local Network permission '
+          '(System Settings ▸ Privacy & Security ▸ Local Network) and that the '
+          'Apple TV is on the same network.',
+        );
         return LaunchResult.succeeded();
       }
     }
@@ -792,6 +815,15 @@ class TvosDevice extends Device {
       return LaunchResult.succeeded(vmServiceUri: vmServiceUri);
     }
 
+    // The app is installed and launched, but we never resolved a reachable VM
+    // Service URI — returning a bare succeeded() makes the runner report success
+    // while hot reload / DevTools silently do nothing. Tell the user why.
+    logger.printWarning(
+      'App launched, but its Dart VM Service was not found within the timeout — '
+      'hot reload, hot restart, and DevTools will be unavailable. Check that '
+      'this Mac has Local Network permission (System Settings ▸ Privacy & '
+      'Security ▸ Local Network) and that the Apple TV is on the same network.',
+    );
     return LaunchResult.succeeded();
   }
 
@@ -829,22 +861,52 @@ class TvosDevice extends Device {
       return false;
     }
 
+    // This fallback fires *because* something already went wrong (lldb didn't
+    // attach), so don't compound it with a force-unwrap crash. On a box where
+    // Xcode isn't selected (`xcode-select` → Command Line Tools, fresh CI),
+    // `globals.xcode` is null; fail with an actionable message instead of a bare
+    // "Null check operator used on a null value". Upstream IOSDevice passes the
+    // nullable `globals.xcode` for the same reason.
+    final Xcode? xcode = globals.xcode;
+    if (xcode == null) {
+      logger.printError(
+        'Xcode is required for the wireless debug fallback but is not selected.\n'
+        'Open Xcode once, or run '
+        '`sudo xcode-select -s /Applications/Xcode.app`, '
+        'or attach the Apple TV via USB for lldb debugging.',
+      );
+      return false;
+    }
+
     final xcodeDebug = XcodeDebug(
       logger: logger,
       processManager: globals.processManager,
-      xcode: globals.xcode!,
+      xcode: xcode,
       fileSystem: globals.fs,
     );
     _xcodeDebug = xcodeDebug;
 
     // Ensure the Runner scheme has a debugger launch action (Xcode needs it to
-    // attach the debugger when it runs the scheme).
+    // attach the debugger when it runs the scheme). This is read-only
+    // validation, but upstream `ensureXcodeDebuggerLaunchAction` throwToolExits
+    // when the scheme's Run action doesn't select the LLDB debugger — guard it
+    // so a misconfigured scheme returns false (→ "Failed to start a debug
+    // session") instead of aborting the whole `run`.
     final File schemeFile = xcodeproj
         .childDirectory('xcshareddata')
         .childDirectory('xcschemes')
         .childFile('Runner.xcscheme');
     if (schemeFile.existsSync()) {
-      xcodeDebug.ensureXcodeDebuggerLaunchAction(schemeFile);
+      try {
+        xcodeDebug.ensureXcodeDebuggerLaunchAction(schemeFile);
+      } on Object catch (e) {
+        logger.printError(
+          'Could not prepare the Runner scheme for debugging: $e\n'
+          'Open tvos/Runner.xcodeproj in Xcode and make sure the Runner '
+          "scheme's Run action uses the LLDB debugger.",
+        );
+        return false;
+      }
     }
 
     // Build the Dart VM launch arguments the same way stock iOS does. Core
@@ -883,7 +945,14 @@ class TvosDevice extends Device {
     // Xcode identifies devices by their hardware UDID (00008110-…), not the
     // CoreDevice identifier (a GUID) that `devicectl` and our [id] use. Resolve
     // and pass the UDID so Xcode can find the target device.
-    final String xcodeDeviceId = await _resolveDeviceUdid(id) ?? id;
+    final String? resolvedUdid = await _resolveDeviceUdid(id);
+    if (resolvedUdid == null) {
+      logger.printTrace(
+        'Could not resolve a hardware UDID; passing the CoreDevice id "$id" to '
+        'Xcode. If Xcode reports the device cannot be found, this is why.',
+      );
+    }
+    final String xcodeDeviceId = resolvedUdid ?? id;
 
     return xcodeDebug.debugApp(
       project: debugProject,
@@ -911,9 +980,20 @@ class TvosDevice extends Device {
         out.path,
       ]);
       if (r.exitCode != 0 || !out.existsSync()) {
+        logger.printTrace(
+          'devicectl UDID lookup failed (exit ${r.exitCode}); '
+          'falling back to the raw device id. stderr: ${r.stderr}',
+        );
         return null;
       }
-      return parseDeviceUdid(out.readAsStringSync());
+      final String? udid = parseDeviceUdid(out.readAsStringSync());
+      if (udid == null) {
+        logger.printTrace(
+          'devicectl returned 0 but no result.hardwareProperties.udid was '
+          'found (JSON shape may have changed); falling back to the raw id.',
+        );
+      }
+      return udid;
     } on Object catch (e) {
       logger.printTrace('Failed to resolve device UDID: $e');
       return null;
@@ -1331,5 +1411,11 @@ class TvosDevice extends Device {
   @override
   Future<void> dispose() async {
     _logReader?.dispose();
+    // dispose() runs on abnormal teardown, `flutter-tvos attach` exit, and
+    // hot-restart — paths where stopApp() may not fire. If the Xcode debugger
+    // fallback was active, exit it here too so the osascript automation process
+    // doesn't leak and the debug session doesn't stay attached on the device.
+    unawaited(_xcodeDebug?.exit());
+    _xcodeDebug = null;
   }
 }
