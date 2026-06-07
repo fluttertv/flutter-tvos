@@ -7,6 +7,7 @@ import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tvos/commands/upgrade.dart';
 
 import '../src/common.dart';
+import '../src/context.dart';
 import '../src/fake_process_manager.dart';
 
 void main() {
@@ -127,6 +128,149 @@ void main() {
 
       await expectToolExitLater(runner.fetchLatestReleaseVersion(), contains('no release tags'));
     });
+  });
+
+  group('TvosUpgradeCommandRunner.fetchCurrentVersion', () {
+    late FakeProcessManager processManager;
+    late TvosUpgradeCommandRunner runner;
+
+    setUp(() {
+      processManager = FakeProcessManager.empty();
+      runner = TvosUpgradeCommandRunner(
+        processUtils: ProcessUtils(
+          processManager: processManager,
+          logger: BufferLogger.test(),
+        ),
+      )..workingDirectory = '/repo';
+    });
+
+    test('returns the commit hash and exact tag when HEAD is tagged', () async {
+      processManager.addCommands(<FakeCommand>[
+        const FakeCommand(
+          command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+          stdout: '840123adb831536a3512df43355dd355c9a77878\n',
+        ),
+        const FakeCommand(
+          command: <String>['git', 'describe', '--exact-match', '--tags', 'HEAD'],
+          stdout: 'v3.44.1-tvos.1.2.0\n',
+        ),
+      ]);
+
+      final TvosVersion current = await runner.fetchCurrentVersion();
+
+      expect(current.hash, '840123adb831536a3512df43355dd355c9a77878');
+      expect(current.tag, 'v3.44.1-tvos.1.2.0');
+      expect(current.label, 'v3.44.1-tvos.1.2.0');
+      expect(processManager, hasNoRemainingExpectations);
+    });
+
+    test('leaves tag null on a development checkout with no exact tag', () async {
+      processManager.addCommands(<FakeCommand>[
+        const FakeCommand(
+          command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+          stdout: 'cafef00dcafef00dcafef00dcafef00dcafef00d\n',
+        ),
+        // `git describe --exact-match` exits non-zero when HEAD is not on a tag.
+        const FakeCommand(
+          command: <String>['git', 'describe', '--exact-match', '--tags', 'HEAD'],
+          exitCode: 128,
+        ),
+      ]);
+
+      final TvosVersion current = await runner.fetchCurrentVersion();
+
+      expect(current.hash, 'cafef00dcafef00dcafef00dcafef00dcafef00d');
+      expect(current.tag, isNull);
+      expect(current.label, 'cafef00dca'); // short hash fallback
+      expect(processManager, hasNoRemainingExpectations);
+    });
+  });
+
+  group('TvosUpgradeCommandRunner.runCommandFirstHalf', () {
+    late FakeProcessManager processManager;
+    late BufferLogger logger;
+
+    setUp(() {
+      processManager = FakeProcessManager.empty();
+      logger = BufferLogger.test();
+    });
+
+    const sha = '840123adb831536a3512df43355dd355c9a77878';
+
+    testUsingContext(
+      'reports already up to date when HEAD is the latest (annotated) release',
+      () async {
+        processManager.addCommands(<FakeCommand>[
+          const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+          const FakeCommand(
+            command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+            stdout: 'v3.44.1-tvos.1.2.0\n',
+          ),
+          const FakeCommand(
+            command: <String>['git', 'rev-parse', 'v3.44.1-tvos.1.2.0^{commit}'],
+            stdout: '$sha\n',
+          ),
+          const FakeCommand(
+            command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+            stdout: '$sha\n',
+          ),
+          const FakeCommand(
+            command: <String>['git', 'describe', '--exact-match', '--tags', 'HEAD'],
+            stdout: 'v3.44.1-tvos.1.2.0\n',
+          ),
+        ]);
+
+        final runner = TvosUpgradeCommandRunner()..workingDirectory = '/repo';
+        await runner.runCommandFirstHalf(force: false, testFlow: true, verifyOnly: false);
+
+        expect(logger.statusText, contains('already up to date at v3.44.1-tvos.1.2.0'));
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        ProcessManager: () => processManager,
+        Logger: () => logger,
+      },
+    );
+
+    testUsingContext(
+      'refuses to upgrade a dirty checkout without --force',
+      () async {
+        processManager.addCommands(<FakeCommand>[
+          const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+          const FakeCommand(
+            command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+            stdout: 'v3.44.1-tvos.1.2.0\n',
+          ),
+          const FakeCommand(
+            command: <String>['git', 'rev-parse', 'v3.44.1-tvos.1.2.0^{commit}'],
+            stdout: '$sha\n',
+          ),
+          const FakeCommand(
+            command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+            stdout: 'feedfacefeedfacefeedfacefeedfacefeedface\n',
+          ),
+          const FakeCommand(
+            command: <String>['git', 'describe', '--exact-match', '--tags', 'HEAD'],
+            exitCode: 128,
+          ),
+          const FakeCommand(
+            command: <String>['git', 'status', '-s'],
+            stdout: ' M lib/foo.dart\n',
+          ),
+        ]);
+
+        final runner = TvosUpgradeCommandRunner()..workingDirectory = '/repo';
+        await expectToolExitLater(
+          runner.runCommandFirstHalf(force: false, testFlow: true, verifyOnly: false),
+          contains('uncommitted changes'),
+        );
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        ProcessManager: () => processManager,
+        Logger: () => logger,
+      },
+    );
   });
 
   group('TvosVersion', () {

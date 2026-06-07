@@ -6,13 +6,10 @@ import 'dart:convert';
 
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/io.dart';
-import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/upgrade.dart';
-import 'package:flutter_tools/src/dart/pub.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
-import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:meta/meta.dart';
 
@@ -274,8 +271,13 @@ class TvosUpgradeCommandRunner {
 
   Future<void> runCommandSecondHalf() async {
     globals.persistentToolState?.setShouldRedisplayWelcomeMessage(false);
+    // No explicit `pub get` here: the second half is re-invoked through
+    // `bin/flutter-tvos`, whose bootstrap (`bin/internal/shared.sh`) already
+    // runs a plain `flutter pub get` against the tool repo when the snapshot
+    // stamp changes — which it always does after the reset to a new release.
+    // Running `pub get --upgrade` again would only churn `pubspec.lock`, which
+    // then trips the uncommitted-changes guard on the next upgrade.
     await precacheArtifacts();
-    await updatePackages();
     await runDoctor();
     globals.persistentToolState?.setShouldRedisplayWelcomeMessage(true);
   }
@@ -298,18 +300,6 @@ class TvosUpgradeCommandRunner {
     );
     if (code != 0) {
       throwToolExit(null, exitCode: code);
-    }
-  }
-
-  Future<void> updatePackages() async {
-    final String? projectRoot = findProjectRoot(globals.fs);
-    if (projectRoot != null) {
-      globals.printStatus('');
-      await pub.get(
-        context: PubContext.pubUpgrade,
-        project: FlutterProject.fromDirectory(globals.fs.directory(projectRoot)),
-        upgrade: true,
-      );
     }
   }
 
