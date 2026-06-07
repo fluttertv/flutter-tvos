@@ -174,6 +174,13 @@ The following commands from the [Flutter CLI](https://flutter.dev/docs/reference
   Upgrading refuses to run if your checkout has uncommitted changes; pass
   `--force` to discard them and upgrade anyway.
 
+  > **Note:** the upgrade moves your checkout with `git reset --hard` to the
+  > release commit. Uncommitted changes are guarded by the check above, but any
+  > **committed-but-unpushed** work on your current branch is discarded. This
+  > matches the recommended setup (clone the repo and stay on `main`). After
+  > upgrading, `pubspec.lock` will show as modified — that is the expected
+  > `pub get` output.
+
 ## Not supported
 
 The following commands from the Flutter CLI are not supported by flutter-tvos.

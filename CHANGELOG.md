@@ -13,8 +13,7 @@ All notable changes to flutter-tvos will be documented here.
   Flutter version and matching tvOS engine artifacts together — then re-runs
   `precache`, `pub get`, and `doctor`. Supports `--verify-only` (check without
   changing anything) and `--force` (discard local changes); refuses to run on a
-  dirty checkout otherwise. Mirrors how flutter-webos / flutter-tizen override
-  `upgrade`.
+  dirty checkout otherwise.
 
 ## [1.2.0] — 2026-06-05
 

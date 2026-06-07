@@ -29,9 +29,7 @@ import 'package:meta/meta.dart';
 /// Release tags follow `v<flutter-version>-tvos.<tool-version>`, e.g.
 /// `v3.44.1-tvos.1.2.0`. The newest tag by version order is the target.
 ///
-/// Mirrors the structure of stock `UpgradeCommand` / `UpgradeCommandRunner` and
-/// the flutter-webos/flutter-tizen embedders, which override `upgrade` the same
-/// way.
+/// Mirrors the structure of stock `UpgradeCommand` / `UpgradeCommandRunner`.
 class TvosUpgradeCommand extends UpgradeCommand {
   TvosUpgradeCommand({required super.verboseHelp});
 
