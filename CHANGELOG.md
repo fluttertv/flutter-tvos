@@ -2,6 +2,102 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.2.0] — 2026-06-05
+
+Minor release. Upgrades the pinned engine to Flutter **3.44.1**, makes
+Impeller's Metal shaders tvOS-native (retiring the per-app
+`MetalLibInterposer` hack), and makes on-device **debug + hot reload +
+DevTools work over a wireless Apple TV** by mirroring stock Flutter iOS's
+lldb→Xcode-debugger launch flow.
+
+### Added
+- **On-device wireless debugging that works like stock Flutter iOS.**
+  `TvosDevice` mirrors `IOSDevice._startAppOnCoreDevice`: it attaches lldb
+  over the wireless CoreDevice tunnel, then resolves the Dart VM Service
+  over mDNS at the device's LAN IP, so hot reload (`r`), hot restart
+  (`R`), and DevTools (`d`) come for free from the base `HotRunner`.
+  Verified end-to-end on a physical Apple TV (tvOS 18.6).
+
+  This requires a matching **engine fix**: the tvOS debug engine now ships
+  the `NOTIFY_DEBUGGER_ABOUT_RX_PAGES` Dart-VM hook that lldb breakpoints
+  during attach. Without it the attach never completes. The hook is in the
+  updated `v1.0.0-flutter3.44.1` engine artifact — existing checkouts must
+  run `flutter-tvos precache --force` to pick it up. (Engine change:
+  `fluttertv/engine` PR #1.)
+
+  The lldb attach timeout is configurable via
+  `FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS` (default 180s) for slow
+  networks. If lldb still can't attach, the run falls back to driving the
+  **Xcode debugger** (`XcodeDebug.debugApp` via AppleScript against the
+  generated `tvos/Runner.xcworkspace` + `Runner` scheme) as a best-effort
+  backstop; the first such run prompts to allow controlling Xcode
+  (Settings ▸ Privacy & Security ▸ Automation). On failure the tool prints
+  actionable guidance (restart the Apple TV to reset the CoreDevice tunnel,
+  check Local Network permission, or use the simulator).
+
+### Changed
+- **Impeller Metal shaders are now compiled tvOS-native in the engine
+  artifact** and embedded in `Flutter.framework`, loading directly on the
+  Apple TV GPU exactly like iOS. The per-app `tvos_metallibs/` directory
+  and the `MetalLibInterposer` (which swizzled `newLibraryWithData:` to
+  swap shaders matched by byte size) are **removed** from the app template
+  and the `flutter_tvos` example. Newly created / regenerated projects no
+  longer carry the interposer source or the bridging-header entry.
+
+### Fixed
+- **App.framework is now embedded for App Store / TestFlight builds**
+  ([#18](https://github.com/fluttertv/flutter-tvos/issues/18)). Embedding the
+  AOT `App.framework` was previously a post-build step inside the CLI, so it
+  only patched the `Runner.app` left in `SYMROOT` and never ran for an Xcode
+  `archive`. Archived builds therefore shipped without `App.framework` and
+  crashed on launch on a real Apple TV. Embedding now happens inside the Xcode
+  project as an **"Embed App.framework" build phase**, which runs for build,
+  run, *and* archive, and codesigns the framework with Xcode's resolved
+  identity (`${EXPANDED_CODE_SIGN_IDENTITY}`). Projects created before this
+  phase existed are unaffected for CLI builds: a backward-compatible fallback
+  in `flutter-tvos build/run` still embeds + signs `App.framework` when the
+  build phase is absent. (To archive a legacy project directly through Xcode
+  for TestFlight, regenerate the tvOS project so it picks up the build phase.)
+- **App.framework's `Info.plist` now passes App Store validation**
+  ([#18](https://github.com/fluttertv/flutter-tvos/issues/18)). The generated
+  plist gained `CFBundleShortVersionString`, `CFBundleSupportedPlatforms`
+  (`AppleTVOS`), `DTPlatformName`, `UIDeviceFamily` (`[3]`), and a tvOS
+  `MinimumOSVersion`, so the framework no longer fails archive validation for
+  missing keys.
+- **`flutter_assets` are no longer duplicated one level deep on rebuilds**
+  ([#18](https://github.com/fluttertv/flutter-tvos/issues/18)). The asset copy
+  used `cp -R <src>/assets <target>/assets` without clearing the target, so a
+  second build nested the tree into the existing directory
+  (`flutter_assets/assets/assets/…`). The copy now wipes the target first and
+  uses a pure-Dart recursive copy, producing an exact mirror every time.
+
+### Engine
+- Updated to Flutter **3.44.1**
+  (`924134a44c189315be2148659913dda1671cbe99`, Dart 3.12.1).
+- Updated `bin/internal/engine.version` to `v1.0.0-flutter3.44.1`.
+- Matching tvOS engine artifacts published at
+  [`fluttertv/engine-artifacts@v1.0.0-flutter3.44.1`](https://github.com/fluttertv/engine-artifacts/releases/tag/v1.0.0-flutter3.44.1).
+  Engine-side changes live in
+  [`fluttertv/engine#1`](https://github.com/fluttertv/engine/pull/1):
+  tvOS-native Impeller metallibs, and an Impeller `StrokedCircle` fix
+  that no longer aborts (a debug-build `DCHECK`) when the stroke
+  half-width ≥ radius — e.g. the widget inspector outlining a small
+  circular element.
+
+### Compatibility
+- **Existing apps keep working without changes.** Apps built with an
+  older template still ship a `MetalLibInterposer`; against the 3.44.1
+  engine its byte-size-keyed swizzle simply finds no match and goes
+  inert — the engine's own tvOS-native shaders are used instead. To drop
+  the now-dead interposer files, recreate the `tvos/` runner or delete
+  `Runner/MetalLibInterposer.*`, `Runner/tvos_metallibs/`, and the
+  bridging-header `#import`.
+
+### Tests
+- Added `TvosDevice.parseDeviceUdid` unit coverage (extract UDID from
+  `devicectl` JSON, null on missing / malformed) in
+  `tvos_physical_device_test.dart`.
+
 ## [1.1.1] — 2026-05-28
 
 Patch release. No Flutter SDK or engine-artefact change — pinned

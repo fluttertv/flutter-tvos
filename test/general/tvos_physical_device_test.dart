@@ -458,4 +458,37 @@ void main() {
       expect(logReader, isA<TvosSimulatorLogReader>());
     });
   });
+
+  group('TvosDevice.parseDeviceUdid', () {
+    // The Xcode-debugger fallback (used when lldb can't attach over a wireless
+    // tunnel) identifies the device by its hardware UDID, which we read from
+    // `devicectl device info details --json-output`. The CoreDevice identifier
+    // `devicectl` otherwise uses is a GUID Xcode does not recognise.
+    testWithoutContext('extracts the hardware UDID from devicectl info details JSON', () {
+      const jsonOutput = '''
+{
+  "result": {
+    "hardwareProperties": {
+      "udid": "00008110-00114D2E36F0A01E",
+      "platform": "tvOS",
+      "marketingName": "Apple TV 4K (3rd generation)"
+    }
+  },
+  "info": { "outcome": "success" }
+}
+''';
+      expect(TvosDevice.parseDeviceUdid(jsonOutput), '00008110-00114D2E36F0A01E');
+    });
+
+    testWithoutContext('returns null when the UDID is missing', () {
+      expect(TvosDevice.parseDeviceUdid('{"result": {"hardwareProperties": {}}}'), isNull);
+      expect(TvosDevice.parseDeviceUdid('{"result": {}}'), isNull);
+      expect(TvosDevice.parseDeviceUdid('{}'), isNull);
+    });
+
+    testWithoutContext('returns null for malformed or empty JSON', () {
+      expect(TvosDevice.parseDeviceUdid('not json'), isNull);
+      expect(TvosDevice.parseDeviceUdid(''), isNull);
+    });
+  });
 }
