@@ -75,6 +75,15 @@ class TvosVersion {
 
 @visibleForTesting
 class TvosUpgradeCommandRunner {
+  /// [processUtils] is injectable so tests can drive the git queries with a
+  /// `FakeProcessManager` without standing up Zone DI; production callers omit
+  /// it and fall back to [globals.processUtils].
+  TvosUpgradeCommandRunner({ProcessUtils? processUtils}) : _processUtils = processUtils;
+
+  final ProcessUtils? _processUtils;
+
+  ProcessUtils get _git => _processUtils ?? globals.processUtils;
+
   String? workingDirectory;
 
   /// Matches flutter-tvos release tags: `v<flutter>-tvos.<tool>`, e.g.
@@ -153,12 +162,12 @@ class TvosUpgradeCommandRunner {
     String tag;
     String hash;
     try {
-      await globals.processUtils.run(
+      await _git.run(
         <String>['git', 'fetch', '--tags'],
         throwOnError: true,
         workingDirectory: workingDirectory,
       );
-      final RunResult result = await globals.processUtils.run(
+      final RunResult result = await _git.run(
         <String>['git', 'tag', '-l', '--sort=-v:refname'],
         throwOnError: true,
         workingDirectory: workingDirectory,
@@ -173,8 +182,15 @@ class TvosUpgradeCommandRunner {
         );
       }
       tag = latest;
-      final RunResult revParse = await globals.processUtils.run(
-        <String>['git', 'rev-parse', tag],
+      // Peel to the underlying commit with `^{commit}`. Release tags may be
+      // annotated (e.g. v3.44.1-tvos.1.2.0), and `git rev-parse <annotated-tag>`
+      // returns the tag-object SHA, not the commit SHA. fetchCurrentVersion
+      // reads `git rev-parse HEAD` (a commit SHA), so without peeling the
+      // "already up to date" comparison would never match on a checkout sitting
+      // exactly on an annotated release. `^{commit}` is a no-op for lightweight
+      // tags.
+      final RunResult revParse = await _git.run(
+        <String>['git', 'rev-parse', '$tag^{commit}'],
         throwOnError: true,
         workingDirectory: workingDirectory,
       );
@@ -192,7 +208,7 @@ class TvosUpgradeCommandRunner {
     String hash;
     String? tag;
     try {
-      final RunResult head = await globals.processUtils.run(
+      final RunResult head = await _git.run(
         <String>['git', 'rev-parse', '--verify', 'HEAD'],
         throwOnError: true,
         workingDirectory: workingDirectory,
@@ -206,7 +222,7 @@ class TvosUpgradeCommandRunner {
     }
     // An exact tag is best-effort; a development checkout legitimately has none.
     try {
-      final RunResult describe = await globals.processUtils.run(
+      final RunResult describe = await _git.run(
         <String>['git', 'describe', '--exact-match', '--tags', 'HEAD'],
         workingDirectory: workingDirectory,
       );
@@ -220,7 +236,7 @@ class TvosUpgradeCommandRunner {
   }
 
   Future<bool> _hasUncommittedChanges() async {
-    final RunResult result = await globals.processUtils.run(
+    final RunResult result = await _git.run(
       <String>['git', 'status', '-s'],
       workingDirectory: workingDirectory,
     );
@@ -229,7 +245,7 @@ class TvosUpgradeCommandRunner {
 
   Future<void> attemptReset(String newRevision) async {
     try {
-      await globals.processUtils.run(
+      await _git.run(
         <String>['git', 'reset', '--hard', newRevision],
         throwOnError: true,
         workingDirectory: workingDirectory,

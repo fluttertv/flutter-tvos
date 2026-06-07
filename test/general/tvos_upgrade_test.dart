@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tvos/commands/upgrade.dart';
 
 import '../src/common.dart';
+import '../src/fake_process_manager.dart';
 
 void main() {
   group('TvosUpgradeCommandRunner.latestReleaseTag', () {
@@ -53,6 +56,76 @@ void main() {
       expect(p.hasMatch('v3.44.1-tvos.1.2'), isFalse); // tool version needs 3 parts
       expect(p.hasMatch('3.44.1-tvos.1.2.0'), isFalse); // missing leading v
       expect(p.hasMatch('v3.44.1-ios.1.2.0'), isFalse); // wrong platform infix
+    });
+  });
+
+  group('TvosUpgradeCommandRunner.fetchLatestReleaseVersion', () {
+    late FakeProcessManager processManager;
+    late TvosUpgradeCommandRunner runner;
+
+    setUp(() {
+      processManager = FakeProcessManager.empty();
+      runner = TvosUpgradeCommandRunner(
+        processUtils: ProcessUtils(
+          processManager: processManager,
+          logger: BufferLogger.test(),
+        ),
+      )..workingDirectory = '/repo';
+    });
+
+    test('peels annotated release tags to the underlying commit SHA', () async {
+      // An annotated tag: `git rev-parse <tag>` would return the tag-object
+      // SHA, but `<tag>^{commit}` must resolve to the commit so the result is
+      // comparable to `git rev-parse HEAD`.
+      processManager.addCommands(<FakeCommand>[
+        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(
+          command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          stdout: 'v3.44.1-tvos.1.2.0\nv3.44.0-tvos.1.1.1\n',
+        ),
+        const FakeCommand(
+          command: <String>['git', 'rev-parse', 'v3.44.1-tvos.1.2.0^{commit}'],
+          stdout: '840123adb831536a3512df43355dd355c9a77878\n',
+        ),
+      ]);
+
+      final TvosVersion upstream = await runner.fetchLatestReleaseVersion();
+
+      expect(upstream.tag, 'v3.44.1-tvos.1.2.0');
+      expect(upstream.hash, '840123adb831536a3512df43355dd355c9a77878');
+      expect(processManager, hasNoRemainingExpectations);
+    });
+
+    test('skips non-release tags when choosing the newest', () async {
+      processManager.addCommands(<FakeCommand>[
+        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(
+          command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          stdout: 'nightly\nlatest\nv3.44.0-tvos.1.1.1\nv3.41.4-tvos.1.0.0\n',
+        ),
+        const FakeCommand(
+          command: <String>['git', 'rev-parse', 'v3.44.0-tvos.1.1.1^{commit}'],
+          stdout: 'cafebabecafebabecafebabecafebabecafebabe\n',
+        ),
+      ]);
+
+      final TvosVersion upstream = await runner.fetchLatestReleaseVersion();
+
+      expect(upstream.tag, 'v3.44.0-tvos.1.1.1');
+      expect(upstream.hash, 'cafebabecafebabecafebabecafebabecafebabe');
+      expect(processManager, hasNoRemainingExpectations);
+    });
+
+    test('throws a tool exit when no release tags exist', () async {
+      processManager.addCommands(<FakeCommand>[
+        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(
+          command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          stdout: 'nightly\nlatest\n',
+        ),
+      ]);
+
+      await expectToolExitLater(runner.fetchLatestReleaseVersion(), contains('no release tags'));
     });
   });
 
