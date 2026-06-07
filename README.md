@@ -143,7 +143,7 @@ Then inside `io_impl.dart`, branch on `Platform.isTvOS` vs `Platform.isIOS`.
 - **No WebKit / `webview_flutter`.** tvOS does not ship WebKit. Plugins depending on `WKWebView` will not compile for Apple TV.
 - **No haptics, clipboard, or status bar.** `HapticFeedback.*`, `Clipboard.*`, and `SystemChrome.setSystemUIOverlayStyle` are no-ops on tvOS.
 - **No `fork()`.** Apple TV disallows `fork()` entirely. Some background-work libraries are affected; Perfetto's daemonize path is already patched in our engine build.
-- **Debug mode is simulator-only.** Physical Apple TV deployment runs in release/profile mode (AOT). Debug (JIT) is blocked on the device by Apple.
+- **On-device debug needs a debugger attached.** Debug (JIT) now works on a physical Apple TV — `flutter-tvos run -d <appletv> --debug` gives you hot reload, hot restart, and DevTools over the wireless CoreDevice tunnel (the bundled tvOS debug engine artifact ships the `NOTIFY_DEBUGGER_ABOUT_RX_PAGES` hook lldb's attach needs). Because Apple TV is wireless-only the attach is slower than USB iOS; the **simulator remains the fast-iteration path** for debug. Release/profile on device run AOT and need no debugger.
 - **Metal-only rendering.** No OpenGL backend. Apps relying on GL-specific platform views will not work.
 
 ## Add tvOS support to an existing plugin

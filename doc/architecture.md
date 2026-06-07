@@ -93,7 +93,6 @@ What happens when you run `flutter-tvos build tvos --simulator --debug`:
 3. The `DebugTvosApplication` build target runs the kernel snapshot (Dart-to-bytecode compilation).
 4. `NativeTvosBundle.build()` orchestrates the native side:
    - **Copy Flutter.framework** — copies the pre-built framework from `engine_artifacts/`
-   - **Copy Metal libraries** — copies pre-compiled tvOS Metal shaders from templates
    - **Copy Flutter assets** — places `kernel_blob.bin` and asset bundle into `tvos/Flutter/flutter_assets/`
    - **Generate plugin registrant stubs** — creates initial Objective-C `.h`/`.m` stubs if not present
    - **AOT snapshot** (release/profile only) — runs `gen_snapshot` to produce `App.framework`
@@ -118,6 +117,25 @@ What happens when you run `flutter-tvos run -d <device_id>`:
 7. `ProtocolDiscovery` scans the log stream for the VM service URI printed by the Flutter runtime.
 8. `LaunchResult.succeeded(vmServiceUri: ...)` is returned to the base `RunCommand`.
 9. The base `RunCommand` creates a `HotRunner`, enabling hot reload (`r`), hot restart (`R`), DevTools (`d`), and quit (`q`).
+
+### Physical Apple TV (debug)
+
+Debug mode on a physical device needs a debugger attached — the engine's `ptrace_check.cc`
+refuses to start a debug `FlutterEngine` unless the process is traced. `TvosDevice._startAppOnDevice`
+mirrors stock iOS `IOSDevice._startAppOnCoreDevice`:
+
+1. **lldb first** — `xcrun devicectl … --start-stopped` launches the app, the pid is resolved,
+   and `LLDB.attachAndStart` attaches. The attach sets a breakpoint on the engine's
+   `NOTIFY_DEBUGGER_ABOUT_RX_PAGES` hook (shipped in the tvOS debug engine artifact) and waits
+   for it to resolve. Reliable over USB; over the wireless CoreDevice tunnel it is slower
+   (timeout is 180s, overridable via `FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS`).
+2. **Xcode-debugger fallback** — if the lldb attach fails, the devicectl launch is torn down and
+   Xcode is driven via AppleScript (`XcodeDebug.debugApp` with an `XcodeDebugProject` built from
+   `tvos/Runner.xcworkspace` + the `Runner` scheme). The first run prompts to allow controlling
+   Xcode (Settings ▸ Privacy & Security ▸ Automation).
+3. The VM Service URI is resolved via **mDNS** (device LAN IP), since wireless device-log
+   discovery is unavailable; then the base `HotRunner` provides hot reload / restart / DevTools
+   exactly as on the simulator.
 
 ---
 
