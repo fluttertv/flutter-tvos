@@ -2,6 +2,19 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Added
+- **`flutter-tvos upgrade`** — upgrades the flutter-tvos toolchain to the latest
+  released version. Unlike stock `flutter upgrade` (which moves the bundled
+  Flutter SDK toward upstream and would break our pinned Flutter ↔ engine-artifact
+  contract), this resets the flutter-tvos checkout to its newest release tag
+  (`v<flutter>-tvos.<tool>`, e.g. `v3.44.1-tvos.1.2.0`) — bumping the pinned
+  Flutter version and matching tvOS engine artifacts together — then re-runs
+  `precache`, `pub get`, and `doctor`. Supports `--verify-only` (check without
+  changing anything) and `--force` (discard local changes); refuses to run on a
+  dirty checkout otherwise.
+
 ## [1.2.0] — 2026-06-05
 
 Minor release. Upgrades the pinned engine to Flutter **3.44.1**, makes
@@ -97,7 +110,6 @@ lldb→Xcode-debugger launch flow.
 - Added `TvosDevice.parseDeviceUdid` unit coverage (extract UDID from
   `devicectl` JSON, null on missing / malformed) in
   `tvos_physical_device_test.dart`.
-
 ## [1.1.1] — 2026-05-28
 
 Patch release. No Flutter SDK or engine-artefact change — pinned
