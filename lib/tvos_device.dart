@@ -354,6 +354,20 @@ class TvosDevice extends Device {
   LLDBLogForwarder? _lldbLogForwarder;
   XcodeDebug? _xcodeDebug;
 
+  /// How long to wait for lldb to attach over the (wireless-only) CoreDevice
+  /// tunnel before giving up. Apple TV has no USB data port, so the lldb attach
+  /// always goes through the network tunnel, which is slower and more variable
+  /// than a cabled iOS device — attaches that ultimately succeed can take well
+  /// over a minute on a busy/cold tunnel. This is deliberately generous so we
+  /// don't abandon an attach that would have worked (the lldb path is the only
+  /// one that sustains a debug session on tvOS). Override with
+  /// `FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS` for slow networks.
+  Duration get _lldbAttachTimeout {
+    final String? raw = globals.platform.environment['FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS'];
+    final int? seconds = raw == null ? null : int.tryParse(raw);
+    return Duration(seconds: seconds != null && seconds > 0 ? seconds : 180);
+  }
+
   @override
   Future<TargetPlatform> get targetPlatform async => TargetPlatform.ios;
 
@@ -667,10 +681,12 @@ class TvosDevice extends Device {
         });
         final LLDB lldb = _lldb ??= LLDB(logger: logger, processUtils: globals.processUtils);
         // lldb.attachAndStart only prints a "taking longer than expected"
-        // *warning* after 60s — it never gives up on its own. Over a wireless
-        // tunnel the attach routinely hangs forever, so cap it ourselves and
-        // hand off to the Xcode debugger when it doesn't attach in time. (USB
-        // attaches in a few seconds, well under this.)
+        // *warning* after 60s — it never gives up on its own. Over the wireless
+        // CoreDevice tunnel the attach can otherwise hang forever, so cap it
+        // ourselves. The cap is generous (see [_lldbAttachTimeout]) because on
+        // tvOS the lldb path is the only one that sustains a debug session, and
+        // a too-short cap abandons attaches that would have succeeded.
+        final Duration timeout = _lldbAttachTimeout;
         attached = await lldb
             .attachAndStart(
               deviceId: id,
@@ -679,9 +695,11 @@ class TvosDevice extends Device {
               mode: debuggingOptions.buildInfo.mode,
             )
             .timeout(
-              const Duration(seconds: 75),
+              timeout,
               onTimeout: () {
-                logger.printTrace('lldb attach timed out after 75s; falling back.');
+                logger.printTrace(
+                  'lldb attach timed out after ${timeout.inSeconds}s; falling back.',
+                );
                 return false;
               },
             );
@@ -704,7 +722,31 @@ class TvosDevice extends Device {
           debuggingOptions: debuggingOptions,
         );
         if (!xcodeStarted) {
-          logger.printError('Failed to start a debug session on the device.');
+          // Both debug paths failed. The app itself usually *did* install and
+          // launch (you may see it on the TV), but no debugger could attach and
+          // hold the session — and tvOS debug mode (JIT) aborts without a
+          // persistent debugger. The Xcode automation fallback in particular
+          // does not reliably sustain a session on tvOS, so the usual cause is a
+          // slow or stale CoreDevice tunnel. Give the user concrete remedies
+          // instead of a bare failure.
+          logger.printError(
+            'Could not attach a debugger to the app on this Apple TV, so the '
+            'debug session could not start (the app may briefly appear on the TV '
+            'and then exit — tvOS debug mode requires an attached debugger).\n'
+            '\n'
+            'Apple TV debugging is wireless-only and depends on the CoreDevice '
+            'tunnel. Things to try, in order:\n'
+            '  1. Restart the Apple TV (Settings ▸ System ▸ Restart) to reset the '
+            'tunnel, then run again — a cold/stale tunnel is the most common cause.\n'
+            '  2. Make sure the Apple TV and this Mac are on the same Wi-Fi/LAN, '
+            'and that the Mac has Local Network permission '
+            '(System Settings ▸ Privacy & Security ▸ Local Network).\n'
+            '  3. Re-run — the lldb attach over the tunnel can be slow; it is '
+            'given ${_lldbAttachTimeout.inSeconds}s (override with '
+            'FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS).\n'
+            '  4. For fast debug iteration without the device, use the tvOS '
+            'simulator (JIT works there without a debugger).',
+          );
           return LaunchResult.failed();
         }
         // Xcode launched the app; its console output isn't routed through our

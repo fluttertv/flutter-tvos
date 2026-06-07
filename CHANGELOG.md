@@ -12,15 +12,28 @@ lldb→Xcode-debugger launch flow.
 
 ### Added
 - **On-device wireless debugging that works like stock Flutter iOS.**
-  `TvosDevice` now mirrors `IOSDevice._startAppOnCoreDevice`: it attaches
-  lldb first and, when the wireless CoreDevice tunnel stalls
-  ("LLDB is taking longer than expected") or drops, **falls back to the
-  Xcode debugger** (`XcodeDebug.debugApp` driven via AppleScript against
-  the generated `tvos/Runner.xcworkspace` + `Runner` scheme). The VM
-  Service is then resolved over mDNS at the device's LAN IP, so hot
-  reload (`r`), hot restart (`R`), and DevTools (`d`) come for free from
-  the base `HotRunner`. The first run prompts to allow controlling Xcode
-  (Settings ▸ Privacy & Security ▸ Automation), same as stock iOS.
+  `TvosDevice` mirrors `IOSDevice._startAppOnCoreDevice`: it attaches lldb
+  over the wireless CoreDevice tunnel, then resolves the Dart VM Service
+  over mDNS at the device's LAN IP, so hot reload (`r`), hot restart
+  (`R`), and DevTools (`d`) come for free from the base `HotRunner`.
+  Verified end-to-end on a physical Apple TV (tvOS 18.6).
+
+  This requires a matching **engine fix**: the tvOS debug engine now ships
+  the `NOTIFY_DEBUGGER_ABOUT_RX_PAGES` Dart-VM hook that lldb breakpoints
+  during attach. Without it the attach never completes. The hook is in the
+  updated `v1.0.0-flutter3.44.1` engine artifact — existing checkouts must
+  run `flutter-tvos precache --force` to pick it up. (Engine change:
+  `fluttertv/engine` PR #1.)
+
+  The lldb attach timeout is configurable via
+  `FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS` (default 180s) for slow
+  networks. If lldb still can't attach, the run falls back to driving the
+  **Xcode debugger** (`XcodeDebug.debugApp` via AppleScript against the
+  generated `tvos/Runner.xcworkspace` + `Runner` scheme) as a best-effort
+  backstop; the first such run prompts to allow controlling Xcode
+  (Settings ▸ Privacy & Security ▸ Automation). On failure the tool prints
+  actionable guidance (restart the Apple TV to reset the CoreDevice tunnel,
+  check Local Network permission, or use the simulator).
 
 ### Changed
 - **Impeller Metal shaders are now compiled tvOS-native in the engine
