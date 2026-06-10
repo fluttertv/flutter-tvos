@@ -122,9 +122,13 @@ void main() {
 
       final String pkg = manifest.readAsStringSync();
       expect(pkg, startsWith('// swift-tools-version: 5.9'));
-      // Product + target named after the output package.
+      // Package + target keep the underscored name (the target is the Swift
+      // module the generated registrant imports).
       expect(pkg, contains('name: "gizmo_tvos"'));
-      expect(pkg, contains('.library(name: "gizmo_tvos", targets: ["gizmo_tvos"])'));
+      // The library *product* is hyphenated — SwiftPM derives a dynamic
+      // library's CFBundleIdentifier from the product name and that cannot
+      // contain underscores. The umbrella references this hyphenated product.
+      expect(pkg, contains('.library(name: "gizmo-tvos", targets: ["gizmo_tvos"])'));
       // tvOS platform, tvOS deployment floor.
       expect(pkg, contains('.tvOS(.v13)'));
       // Reuses the same sources the podspec compiles — no duplicated tree.

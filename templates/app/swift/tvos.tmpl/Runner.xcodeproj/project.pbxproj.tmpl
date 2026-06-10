@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 56;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -12,23 +12,8 @@
 		97C1470F1CF9000082B4168C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000082B4168C /* Assets.xcassets */; };
 		97C1470A1CF9000082B4168D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000082B4168D /* Main.storyboard */; };
 		97C1470B1CF9000082B4168D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000082B4168E /* LaunchScreen.storyboard */; };
-		3B3967161E833CAB004F5970 /* Flutter.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAB004F5970 /* Flutter.framework */; };
-		9705A1C61CF904A100538489 /* Flutter.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAB004F5970 /* Flutter.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		AAF20000000000000000F00D /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = AAF30000000000000000F00D /* FlutterGeneratedPluginSwiftPackage */; };
 /* End PBXBuildFile section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		3B06AD1E1E4923F5004D2608 /* Embed Frameworks */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				9705A1C61CF904A100538489 /* Flutter.framework in Embed Frameworks */,
-			);
-			name = "Embed Frameworks";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		97C146EE1CF9000082B41680 /* Runner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Runner.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -51,7 +36,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3B3967161E833CAB004F5970 /* Flutter.framework in Frameworks */,
+				AAF20000000000000000F00D /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -119,7 +104,6 @@
 				97C146EA1CF9000082B4168C /* Sources */,
 				97C146EB1CF9000082B4168C /* Frameworks */,
 				97C146EC1CF9000082B4168C /* Resources */,
-				3B06AD1E1E4923F5004D2608 /* Embed Frameworks */,
 				AAF10000000000000000F00D /* Embed App.framework */,
 				9740EEB31CF901A200538489 /* Copy flutter_assets */,
 			);
@@ -128,6 +112,9 @@
 			dependencies = (
 			);
 			name = Runner;
+			packageProductDependencies = (
+				AAF30000000000000000F00D /* FlutterGeneratedPluginSwiftPackage */,
+			);
 			productName = Runner;
 			productReference = 97C146EE1CF9000082B41680 /* Runner.app */;
 			productType = "com.apple.product-type.application";
@@ -156,6 +143,9 @@
 				Base,
 			);
 			mainGroup = 97C146E51CF9000082B4168C;
+			packageReferences = (
+				AAF40000000000000000F00D /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */,
+			);
 			productRefGroup = 97C146EF1CF9000082B41690 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -504,6 +494,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		AAF40000000000000000F00D /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AAF30000000000000000F00D /* FlutterGeneratedPluginSwiftPackage */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = FlutterGeneratedPluginSwiftPackage;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 	};
 	rootObject = 97C146E61CF9000082B4168C /* Project object */;

@@ -5,6 +5,20 @@ All notable changes to flutter-tvos will be documented here.
 ## [Unreleased]
 
 ### Added
+- **Swift Package Manager support for tvOS apps (default; CocoaPods kept).**
+  Newly created apps link a generated `FlutterGeneratedPluginSwiftPackage`
+  umbrella that vends the tvOS engine (`FlutterFramework` binary target wrapping
+  `Flutter.xcframework`) and every federated plugin shipping a `tvos/Package.swift`.
+  The packages are regenerated under `tvos/Flutter/ephemeral/Packages/` on each
+  build and wired into the Runner Xcode project (the template now uses
+  `objectVersion = 56` + an `XCLocalSwiftPackageReference`). Plugins that ship
+  only a podspec keep resolving through CocoaPods — the Podfile skips any plugin
+  that has a `Package.swift`, so the two never double-link. The plugin porter's
+  generated `Package.swift` now names the library product with hyphens
+  (`shared-preferences-tvos`) while keeping the underscored module name, matching
+  what the umbrella references and what the registrant imports. Verified
+  end-to-end on the simulator (a federated SPM plugin builds, links, and
+  round-trips a method channel with no Podfile entry).
 - **`flutter-tvos upgrade`** — upgrades the flutter-tvos toolchain to the latest
   released version. Unlike stock `flutter upgrade` (which moves the bundled
   Flutter SDK toward upstream and would break our pinned Flutter ↔ engine-artifact

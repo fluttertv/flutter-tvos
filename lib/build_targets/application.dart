@@ -17,6 +17,7 @@ import 'package:meta/meta.dart';
 import '../tvos_artifacts.dart';
 import '../tvos_build_info.dart';
 import '../tvos_plugins.dart';
+import '../tvos_swift_package_manager.dart';
 
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with tvOS-
 /// aware plugin registrations, as a proper build target.
@@ -256,6 +257,12 @@ class NativeTvosBundle extends Target {
     // 6. Generate tvOS plugin dependencies (must run AFTER Flutter's pub get
     //    which overwrites .flutter-plugins-dependencies without tvos key)
     await ensureReadyForTvosTooling(project);
+
+    // 6b. Generate the Swift Package Manager packages the Runner project links
+    //     (FlutterFramework + the FlutterGeneratedPluginSwiftPackage umbrella).
+    //     SPM is the default for plugins shipping a tvos/Package.swift; plugins
+    //     with only a podspec still resolve via CocoaPods below (coexistence).
+    _generateSwiftPackages(project, tvosProjectDir);
 
     // 7. Run pod install if Podfile exists
     if (tvosProjectDir.childFile('Podfile').existsSync()) {
@@ -569,6 +576,77 @@ class NativeTvosBundle extends Target {
       globals.logger.printError('Flutter.framework not found at $frameworkPath');
       throw Exception('Flutter.framework not found. Run flutter-tvos precache first.');
     }
+  }
+
+  /// Generates the Swift Package Manager packages the Runner Xcode project
+  /// references: `FlutterFramework` (binary target wrapping `Flutter.xcframework`)
+  /// and the `FlutterGeneratedPluginSwiftPackage` umbrella that depends on it
+  /// plus every tvOS plugin shipping a `tvos/Package.swift`.
+  ///
+  /// Written under `tvos/Flutter/ephemeral/Packages/`. Always generated — the
+  /// project template always references the umbrella, so the reference must
+  /// resolve even when the app has no SPM plugins (then the umbrella depends on
+  /// `FlutterFramework` only).
+  void _generateSwiftPackages(FlutterProject project, Directory tvosProjectDir) {
+    final tvosArtifacts = globals.artifacts! as TvosArtifacts;
+    final EnvironmentType envType = buildInfo.simulator
+        ? EnvironmentType.simulator
+        : EnvironmentType.physical;
+    final Directory xcframework = globals.fs.directory(
+      tvosArtifacts.getArtifactPath(
+        Artifact.flutterXcframework,
+        mode: buildInfo.buildInfo.mode,
+        environmentType: envType,
+      ),
+    );
+    if (!xcframework.existsSync()) {
+      globals.logger.printError('Flutter.xcframework not found at ${xcframework.path}');
+      throw Exception('Flutter.xcframework not found. Run flutter-tvos precache first.');
+    }
+
+    final Directory packagesDir = tvosProjectDir
+        .childDirectory('Flutter')
+        .childDirectory('ephemeral')
+        .childDirectory('Packages');
+
+    final spm = TvosSwiftPackageManager(fileSystem: globals.fs);
+    spm.generateFlutterFrameworkPackage(
+      packageDirectory: packagesDir.childDirectory(
+        TvosSwiftPackageManager.kFlutterFrameworkPackageName,
+      ),
+      xcframework: xcframework,
+    );
+    final List<TvosSpmPlugin> spmPlugins = discoverTvosSpmPlugins(project);
+    spm.generatePluginsSwiftPackage(
+      packageDirectory: packagesDir.childDirectory(
+        TvosSwiftPackageManager.kGeneratedPluginsPackageName,
+      ),
+      plugins: spmPlugins,
+      // Both packages live side-by-side under Packages/.
+      flutterFrameworkRelativePath: '../${TvosSwiftPackageManager.kFlutterFrameworkPackageName}',
+      deploymentTarget: _resolveTvosDeploymentTarget(tvosProjectDir),
+    );
+    globals.logger.printTrace(
+      'Generated Swift packages (${spmPlugins.length} SPM plugin(s)) under ${packagesDir.path}',
+    );
+  }
+
+  /// Reads `TVOS_DEPLOYMENT_TARGET` from the Runner `project.pbxproj` so the
+  /// generated umbrella's platform floor matches the app (SwiftPM rejects a
+  /// dependency whose deployment target exceeds the consuming project's).
+  /// Falls back to the package default when not found.
+  String _resolveTvosDeploymentTarget(Directory tvosProjectDir) {
+    final File pbxproj = tvosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    if (pbxproj.existsSync()) {
+      final Match? match = RegExp(r'TVOS_DEPLOYMENT_TARGET\s*=\s*([\d.]+)')
+          .firstMatch(pbxproj.readAsStringSync());
+      if (match != null) {
+        return match.group(1)!;
+      }
+    }
+    return TvosSwiftPackageManager.kDefaultDeploymentTarget;
   }
 
   /// Assembles flutter_assets from the build output (kernel_blob.bin, fonts,

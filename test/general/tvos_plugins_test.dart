@@ -9,7 +9,12 @@ import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tvos/tvos_plugins.dart'
-    show TvosPlugin, ensureReadyForTvosTooling, recommendTvosPluginsToInstall;
+    show
+        TvosPlugin,
+        discoverTvosSpmPlugins,
+        ensureReadyForTvosTooling,
+        recommendTvosPluginsToInstall;
+import 'package:flutter_tvos/tvos_swift_package_manager.dart' show TvosSpmPlugin;
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -787,6 +792,105 @@ flutter:
         FileSystem: () => fileSystem,
         ProcessManager: () => processManager,
         Logger: () => logger,
+      },
+    );
+  });
+
+  group('discoverTvosSpmPlugins', () {
+    // Writes a project with two tvOS plugins: `gizmo_tvos` ships a
+    // tvos/Package.swift (SPM), `widget_tvos` ships only a podspec.
+    FlutterProject seedProject({required bool gizmoHasPackageSwift}) {
+      final Directory projectDir = fileSystem.directory('/p')..createSync();
+      projectDir.childDirectory('tvos').createSync();
+      projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+
+      for (final name in <String>['gizmo_tvos', 'widget_tvos']) {
+        final Directory pkgDir = fileSystem.directory('/pubcache/$name')
+          ..createSync(recursive: true);
+        pkgDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: $name
+flutter:
+  plugin:
+    platforms:
+      tvos:
+        pluginClass: ${name}Plugin
+''');
+        final Directory tvosDir = pkgDir.childDirectory('tvos')..createSync();
+        // Both ship a podspec.
+        tvosDir.childFile('$name.podspec').writeAsStringSync('# podspec');
+        if (name == 'widget_tvos' || gizmoHasPackageSwift) {
+          if (name == 'gizmo_tvos') {
+            tvosDir.childFile('Package.swift').writeAsStringSync(
+              'let package = Package(\n  name: "gizmo_tvos"\n)\n',
+            );
+          }
+        }
+      }
+
+      fileSystem
+          .directory('/p/.dart_tool')
+          .childFile('package_config.json')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'packages': <Map<String, String>>[
+              <String, String>{'name': 'gizmo_tvos', 'rootUri': 'file:///pubcache/gizmo_tvos'},
+              <String, String>{'name': 'widget_tvos', 'rootUri': 'file:///pubcache/widget_tvos'},
+            ],
+          }),
+        );
+      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+        json.encode(<String, dynamic>{
+          'dependencyGraph': <Map<String, String>>[
+            <String, String>{'name': 'gizmo_tvos'},
+            <String, String>{'name': 'widget_tvos'},
+          ],
+        }),
+      );
+      return FlutterProject.fromDirectory(projectDir);
+    }
+
+    testUsingContext(
+      'returns only plugins that ship a tvos/Package.swift',
+      () {
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedProject(gizmoHasPackageSwift: true),
+        );
+        expect(spm.map((p) => p.name), <String>['gizmo_tvos']);
+        expect(spm.single.packagePath, '/pubcache/gizmo_tvos/tvos');
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'returns empty when no plugin ships a Package.swift (pods-only)',
+      () {
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedProject(gizmoHasPackageSwift: false),
+        );
+        expect(spm, isEmpty);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'prefers the package name declared in the manifest',
+      () {
+        // gizmo_tvos's manifest declares name: "gizmo_tvos".
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedProject(gizmoHasPackageSwift: true),
+        );
+        expect(spm.single.name, 'gizmo_tvos');
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
       },
     );
   });
