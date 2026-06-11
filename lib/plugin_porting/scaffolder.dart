@@ -134,6 +134,21 @@ class Scaffolder {
       ),
     ];
 
+    // Swift Package Manager manifest (Flutter 3.44+ default), generated
+    // alongside the podspec so the plugin works with either dependency
+    // manager. A single SwiftPM target can't mix languages, so this is only
+    // emitted for Swift plugins (and the Swift-stub fallback when the source
+    // has no native code); Objective-C / mixed plugins stay CocoaPods-only.
+    if (source.sourceLanguage == SourceLanguage.swift ||
+        source.sourceLanguage == SourceLanguage.unknown) {
+      plan.add(
+        _Plan(
+          path: outputDirectory.childDirectory('tvos').childFile('Package.swift').path,
+          contents: tmpl.renderPackageSwift(source: source),
+        ),
+      );
+    }
+
     // The federated Dart implementation. The source plugin's `lib/`
     // already extends the platform interface and talks to the SAME
     // method channel the native side registers — and we keep that

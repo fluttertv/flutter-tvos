@@ -85,6 +85,8 @@ In practice each plugin with native code ships an extra federated package (e.g. 
 
 A FlutterTV-curated index of ported plugins is at [github.com/fluttertv/plugins](https://github.com/fluttertv/plugins) (also on pub.dev under the [`fluttertv.dev`](https://pub.dev/publishers/fluttertv.dev/packages) publisher). If a plugin you need isn't there, `flutter-tvos plugin port` scaffolds a federated `*_tvos` package from any iOS or macOS plugin — see [Porting an existing plugin](doc/port-plugin.md).
 
+**Dependency management.** Newly created tvOS apps use **Swift Package Manager** by default: the build generates a `FlutterGeneratedPluginSwiftPackage` that vends the engine plus every plugin shipping a `tvos/Package.swift`, and wires it into the Xcode project. **CocoaPods still works** — a plugin that ships only a podspec is resolved through the Podfile, and the two coexist (a plugin with a `Package.swift` is owned by SPM and skipped by CocoaPods). Plugins produced by `flutter-tvos plugin port` ship both, so they work either way.
+
 ### Writing cross-platform apps (iOS + Android + tvOS)
 
 If your app already targets iOS/Android and you're adding tvOS support, keep these patterns in mind:

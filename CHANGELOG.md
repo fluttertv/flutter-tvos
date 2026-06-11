@@ -5,6 +5,29 @@ All notable changes to flutter-tvos will be documented here.
 ## [Unreleased]
 
 ### Added
+- **Swift Package Manager support for tvOS apps (default; CocoaPods kept).**
+  Newly created apps link a generated `FlutterGeneratedPluginSwiftPackage`
+  umbrella that vends the tvOS engine (`FlutterFramework` binary target wrapping
+  `Flutter.xcframework`) and every federated plugin shipping a `tvos/Package.swift`.
+  The packages are regenerated under `tvos/Flutter/ephemeral/Packages/` on each
+  build and wired into the Runner Xcode project (the template now uses
+  `objectVersion = 56` + an `XCLocalSwiftPackageReference`; the manual
+  `Flutter.framework` embed phase is dropped since SPM now owns linking and
+  embedding the engine). `FlutterFramework` is generated inside the umbrella's
+  `.packages/` next to the plugin symlinks, so each plugin's own
+  `.package(name: "FlutterFramework", path: "../FlutterFramework")` resolves —
+  mirroring stock Flutter's layout. Plugins that ship only a podspec keep
+  resolving through CocoaPods — the Podfile skips any plugin that has a
+  `Package.swift`, so the two never double-link. The plugin porter's generated
+  `Package.swift` declares the `FlutterFramework` dependency (so the target can
+  `import Flutter`) and names the library product with hyphens
+  (`shared-preferences-tvos`) while keeping the underscored module name, matching
+  what the umbrella references and what the registrant imports. Verified
+  end-to-end with five real federated plugins (`path_provider`,
+  `shared_preferences`, `connectivity_plus`, `audioplayers`,
+  `flutter_secure_storage`): a method-channel round-trip works on the simulator
+  (debug), and a release (AOT) build installs and runs on a physical Apple TV
+  with the SPM-linked plugins statically embedded.
 - **`flutter-tvos upgrade`** — upgrades the flutter-tvos toolchain to the latest
   released version. Unlike stock `flutter upgrade` (which moves the bundled
   Flutter SDK toward upstream and would break our pinned Flutter ↔ engine-artifact

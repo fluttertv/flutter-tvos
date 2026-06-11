@@ -10,6 +10,8 @@ import 'package:flutter_tools/src/platform_plugins.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:yaml/yaml.dart';
 
+import 'tvos_swift_package_manager.dart';
+
 const String _swiftPluginRegistryTemplate = '''
 //
 //  Generated file. Do not edit.
@@ -217,6 +219,49 @@ List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
     );
   }
   return tvosPlugins;
+}
+
+/// Discovers the tvOS plugins in [project] that ship a Swift Package
+/// (`<plugin>/tvos/Package.swift`) and returns them as [TvosSpmPlugin]s for the
+/// generated SPM umbrella.
+///
+/// A plugin is consumed via Swift Package Manager when it has a `Package.swift`;
+/// plugins with only a `<name>.podspec` continue to resolve through CocoaPods
+/// (the Podfile skips any plugin that has a `Package.swift`, so the two never
+/// double-link). A plugin that ships both is treated as SPM here.
+List<TvosSpmPlugin> discoverTvosSpmPlugins(FlutterProject project) {
+  final spmPlugins = <TvosSpmPlugin>[];
+  for (final TvosPlugin plugin in _discoverTvosPlugins(project)) {
+    final Directory tvosDir = globals.fs.directory(
+      globals.fs.path.join(plugin.path, 'tvos'),
+    );
+    final File manifest = tvosDir.childFile('Package.swift');
+    if (!manifest.existsSync()) {
+      continue;
+    }
+    // Prefer the package name declared in the manifest; fall back to the pub
+    // package name (the porter sets them equal).
+    final String packageName = _readSwiftPackageName(manifest) ?? plugin.name;
+    spmPlugins.add(
+      TvosSpmPlugin(name: packageName, packagePath: tvosDir.path),
+    );
+    globals.logger.printTrace(
+      'tvOS SPM plugin: $packageName at ${tvosDir.path}',
+    );
+  }
+  return spmPlugins;
+}
+
+/// Extracts the SwiftPM package name from a `Package.swift` (`name: "..."` in
+/// the `Package(` initializer). Returns null if it can't be found.
+String? _readSwiftPackageName(File manifest) {
+  try {
+    final String contents = manifest.readAsStringSync();
+    final Match? match = RegExp(r'name:\s*"([^"]+)"').firstMatch(contents);
+    return match?.group(1);
+  } on FileSystemException {
+    return null;
+  }
 }
 
 /// Returns the names of every dependency that declares `flutter.plugin`,

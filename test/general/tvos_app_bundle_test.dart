@@ -175,4 +175,41 @@ void main() {
       });
     }
   });
+
+  // --- Swift Package Manager: umbrella wired into the Xcode project --------
+  group('Xcode project references the FlutterGeneratedPluginSwiftPackage', () {
+    const fs = LocalFileSystem();
+
+    for (final relativePath in <String>[
+      'templates/app/swift/tvos.tmpl/Runner.xcodeproj/project.pbxproj.tmpl',
+      'packages/flutter_tvos/example/tvos/Runner.xcodeproj/project.pbxproj',
+    ]) {
+      test('$relativePath wires the SPM umbrella package', () {
+        final File file = fs.file(relativePath);
+        expect(file.existsSync(), isTrue, reason: 'expected to find $relativePath from package root');
+        final String pbxproj = file.readAsStringSync();
+
+        // objectVersion >= 56 is required for XCLocalSwiftPackageReference.
+        final Match? objVersion = RegExp(r'objectVersion = (\d+);').firstMatch(pbxproj);
+        expect(objVersion, isNotNull);
+        expect(int.parse(objVersion!.group(1)!), greaterThanOrEqualTo(56));
+
+        // The local package reference + its section.
+        expect(pbxproj, contains('isa = XCLocalSwiftPackageReference;'));
+        expect(
+          pbxproj,
+          contains('relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;'),
+        );
+        // The product dependency + its section.
+        expect(pbxproj, contains('isa = XCSwiftPackageProductDependency;'));
+        expect(pbxproj, contains('productName = FlutterGeneratedPluginSwiftPackage;'));
+
+        // Wired into the project's packageReferences and the Runner target's
+        // packageProductDependencies, and linked in the Frameworks phase.
+        expect(pbxproj, contains('packageReferences = ('));
+        expect(pbxproj, contains('packageProductDependencies = ('));
+        expect(pbxproj, contains('FlutterGeneratedPluginSwiftPackage in Frameworks'));
+      });
+    }
+  });
 }

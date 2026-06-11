@@ -98,7 +98,8 @@ What happens when you run `flutter-tvos build tvos --simulator --debug`:
    - **AOT snapshot** (release/profile only) — runs `gen_snapshot` to produce `App.framework`
    - **Generate Xcode configs** — writes `Generated.xcconfig`, `Debug.xcconfig`, `Release.xcconfig`
    - **`ensureReadyForTvosTooling()`** — discovers tvOS plugins, writes `.flutter-plugins-dependencies` with a `plugins.tvos` key, generates `GeneratedPluginRegistrant.swift` and the Objective-C `.m` with `@import` and registration calls. Runs after `pub get` to ensure the dependencies file reflects the tvOS key.
-   - **`pod install`** — runs if a `Podfile` is present; the Podfile reads `plugins.tvos` to resolve CocoaPods dependencies
+   - **Generate Swift packages** — `TvosSwiftPackageManager` writes `FlutterFramework` (binary target wrapping `Flutter.xcframework`) and the `FlutterGeneratedPluginSwiftPackage` umbrella (depends on `FlutterFramework` + every plugin shipping a `tvos/Package.swift`) into `tvos/Flutter/ephemeral/Packages/`. The Runner project references the umbrella, so SPM provides the engine and the SPM plugins. Always generated, even with no SPM plugins.
+   - **`pod install`** — runs if a `Podfile` is present; the Podfile reads `plugins.tvos` to resolve CocoaPods dependencies for plugins that ship only a podspec (it skips any plugin that has a `Package.swift`, which SPM owns instead — the two coexist)
    - **`xcodebuild`** — invokes `-workspace Runner.xcworkspace -scheme Runner -sdk appletvsimulator -configuration Debug build` (uses `-workspace` when CocoaPods are present, `-project` otherwise)
 5. Output: `build/tvos/Debug-appletvsimulator/Runner.app`
 
