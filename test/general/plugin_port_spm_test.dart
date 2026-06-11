@@ -135,6 +135,11 @@ void main() {
       expect(pkg, contains('path: "Classes"'));
       // Keeps Swift `#if TARGET_OS_TV` branches active under SwiftPM.
       expect(pkg, contains('.define("TARGET_OS_TV")'));
+      // Declares the FlutterFramework dependency so the target can
+      // `import Flutter`; flutter-tvos generates that package as a sibling
+      // (`../FlutterFramework`) under the app's ephemeral SwiftPM packages.
+      expect(pkg, contains('.package(name: "FlutterFramework", path: "../FlutterFramework")'));
+      expect(pkg, contains('.product(name: "FlutterFramework", package: "FlutterFramework")'));
     });
 
     test('Package.swift sits beside the podspec and reuses Classes/', () {

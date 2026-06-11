@@ -197,9 +197,19 @@ let package = Package(
   products: [
     .library(name: "$libraryName", targets: ["$name"]),
   ],
+  dependencies: [
+    // Lets the target `import Flutter`. flutter-tvos generates a FlutterFramework
+    // package (binary target wrapping Flutter.xcframework) as a sibling of this
+    // package under the app's ephemeral SwiftPM packages, so `../FlutterFramework`
+    // resolves at build time. Matches stock Flutter's plugin Package.swift.
+    .package(name: "FlutterFramework", path: "../FlutterFramework"),
+  ],
   targets: [
     .target(
       name: "$name",
+      dependencies: [
+        .product(name: "FlutterFramework", package: "FlutterFramework"),
+      ],
       path: "Classes",
       swiftSettings: [
         // Keep Swift `#if TARGET_OS_TV` branches active, matching the podspec.

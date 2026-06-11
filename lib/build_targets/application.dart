@@ -608,22 +608,27 @@ class NativeTvosBundle extends Target {
         .childDirectory('Flutter')
         .childDirectory('ephemeral')
         .childDirectory('Packages');
+    final Directory umbrellaDir = packagesDir.childDirectory(
+      TvosSwiftPackageManager.kGeneratedPluginsPackageName,
+    );
 
     final spm = TvosSwiftPackageManager(fileSystem: globals.fs);
+    // FlutterFramework lives inside the umbrella's `.packages/` alongside the
+    // plugin symlinks, so a plugin's own `../FlutterFramework` dependency
+    // resolves (each plugin is symlinked at `.packages/<name>`). This mirrors
+    // stock Flutter's `relativeSwiftPackagesDirectory/FlutterFramework` layout.
     spm.generateFlutterFrameworkPackage(
-      packageDirectory: packagesDir.childDirectory(
-        TvosSwiftPackageManager.kFlutterFrameworkPackageName,
-      ),
+      packageDirectory: umbrellaDir
+          .childDirectory('.packages')
+          .childDirectory(TvosSwiftPackageManager.kFlutterFrameworkPackageName),
       xcframework: xcframework,
     );
     final List<TvosSpmPlugin> spmPlugins = discoverTvosSpmPlugins(project);
     spm.generatePluginsSwiftPackage(
-      packageDirectory: packagesDir.childDirectory(
-        TvosSwiftPackageManager.kGeneratedPluginsPackageName,
-      ),
+      packageDirectory: umbrellaDir,
       plugins: spmPlugins,
-      // Both packages live side-by-side under Packages/.
-      flutterFrameworkRelativePath: '../${TvosSwiftPackageManager.kFlutterFrameworkPackageName}',
+      flutterFrameworkRelativePath:
+          '.packages/${TvosSwiftPackageManager.kFlutterFrameworkPackageName}',
       deploymentTarget: _resolveTvosDeploymentTarget(tvosProjectDir),
     );
     globals.logger.printTrace(
