@@ -1,3 +1,13 @@
+## 1.1.0
+
+- Added Swift Package Manager support: the package now ships a
+  `tvos/Package.swift` alongside the CocoaPods podspec, so apps built with
+  flutter-tvos 1.3+ resolve it via SwiftPM (the Flutter 3.44 default) while
+  CocoaPods projects keep working unchanged. The FFI exports are marked
+  `__attribute__((used))` / `visibility("default")` so they survive
+  dead-stripping when statically linked through the SPM umbrella — verified
+  in a release (AOT) build on a physical Apple TV. No API change.
+
 ## 1.0.5
 
 - Updated compatibility with Flutter 3.44.0.
