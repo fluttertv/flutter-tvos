@@ -2,7 +2,12 @@
 
 All notable changes to flutter-tvos will be documented here.
 
-## [Unreleased]
+## [1.3.0] — 2026-06-12
+
+Minor release. Adds **Swift Package Manager support** for tvOS apps (the
+Flutter 3.44 default) alongside CocoaPods, and a **`flutter-tvos upgrade`**
+command. No engine or Flutter SDK change — pinned versions match 1.2.0
+(Flutter **3.44.1**, engine `v1.0.0-flutter3.44.1`).
 
 ### Added
 - **Swift Package Manager support for tvOS apps (default; CocoaPods kept).**
@@ -37,6 +42,11 @@ All notable changes to flutter-tvos will be documented here.
   `precache`, `pub get`, and `doctor`. Supports `--verify-only` (check without
   changing anything) and `--force` (discard local changes); refuses to run on a
   dirty checkout otherwise.
+- **The bundled `flutter_tvos` package gained SPM support** (1.1.0). It is an
+  FFI plugin (an Objective-C shim called via `DynamicLibrary.process()`); it now
+  ships a `tvos/Package.swift` so it links statically through the umbrella, with
+  its FFI exports marked `__attribute__((used))` / `visibility("default")` so
+  they survive dead-stripping. The CocoaPods path is unchanged.
 
 ## [1.2.0] — 2026-06-05
 
