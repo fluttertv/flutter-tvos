@@ -231,11 +231,24 @@ class TvosUpgradeCommandRunner {
   }
 
   Future<bool> _hasUncommittedChanges() async {
-    final RunResult result = await _git.run(
-      <String>['git', 'status', '-s'],
-      workingDirectory: workingDirectory,
-    );
-    return result.stdout.trim().isNotEmpty;
+    // Fail *closed*: this is the only guard before `git reset --hard`, so if we
+    // cannot determine the tree's status we must not report it clean. Mirrors
+    // stock Flutter's UpgradeCommandRunner.hasUncommittedChanges.
+    try {
+      final RunResult result = await _git.run(
+        <String>['git', 'status', '-s'],
+        throwOnError: true,
+        workingDirectory: workingDirectory,
+      );
+      return result.stdout.trim().isNotEmpty;
+    } on ProcessException catch (e) {
+      throwToolExit(
+        'The tool could not verify the status of the flutter-tvos checkout in '
+        '$workingDirectory. This may be due to git not being installed or an '
+        'unexpected error. Ensure git is installed and in your PATH and try '
+        'again, or re-run with --force to skip this check.\n${e.message}',
+      );
+    }
   }
 
   Future<void> attemptReset(String newRevision) async {
@@ -265,7 +278,12 @@ class TvosUpgradeCommandRunner {
       environment: Map<String, String>.of(globals.platform.environment),
     );
     if (code != 0) {
-      throwToolExit(null, exitCode: code);
+      throwToolExit(
+        'flutter-tvos was upgraded to the new release, but finishing the upgrade '
+        '(precache / doctor) failed. Your checkout is on the new version; re-run '
+        '"flutter-tvos precache --force" and "flutter-tvos doctor" to complete it.',
+        exitCode: code,
+      );
     }
   }
 
@@ -299,7 +317,12 @@ class TvosUpgradeCommandRunner {
       environment: Map<String, String>.of(globals.platform.environment),
     );
     if (code != 0) {
-      throwToolExit(null, exitCode: code);
+      throwToolExit(
+        'The flutter-tvos checkout was upgraded, but re-downloading the tvOS '
+        'engine artifacts for the new version failed. Re-run '
+        '"flutter-tvos precache --force" once your network is available.',
+        exitCode: code,
+      );
     }
   }
 

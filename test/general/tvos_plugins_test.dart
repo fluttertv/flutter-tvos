@@ -818,12 +818,17 @@ flutter:
         final Directory tvosDir = pkgDir.childDirectory('tvos')..createSync();
         // Both ship a podspec.
         tvosDir.childFile('$name.podspec').writeAsStringSync('# podspec');
-        if (name == 'widget_tvos' || gizmoHasPackageSwift) {
-          if (name == 'gizmo_tvos') {
-            tvosDir.childFile('Package.swift').writeAsStringSync(
-              'let package = Package(\n  name: "gizmo_tvos"\n)\n',
-            );
-          }
+        if (name == 'gizmo_tvos' && gizmoHasPackageSwift) {
+          // A leading comment containing `name:` must not fool the parse (the
+          // package name is anchored to the `Package(` initializer), and the
+          // product name is read from `.library(name:)`.
+          tvosDir.childFile('Package.swift').writeAsStringSync(
+            '// name: "not-the-package"\n'
+            'let package = Package(\n'
+            '  name: "gizmo_tvos",\n'
+            '  products: [.library(name: "gizmo-tvos", targets: ["gizmo_tvos"])]\n'
+            ')\n',
+          );
         }
       }
 
@@ -880,13 +885,31 @@ flutter:
     );
 
     testUsingContext(
-      'prefers the package name declared in the manifest',
+      'prefers the package name declared in the manifest, ignoring comments',
       () {
-        // gizmo_tvos's manifest declares name: "gizmo_tvos".
+        // gizmo_tvos's manifest has a leading `// name: "not-the-package"`
+        // comment before `Package(name: "gizmo_tvos")`; the anchored parse
+        // must pick the real package name.
         final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
           seedProject(gizmoHasPackageSwift: true),
         );
         expect(spm.single.name, 'gizmo_tvos');
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'reads the .library product name from the manifest',
+      () {
+        // gizmo_tvos declares `.library(name: "gizmo-tvos")` — the umbrella
+        // links that product, so it must be parsed rather than assumed.
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedProject(gizmoHasPackageSwift: true),
+        );
+        expect(spm.single.libraryName, 'gizmo-tvos');
       },
       overrides: <Type, Generator>{
         FileSystem: () => fileSystem,

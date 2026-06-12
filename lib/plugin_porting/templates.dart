@@ -159,12 +159,15 @@ end
 /// - **One source tree.** The SwiftPM target points at the same `Classes/`
 ///   directory the podspec globs, so a plugin never duplicates its native
 ///   code. A consumer on either dependency manager builds the identical files.
-/// - **No Flutter dependency declared.** Exactly like the podspec (and like
-///   stock Flutter's own iOS plugin packages), `import Flutter` resolves
-///   because the host app build provides `Flutter.framework` via
-///   `FRAMEWORK_SEARCH_PATHS`, which the SwiftPM target compilation inherits.
-///   Declaring a Flutter package dependency here would break — the Flutter
-///   pod/package doesn't advertise tvOS.
+/// - **Flutter resolved via the `FlutterFramework` package.** The target
+///   declares a `.package(name: "FlutterFramework", path: "../FlutterFramework")`
+///   dependency so it can `import Flutter`. flutter-tvos generates that package
+///   (a binary target wrapping `Flutter.xcframework`) as a sibling of this one
+///   under the app's ephemeral SwiftPM packages, so the relative path resolves
+///   at build time — matching stock Flutter's plugin `Package.swift`. (A
+///   standalone `swift build` of the ported plugin outside an app has no sibling
+///   `FlutterFramework` and will not resolve; consume it through a flutter-tvos
+///   app build, exactly as with the CocoaPods podspec.)
 /// - **`TARGET_OS_TV`.** Mirrors the podspec's `OTHER_SWIFT_FLAGS` so Swift
 ///   `#if TARGET_OS_TV` branches stay active under SwiftPM.
 ///

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:flutter_tools/src/artifacts.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart' show Status;
@@ -600,8 +601,10 @@ class NativeTvosBundle extends Target {
       ),
     );
     if (!xcframework.existsSync()) {
-      globals.logger.printError('Flutter.xcframework not found at ${xcframework.path}');
-      throw Exception('Flutter.xcframework not found. Run flutter-tvos precache first.');
+      throwToolExit(
+        'Flutter.xcframework not found at ${xcframework.path}.\n'
+        'Run "flutter-tvos precache" to download the tvOS engine artifacts first.',
+      );
     }
 
     final Directory packagesDir = tvosProjectDir
@@ -633,6 +636,47 @@ class NativeTvosBundle extends Target {
     );
     globals.logger.printTrace(
       'Generated Swift packages (${spmPlugins.length} SPM plugin(s)) under ${packagesDir.path}',
+    );
+
+    // Migration guard: an SPM plugin is linked *only* through the umbrella, and
+    // the new Podfile deliberately skips plugins that ship a Package.swift. If
+    // this app's Runner project predates SPM wiring (e.g. an app created before
+    // 1.3 and not regenerated), the umbrella is generated but linked by nothing,
+    // and the plugin would be missing at link/runtime with a cryptic error.
+    // Surface it here, where we can point at the cause.
+    if (spmPlugins.isNotEmpty) {
+      _verifyRunnerLinksUmbrella(tvosProjectDir, spmPlugins);
+    }
+  }
+
+  /// Throws an actionable error if the Runner project does not reference the
+  /// generated `FlutterGeneratedPluginSwiftPackage` umbrella while the app has
+  /// SPM plugins to link. Skips the check when the pbxproj can't be read (the
+  /// xcodebuild step will report any genuine project problem itself).
+  void _verifyRunnerLinksUmbrella(
+    Directory tvosProjectDir,
+    List<TvosSpmPlugin> spmPlugins,
+  ) {
+    final File pbxproj = tvosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    if (!pbxproj.existsSync()) {
+      return;
+    }
+    if (pbxproj
+        .readAsStringSync()
+        .contains(TvosSwiftPackageManager.kGeneratedPluginsPackageName)) {
+      return;
+    }
+    final String names = spmPlugins.map((TvosSpmPlugin p) => p.name).join(', ');
+    throwToolExit(
+      'This app uses Swift Package Manager plugin(s) ($names), but its Xcode '
+      'project does not reference the generated '
+      '${TvosSwiftPackageManager.kGeneratedPluginsPackageName} — so they would '
+      'not be linked.\n'
+      'This usually means the tvos/ project was created before flutter-tvos 1.3 '
+      'and needs regenerating. Re-run "flutter-tvos create ." in the project '
+      'root (or restore the SPM package reference in Runner.xcodeproj).',
     );
   }
 

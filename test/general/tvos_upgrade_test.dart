@@ -271,6 +271,52 @@ void main() {
         Logger: () => logger,
       },
     );
+
+    testUsingContext(
+      'fails closed when git status cannot be determined (no destructive reset)',
+      () async {
+        // The status check is the only guard before `git reset --hard`. If it
+        // can't be evaluated, the upgrade must abort rather than treat the tree
+        // as clean — otherwise uncommitted work would be silently destroyed.
+        processManager.addCommands(<FakeCommand>[
+          const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+          const FakeCommand(
+            command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+            stdout: 'v3.44.1-tvos.1.2.0\n',
+          ),
+          const FakeCommand(
+            command: <String>['git', 'rev-parse', 'v3.44.1-tvos.1.2.0^{commit}'],
+            stdout: '$sha\n',
+          ),
+          const FakeCommand(
+            command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+            stdout: 'feedfacefeedfacefeedfacefeedfacefeedface\n',
+          ),
+          const FakeCommand(
+            command: <String>['git', 'describe', '--exact-match', '--tags', 'HEAD'],
+            exitCode: 128,
+          ),
+          // `git status` itself fails (corrupted index, permissions, …).
+          const FakeCommand(
+            command: <String>['git', 'status', '-s'],
+            exitCode: 128,
+            stderr: 'fatal: not a git repository',
+          ),
+        ]);
+
+        final runner = TvosUpgradeCommandRunner()..workingDirectory = '/repo';
+        await expectToolExitLater(
+          runner.runCommandFirstHalf(force: false, testFlow: true, verifyOnly: false),
+          contains('could not verify the status'),
+        );
+        // Crucially, no `git reset --hard` was ever queued/run.
+        expect(processManager, hasNoRemainingExpectations);
+      },
+      overrides: <Type, Generator>{
+        ProcessManager: () => processManager,
+        Logger: () => logger,
+      },
+    );
   });
 
   group('TvosVersion', () {

@@ -108,6 +108,7 @@ class TvosSwiftPackageManager {
         _PluginRef(
           name: plugin.name,
           relativePath: '.packages/${plugin.name}',
+          productName: plugin.libraryName,
         ),
       );
     }
@@ -197,24 +198,36 @@ ${targetDependencies.join('\n')}
 }
 
 /// A federated tvOS plugin to include in the umbrella package: its [name]
-/// (matching the SwiftPM package name in its `tvos/Package.swift`) and the
+/// (matching the SwiftPM package name in its `tvos/Package.swift`), the
+/// [libraryName] (the `.library(name:)` product the umbrella links), and the
 /// path to the directory containing that `Package.swift`.
 @immutable
 class TvosSpmPlugin {
-  const TvosSpmPlugin({required this.name, required this.packagePath});
+  TvosSpmPlugin({required this.name, required this.packagePath, String? libraryName})
+      : libraryName = libraryName ?? name.replaceAll('_', '-');
 
   final String name;
   final String packagePath;
+
+  /// The SwiftPM product name the umbrella references. Defaults to the
+  /// hyphenated package name (the porter convention), but a hand-authored
+  /// plugin may declare any product name, so callers that read the manifest
+  /// pass the parsed `.library(name:)` here rather than assuming the form.
+  final String libraryName;
 }
 
 /// Internal: a resolved plugin reference for manifest rendering.
 @immutable
 class _PluginRef {
-  const _PluginRef({required this.name, required this.relativePath});
+  const _PluginRef({
+    required this.name,
+    required this.relativePath,
+    required this.productName,
+  });
 
   final String name;
   final String relativePath;
 
-  /// SwiftPM product (library) name — hyphenated form of the package name.
-  String get productName => name.replaceAll('_', '-');
+  /// SwiftPM product (library) name the umbrella links against.
+  final String productName;
 }

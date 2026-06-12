@@ -239,29 +239,81 @@ List<TvosSpmPlugin> discoverTvosSpmPlugins(FlutterProject project) {
     if (!manifest.existsSync()) {
       continue;
     }
+    final _SwiftPackageNames names = _readSwiftPackageNames(manifest);
     // Prefer the package name declared in the manifest; fall back to the pub
-    // package name (the porter sets them equal).
-    final String packageName = _readSwiftPackageName(manifest) ?? plugin.name;
+    // package name (the porter sets them equal). The library name defaults to
+    // the hyphenated package name when the manifest doesn't declare one.
+    final String packageName = names.package ?? plugin.name;
     spmPlugins.add(
-      TvosSpmPlugin(name: packageName, packagePath: tvosDir.path),
+      TvosSpmPlugin(
+        name: packageName,
+        packagePath: tvosDir.path,
+        libraryName: names.library,
+      ),
     );
     globals.logger.printTrace(
-      'tvOS SPM plugin: $packageName at ${tvosDir.path}',
+      'tvOS SPM plugin: $packageName (product ${names.library ?? '${packageName.replaceAll('_', '-')} [derived]'}) at ${tvosDir.path}',
     );
   }
   return spmPlugins;
 }
 
-/// Extracts the SwiftPM package name from a `Package.swift` (`name: "..."` in
-/// the `Package(` initializer). Returns null if it can't be found.
-String? _readSwiftPackageName(File manifest) {
+/// The `name:` (package) and `.library(name:)` (product) declared in a
+/// `Package.swift`. Either may be null when it can't be parsed.
+class _SwiftPackageNames {
+  const _SwiftPackageNames({this.package, this.library});
+  final String? package;
+  final String? library;
+}
+
+// SwiftPM identifiers used as a symlink filename and interpolated into the
+// generated umbrella manifest. Package names are `[A-Za-z0-9_]`; product
+// (library) names may also contain hyphens.
+final RegExp _packageNamePattern = RegExp(r'^[A-Za-z0-9_]+$');
+final RegExp _libraryNamePattern = RegExp(r'^[A-Za-z0-9_-]+$');
+
+/// Extracts the SwiftPM package name (anchored to the `Package(` initializer,
+/// so a `name:` in a comment or a product can't win) and the first
+/// `.library(name:)` product from a `Package.swift`. Validates both against the
+/// SwiftPM identifier charset; an unparseable or invalid value is logged and
+/// returned as null so the caller falls back to a safe default.
+_SwiftPackageNames _readSwiftPackageNames(File manifest) {
+  String contents;
   try {
-    final String contents = manifest.readAsStringSync();
-    final Match? match = RegExp(r'name:\s*"([^"]+)"').firstMatch(contents);
-    return match?.group(1);
-  } on FileSystemException {
-    return null;
+    contents = manifest.readAsStringSync();
+  } on FileSystemException catch (e) {
+    globals.logger.printTrace('Could not read ${manifest.path}: $e');
+    return const _SwiftPackageNames();
   }
+
+  String? validated(Match? match, RegExp charset, String what) {
+    final String? value = match?.group(1);
+    if (value == null) {
+      return null;
+    }
+    if (!charset.hasMatch(value)) {
+      globals.logger.printTrace(
+        'Ignoring invalid SwiftPM $what "$value" in ${manifest.path}; '
+        'falling back to a derived name.',
+      );
+      return null;
+    }
+    return value;
+  }
+
+  // Anchor the package name to `Package( name:` rather than the first `name:`
+  // anywhere in the file (which could be a comment or a product/target).
+  final String? package = validated(
+    RegExp(r'Package\s*\(\s*name:\s*"([^"]+)"').firstMatch(contents),
+    _packageNamePattern,
+    'package name',
+  );
+  final String? library = validated(
+    RegExp(r'\.library\s*\(\s*name:\s*"([^"]+)"').firstMatch(contents),
+    _libraryNamePattern,
+    'library name',
+  );
+  return _SwiftPackageNames(package: package, library: library);
 }
 
 /// Returns the names of every dependency that declares `flutter.plugin`,
