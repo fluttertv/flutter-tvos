@@ -18,16 +18,8 @@ Add `flutter_tvos` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_tvos: ^1.1.0
+  flutter_tvos: ^1.0.4
 ```
-
-### Dependency management
-
-Supports both **Swift Package Manager** and **CocoaPods** from a single source
-tree. `flutter-tvos` wires the right one automatically: apps on Flutter 3.44+
-link the native FFI shim via SwiftPM (this package ships a
-`tvos/Package.swift`), while CocoaPods-based projects keep using the podspec.
-No manual setup needed.
 
 ## Usage
 

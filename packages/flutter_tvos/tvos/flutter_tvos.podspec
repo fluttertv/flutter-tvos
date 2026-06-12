@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'flutter_tvos'
-  s.version          = '1.1.0'
+  s.version          = '1.0.0'
   s.summary          = 'Platform detection and utilities for Flutter on tvOS (FFI).'
   s.description      = <<-DESC
 Provides runtime checks to determine if a Flutter app is running on Apple TV (tvOS),

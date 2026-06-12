@@ -32,7 +32,11 @@ command. No engine or Flutter SDK change — pinned versions match 1.2.0
   `shared_preferences`, `connectivity_plus`, `audioplayers`,
   `flutter_secure_storage`): a method-channel round-trip works on the simulator
   (debug), and a release (AOT) build installs and runs on a physical Apple TV
-  with the SPM-linked plugins statically embedded.
+  with the SPM-linked plugins statically embedded. FFI plugins (which resolve
+  their native symbols at runtime via `DynamicLibrary.process()`, so nothing in
+  the app references them and SwiftPM omits the unreferenced static member from
+  the link) remain CocoaPods-only for now — including the bundled `flutter_tvos`
+  package, which keeps resolving through its podspec as a dynamic framework.
 - **`flutter-tvos upgrade`** — upgrades the flutter-tvos toolchain to the latest
   released version. Unlike stock `flutter upgrade` (which moves the bundled
   Flutter SDK toward upstream and would break our pinned Flutter ↔ engine-artifact
