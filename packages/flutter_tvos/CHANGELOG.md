@@ -4,9 +4,10 @@
   `tvos/Package.swift` alongside the CocoaPods podspec, so apps built with
   flutter-tvos 1.3+ resolve it via SwiftPM (the Flutter 3.44 default) while
   CocoaPods projects keep working unchanged. The FFI exports are marked
-  `__attribute__((used))` / `visibility("default")` so they survive
-  dead-stripping when statically linked through the SPM umbrella — verified
-  in a release (AOT) build on a physical Apple TV. No API change.
+  `__attribute__((used))` / `visibility("default")` and anchored with `-u`
+  linker flags in `Package.swift` so they survive both dead-stripping and
+  archive-member selection when statically linked through the SPM umbrella.
+  The CocoaPods path (dynamic framework) is unchanged. No API change.
 
 ## 1.0.5
 

@@ -646,7 +646,38 @@ class NativeTvosBundle extends Target {
     // Surface it here, where we can point at the cause.
     if (spmPlugins.isNotEmpty) {
       _verifyRunnerLinksUmbrella(tvosProjectDir, spmPlugins);
+      _warnIfPodfileMayDoubleLink(tvosProjectDir, spmPlugins);
     }
+  }
+
+  /// Warns if the project's `Podfile` predates the SPM skip guard while SPM
+  /// plugins are present. The current Podfile skips any plugin that ships a
+  /// `Package.swift` (it references `'Package.swift'` in the guard); an older
+  /// Podfile without that guard would `pod` such a plugin *and* the umbrella
+  /// would link it via SwiftPM — linking it twice (duplicate ObjC classes; a
+  /// dlsym binds one of two symbol copies). A warning rather than a hard error:
+  /// the build can still succeed, and we don't want to break a project that
+  /// happens to work while the user migrates.
+  void _warnIfPodfileMayDoubleLink(
+    Directory tvosProjectDir,
+    List<TvosSpmPlugin> spmPlugins,
+  ) {
+    final File podfile = tvosProjectDir.childFile('Podfile');
+    if (!podfile.existsSync()) {
+      return;
+    }
+    if (podfile.readAsStringSync().contains('Package.swift')) {
+      return; // Has the skip guard — SPM plugins won't be pod'd.
+    }
+    final String names = spmPlugins.map((TvosSpmPlugin p) => p.name).join(', ');
+    globals.logger.printWarning(
+      'Warning: this project has a Podfile without the Swift Package Manager '
+      'skip guard, but uses SPM plugin(s) ($names) that also ship a podspec. '
+      'They may be linked twice (CocoaPods + SwiftPM), which can cause duplicate '
+      'symbols or the wrong plugin instance at runtime.\n'
+      'Regenerate the Podfile ("flutter-tvos create ." in the project root) so it '
+      'skips plugins that ship a Package.swift.',
+    );
   }
 
   /// Throws an actionable error if the Runner project does not reference the
