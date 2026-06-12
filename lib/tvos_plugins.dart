@@ -10,6 +10,19 @@ import 'package:flutter_tools/src/platform_plugins.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:yaml/yaml.dart';
 
+import 'tvos_swift_package_manager.dart';
+
+/// Pubspec key, nested under `flutter.plugin.platforms.tvos`, by which an FFI
+/// plugin declares the C symbols it exports for `dart:ffi` lookup. Used to emit
+/// forced link references — see [_collectFfiForcedReferenceSymbols].
+const String kTvosFfiSymbols = 'ffiSymbols';
+
+/// A C identifier: a letter or underscore followed by letters, digits, or
+/// underscores. Declared FFI symbol names are validated against this before
+/// being interpolated into generated C, so a malformed entry can't inject
+/// arbitrary tokens into `GeneratedPluginRegistrant.m`.
+final RegExp _cIdentifierPattern = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
+
 const String _swiftPluginRegistryTemplate = '''
 //
 //  Generated file. Do not edit.
@@ -210,6 +223,7 @@ List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
         pluginClass: tvosConfig['pluginClass'] as String?,
         dartPluginClass: tvosConfig['dartPluginClass'] as String?,
         ffiPlugin: tvosConfig[kFfiPlugin] as bool?,
+        ffiSymbols: _parseFfiSymbols(dep.name, tvosConfig[kTvosFfiSymbols]),
       ),
     );
     globals.logger.printTrace(
@@ -217,6 +231,137 @@ List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
     );
   }
   return tvosPlugins;
+}
+
+/// Parses the `flutter.plugin.platforms.tvos.ffiSymbols` list declared by an
+/// FFI plugin into a clean `List<String>` of C identifiers.
+///
+/// FFI plugins resolve their C symbols at runtime via `dlsym`, so nothing in
+/// the compiled app references them. A plugin lists the symbols it exports here
+/// so the registrant generator can emit forced link references that keep the
+/// symbols in the binary (see [_collectFfiForcedReferenceSymbols]).
+///
+/// Tolerant of garbage: a non-list value, non-string entries, and names that
+/// aren't valid C identifiers are dropped with a trace, never an exception —
+/// plugin discovery degrades silently the same way the rest of this file does.
+List<String> _parseFfiSymbols(String pluginName, Object? raw) {
+  if (raw == null) {
+    return const <String>[];
+  }
+  if (raw is! YamlList) {
+    globals.logger.printTrace(
+      'Ignoring `$kTvosFfiSymbols` for $pluginName: expected a list, '
+      'got ${raw.runtimeType}.',
+    );
+    return const <String>[];
+  }
+  final symbols = <String>[];
+  for (final Object? entry in raw) {
+    if (entry is! String || !_cIdentifierPattern.hasMatch(entry)) {
+      globals.logger.printTrace(
+        'Ignoring invalid `$kTvosFfiSymbols` entry "$entry" for $pluginName: '
+        'not a valid C identifier.',
+      );
+      continue;
+    }
+    symbols.add(entry);
+  }
+  return symbols;
+}
+
+/// Discovers the tvOS plugins in [project] that ship a Swift Package
+/// (`<plugin>/tvos/Package.swift`) and returns them as [TvosSpmPlugin]s for the
+/// generated SPM umbrella.
+///
+/// A plugin is consumed via Swift Package Manager when it has a `Package.swift`;
+/// plugins with only a `<name>.podspec` continue to resolve through CocoaPods
+/// (the Podfile skips any plugin that has a `Package.swift`, so the two never
+/// double-link). A plugin that ships both is treated as SPM here.
+List<TvosSpmPlugin> discoverTvosSpmPlugins(FlutterProject project) {
+  final spmPlugins = <TvosSpmPlugin>[];
+  for (final TvosPlugin plugin in _discoverTvosPlugins(project)) {
+    final Directory tvosDir = globals.fs.directory(
+      globals.fs.path.join(plugin.path, 'tvos'),
+    );
+    final File manifest = tvosDir.childFile('Package.swift');
+    if (!manifest.existsSync()) {
+      continue;
+    }
+    final _SwiftPackageNames names = _readSwiftPackageNames(manifest);
+    // Prefer the package name declared in the manifest; fall back to the pub
+    // package name (the porter sets them equal). The library name defaults to
+    // the hyphenated package name when the manifest doesn't declare one.
+    final String packageName = names.package ?? plugin.name;
+    spmPlugins.add(
+      TvosSpmPlugin(
+        name: packageName,
+        packagePath: tvosDir.path,
+        libraryName: names.library,
+      ),
+    );
+    globals.logger.printTrace(
+      'tvOS SPM plugin: $packageName (product ${names.library ?? '${packageName.replaceAll('_', '-')} [derived]'}) at ${tvosDir.path}',
+    );
+  }
+  return spmPlugins;
+}
+
+/// The `name:` (package) and `.library(name:)` (product) declared in a
+/// `Package.swift`. Either may be null when it can't be parsed.
+class _SwiftPackageNames {
+  const _SwiftPackageNames({this.package, this.library});
+  final String? package;
+  final String? library;
+}
+
+// SwiftPM identifiers used as a symlink filename and interpolated into the
+// generated umbrella manifest. Package names are `[A-Za-z0-9_]`; product
+// (library) names may also contain hyphens.
+final RegExp _packageNamePattern = RegExp(r'^[A-Za-z0-9_]+$');
+final RegExp _libraryNamePattern = RegExp(r'^[A-Za-z0-9_-]+$');
+
+/// Extracts the SwiftPM package name (anchored to the `Package(` initializer,
+/// so a `name:` in a comment or a product can't win) and the first
+/// `.library(name:)` product from a `Package.swift`. Validates both against the
+/// SwiftPM identifier charset; an unparseable or invalid value is logged and
+/// returned as null so the caller falls back to a safe default.
+_SwiftPackageNames _readSwiftPackageNames(File manifest) {
+  String contents;
+  try {
+    contents = manifest.readAsStringSync();
+  } on FileSystemException catch (e) {
+    globals.logger.printTrace('Could not read ${manifest.path}: $e');
+    return const _SwiftPackageNames();
+  }
+
+  String? validated(Match? match, RegExp charset, String what) {
+    final String? value = match?.group(1);
+    if (value == null) {
+      return null;
+    }
+    if (!charset.hasMatch(value)) {
+      globals.logger.printTrace(
+        'Ignoring invalid SwiftPM $what "$value" in ${manifest.path}; '
+        'falling back to a derived name.',
+      );
+      return null;
+    }
+    return value;
+  }
+
+  // Anchor the package name to `Package( name:` rather than the first `name:`
+  // anywhere in the file (which could be a comment or a product/target).
+  final String? package = validated(
+    RegExp(r'Package\s*\(\s*name:\s*"([^"]+)"').firstMatch(contents),
+    _packageNamePattern,
+    'package name',
+  );
+  final String? library = validated(
+    RegExp(r'\.library\s*\(\s*name:\s*"([^"]+)"').firstMatch(contents),
+    _libraryNamePattern,
+    'library name',
+  );
+  return _SwiftPackageNames(package: package, library: library);
 }
 
 /// Returns the names of every dependency that declares `flutter.plugin`,
@@ -282,6 +427,105 @@ List<String> recommendTvosPluginsToInstall({
     }
   }
   return messages;
+}
+
+/// Collects the C symbols that must be force-referenced from the Runner so the
+/// static linker keeps them in the binary, in stable declaration order with
+/// duplicates removed.
+///
+/// An FFI plugin's C symbols are resolved at runtime via `dlsym`, so nothing in
+/// the compiled app references them. When such a plugin is linked statically —
+/// which it is when it ships a `tvos/Package.swift` and is pulled into the
+/// generated `FlutterGeneratedPluginSwiftPackage` umbrella — the linker drops
+/// its unreferenced archive member and the symbols vanish from the binary. We
+/// only emit forced references for FFI plugins that **ship a Package.swift**:
+/// a CocoaPods-only FFI plugin ships its native code as a *dynamic* framework
+/// whose exports already survive (and force-referencing a symbol that isn't on
+/// the link line would turn a silent no-op into a hard link error).
+List<String> _collectFfiForcedReferenceSymbols(List<TvosPlugin> plugins) {
+  final seen = <String>{};
+  final ordered = <String>[];
+  for (final plugin in plugins) {
+    if (!plugin.hasFfi() || plugin.ffiSymbols.isEmpty) {
+      continue;
+    }
+    final File packageManifest = globals.fs.file(
+      globals.fs.path.join(plugin.path, 'tvos', 'Package.swift'),
+    );
+    if (!packageManifest.existsSync()) {
+      // CocoaPods-only FFI plugin: dynamic-framework exports already survive.
+      continue;
+    }
+    for (final symbol in plugin.ffiSymbols) {
+      if (seen.add(symbol)) {
+        ordered.add(symbol);
+      }
+    }
+  }
+  return ordered;
+}
+
+/// Renders the file-scope `extern` prototypes for each FFI symbol in [symbols].
+/// Returns an empty string when there are no symbols, so the method-channel-only
+/// output is byte-for-byte unchanged.
+///
+/// Each symbol is declared with a local prototype — `extern void name(void);` —
+/// rather than imported from the plugin's module, so the registrant needs no
+/// knowledge of the plugin's headers or module map. Only the address is taken
+/// (in [_renderFfiForcedReferenceBody]); the declared signature is irrelevant to
+/// the linker, which matches by name.
+String _renderFfiForcedReferenceDeclarations(List<String> symbols) {
+  if (symbols.isEmpty) {
+    return '';
+  }
+  final declarations = StringBuffer();
+  for (final symbol in symbols) {
+    declarations.writeln('extern void $symbol(void);');
+  }
+  return '\n'
+      '// FFI plugins resolve their C symbols at runtime via dlsym\n'
+      '// (DynamicLibrary.process()), so nothing in the compiled app references\n'
+      '// them. When such a plugin is linked statically through the generated\n'
+      '// Swift Package Manager umbrella, the linker would drop its unreferenced\n'
+      '// archive member and the symbols would be absent from the binary. The\n'
+      '// references that prevent that are emitted inside the (always-linked,\n'
+      '// always-reachable) registerWithRegistry: method below — see\n'
+      '// _renderFfiForcedReferenceBody. Forward declarations:\n'
+      '$declarations';
+}
+
+/// Renders the statements, emitted *inside* `registerWithRegistry:`, that force
+/// the linker to keep each FFI symbol in [symbols]. Returns an empty string when
+/// there are no symbols.
+///
+/// The references must live in reachable executable code, not at file scope: a
+/// file-scope `__attribute__((used))` anchor survives compiler dead-code
+/// elimination but is still collected by the linker's `-dead_strip` (nothing
+/// live reaches it), which drops the undefined references with it and the
+/// archive member is never pulled — verified empirically. Placing them in
+/// `registerWithRegistry:` (called from AppDelegate, rooted via ObjC metadata)
+/// keeps them live. The `__asm__ volatile` sink makes the optimizer materialize
+/// each address — and therefore emit the undefined reference — at every
+/// optimization level, so the same code works for debug and release/AOT builds.
+String _renderFfiForcedReferenceBody(List<String> symbols) {
+  if (symbols.isEmpty) {
+    return '';
+  }
+  final references = StringBuffer();
+  for (final symbol in symbols) {
+    references.writeln('    (const void *)&$symbol,');
+  }
+  return '\n'
+      '  // Force the linker to keep the statically-linked FFI plugin archive\n'
+      '  // member(s); see the file-scope note above.\n'
+      '  const void *_flutterTvosFfiForcedReferences[] = {\n'
+      '$references'
+      '  };\n'
+      '  for (unsigned long _i = 0;\n'
+      '       _i < sizeof(_flutterTvosFfiForcedReferences) / sizeof(_flutterTvosFfiForcedReferences[0]);\n'
+      '       _i++) {\n'
+      '    __asm__ volatile("" : : "r"(_flutterTvosFfiForcedReferences[_i]));\n'
+      '  }\n';
 }
 
 Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
@@ -428,6 +672,14 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
       }
     }
 
+    // Force-reference the C symbols of any statically-linked (SPM) FFI plugin
+    // so the linker keeps them in the Runner binary; empty for the common case.
+    final List<String> ffiForcedSymbols =
+        _collectFfiForcedReferenceSymbols(plugins);
+    final String ffiForcedDeclarations =
+        _renderFfiForcedReferenceDeclarations(ffiForcedSymbols);
+    final String ffiForcedBody = _renderFfiForcedReferenceBody(ffiForcedSymbols);
+
     final File objcHeader = runnerDir.childFile('GeneratedPluginRegistrant.h');
     objcHeader.writeAsStringSync(
       '//\n'
@@ -459,11 +711,13 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
       '#import "GeneratedPluginRegistrant.h"\n'
       '\n'
       '$imports'
+      '$ffiForcedDeclarations'
       '\n'
       '@implementation GeneratedPluginRegistrant\n'
       '\n'
       '+ (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry {\n'
       '$registrations'
+      '$ffiForcedBody'
       '}\n'
       '\n'
       '@end\n',
@@ -562,6 +816,7 @@ class TvosPlugin extends PluginPlatform implements NativeOrDartPlugin {
     this.dartPluginClass,
     this.defaultPackage,
     this.ffiPlugin,
+    this.ffiSymbols = const <String>[],
   }) : assert(
          pluginClass != null ||
              dartPluginClass != null ||
@@ -575,6 +830,12 @@ class TvosPlugin extends PluginPlatform implements NativeOrDartPlugin {
   final String? dartPluginClass;
   final String? defaultPackage;
   final bool? ffiPlugin;
+
+  /// C symbols this FFI plugin exports for `dart:ffi` lookup, declared under
+  /// `flutter.plugin.platforms.tvos.ffiSymbols`. Empty for method-channel
+  /// plugins and for FFI plugins that don't declare any (the latter keep the
+  /// pre-SPM behaviour: no forced link reference is emitted for them).
+  final List<String> ffiSymbols;
 
   @override
   bool hasMethodChannel() => pluginClass != null;

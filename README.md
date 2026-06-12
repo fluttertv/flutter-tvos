@@ -8,7 +8,7 @@ A Flutter toolchain for building and running Flutter apps on **Apple TV (tvOS)**
 
 ## Current version
 
-- flutter-tvos: `1.2.0`
+- flutter-tvos: `1.3.0`
 - Flutter SDK: `3.44.1` (`924134a44c189315be2148659913dda1671cbe99`)
 - tvOS engine artifacts: `v1.0.0-flutter3.44.1`
 
@@ -46,7 +46,7 @@ flutter-tvos run -d <device_id> --release
 
 - See [Supported commands](doc/commands.md) for all available commands and usage examples.
 - See [Getting started](doc/get-started.md) to create your first app and try **hot reload**.
-- To **update** flutter-tvos, run `git pull` in the cloned directory.
+- To **update** flutter-tvos to the latest released version, run `flutter-tvos upgrade` (use `flutter-tvos upgrade --verify-only` to just check).
 
 ## Platform identity & limitations
 
@@ -84,6 +84,8 @@ A tvOS build only loads plugins that declare this key. Plugins targeting only `i
 In practice each plugin with native code ships an extra federated package (e.g. `url_launcher` → `url_launcher_tvos`) that adds the tvOS implementation. The same model is used by `flutter-tizen`, and `flutter-elinux`.
 
 A FlutterTV-curated index of ported plugins is at [github.com/fluttertv/plugins](https://github.com/fluttertv/plugins) (also on pub.dev under the [`fluttertv.dev`](https://pub.dev/publishers/fluttertv.dev/packages) publisher). If a plugin you need isn't there, `flutter-tvos plugin port` scaffolds a federated `*_tvos` package from any iOS or macOS plugin — see [Porting an existing plugin](doc/port-plugin.md).
+
+**Dependency management.** Newly created tvOS apps use **Swift Package Manager** by default: the build generates a `FlutterGeneratedPluginSwiftPackage` that vends the engine plus every plugin shipping a `tvos/Package.swift`, and wires it into the Xcode project. **CocoaPods still works** — a plugin that ships only a podspec is resolved through the Podfile, and the two coexist (a plugin with a `Package.swift` is owned by SPM and skipped by CocoaPods). Plugins produced by `flutter-tvos plugin port` ship both, so they work either way.
 
 ### Writing cross-platform apps (iOS + Android + tvOS)
 

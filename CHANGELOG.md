@@ -2,6 +2,70 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.3.0] — 2026-06-12
+
+Minor release. Adds **Swift Package Manager support** for tvOS apps (the
+Flutter 3.44 default) alongside CocoaPods, and a **`flutter-tvos upgrade`**
+command. No engine or Flutter SDK change — pinned versions match 1.2.0
+(Flutter **3.44.1**, engine `v1.0.0-flutter3.44.1`).
+
+### Added
+- **Swift Package Manager support for tvOS apps (default; CocoaPods kept).**
+  Newly created apps link a generated `FlutterGeneratedPluginSwiftPackage`
+  umbrella that vends the tvOS engine (`FlutterFramework` binary target wrapping
+  `Flutter.xcframework`) and every federated plugin shipping a `tvos/Package.swift`.
+  The packages are regenerated under `tvos/Flutter/ephemeral/Packages/` on each
+  build and wired into the Runner Xcode project (the template now uses
+  `objectVersion = 56` + an `XCLocalSwiftPackageReference`; the manual
+  `Flutter.framework` embed phase is dropped since SPM now owns linking and
+  embedding the engine). `FlutterFramework` is generated inside the umbrella's
+  `.packages/` next to the plugin symlinks, so each plugin's own
+  `.package(name: "FlutterFramework", path: "../FlutterFramework")` resolves —
+  mirroring stock Flutter's layout. Plugins that ship only a podspec keep
+  resolving through CocoaPods — the Podfile skips any plugin that has a
+  `Package.swift`, so the two never double-link. The plugin porter's generated
+  `Package.swift` declares the `FlutterFramework` dependency (so the target can
+  `import Flutter`) and names the library product with hyphens
+  (`shared-preferences-tvos`) while keeping the underscored module name, matching
+  what the umbrella references and what the registrant imports. Verified
+  end-to-end with five real federated plugins (`path_provider`,
+  `shared_preferences`, `connectivity_plus`, `audioplayers`,
+  `flutter_secure_storage`): a method-channel round-trip works on the simulator
+  (debug), and a release (AOT) build installs and runs on a physical Apple TV
+  with the SPM-linked plugins statically embedded.
+- **FFI plugins link via Swift Package Manager too.** An FFI plugin's C symbols
+  are resolved at runtime via `dart:ffi` (`DynamicLibrary.process()`), so
+  nothing in the compiled app references them; when such a plugin is linked
+  statically through the generated `FlutterGeneratedPluginSwiftPackage`
+  umbrella, the linker would drop its unreferenced archive member and the
+  symbols would be absent from the binary. A plugin therefore declares the
+  symbols it exports under `flutter.plugin.platforms.tvos.ffiSymbols` in its
+  `pubspec.yaml`; flutter-tvos reads that list and emits a forced reference to
+  each symbol in the app's generated `GeneratedPluginRegistrant.m` (a Runner
+  source that is always linked), so the static linker pulls the archive member —
+  exactly as a method-channel plugin's class reference does. Forced references
+  are emitted only for FFI plugins that ship a `tvos/Package.swift`; CocoaPods
+  FFI plugins are untouched (they ship dynamic frameworks whose exports already
+  survive, and the Podfile keeps resolving them). The CLI stays plugin-agnostic —
+  no symbol names are hardcoded. The bundled **`flutter_tvos`** package (1.1.0)
+  is the first to use this: it ships a `tvos/Package.swift` and declares its ten
+  `ffiSymbols`. Verified in both a simulator-debug build and a device-release
+  (AOT) build: all ten symbols are present and dlsym-reachable.
+- **`flutter-tvos upgrade`** — upgrades the flutter-tvos toolchain to the latest
+  released version. Unlike stock `flutter upgrade` (which moves the bundled
+  Flutter SDK toward upstream and would break our pinned Flutter ↔ engine-artifact
+  contract), this resets the flutter-tvos checkout to its newest release tag
+  (`v<flutter>-tvos.<tool>`, e.g. `v3.44.1-tvos.1.2.0`) — bumping the pinned
+  Flutter version and matching tvOS engine artifacts together — then re-runs
+  `precache`, `pub get`, and `doctor`. Supports `--verify-only` (check without
+  changing anything) and `--force` (discard local changes); refuses to run on a
+  dirty checkout otherwise.
+- **The bundled `flutter_tvos` package gained SPM support** (1.1.0). It is an
+  FFI plugin (an Objective-C shim called via `DynamicLibrary.process()`); it now
+  ships a `tvos/Package.swift` so it links statically through the umbrella, with
+  its FFI exports marked `__attribute__((used))` / `visibility("default")` so
+  they survive dead-stripping. The CocoaPods path is unchanged.
+
 ## [1.2.0] — 2026-06-05
 
 Minor release. Upgrades the pinned engine to Flutter **3.44.1**, makes
@@ -97,7 +161,6 @@ lldb→Xcode-debugger launch flow.
 - Added `TvosDevice.parseDeviceUdid` unit coverage (extract UDID from
   `devicectl` JSON, null on missing / malformed) in
   `tvos_physical_device_test.dart`.
-
 ## [1.1.1] — 2026-05-28
 
 Patch release. No Flutter SDK or engine-artefact change — pinned

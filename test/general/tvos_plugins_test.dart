@@ -9,7 +9,12 @@ import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tvos/tvos_plugins.dart'
-    show TvosPlugin, ensureReadyForTvosTooling, recommendTvosPluginsToInstall;
+    show
+        TvosPlugin,
+        discoverTvosSpmPlugins,
+        ensureReadyForTvosTooling,
+        recommendTvosPluginsToInstall;
+import 'package:flutter_tvos/tvos_swift_package_manager.dart' show TvosSpmPlugin;
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -789,5 +794,313 @@ flutter:
         Logger: () => logger,
       },
     );
+  });
+
+  group('discoverTvosSpmPlugins', () {
+    // Writes a project with two tvOS plugins: `gizmo_tvos` ships a
+    // tvos/Package.swift (SPM), `widget_tvos` ships only a podspec.
+    FlutterProject seedProject({required bool gizmoHasPackageSwift}) {
+      final Directory projectDir = fileSystem.directory('/p')..createSync();
+      projectDir.childDirectory('tvos').createSync();
+      projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+
+      for (final name in <String>['gizmo_tvos', 'widget_tvos']) {
+        final Directory pkgDir = fileSystem.directory('/pubcache/$name')
+          ..createSync(recursive: true);
+        pkgDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: $name
+flutter:
+  plugin:
+    platforms:
+      tvos:
+        pluginClass: ${name}Plugin
+''');
+        final Directory tvosDir = pkgDir.childDirectory('tvos')..createSync();
+        // Both ship a podspec.
+        tvosDir.childFile('$name.podspec').writeAsStringSync('# podspec');
+        if (name == 'gizmo_tvos' && gizmoHasPackageSwift) {
+          // A leading comment containing `name:` must not fool the parse (the
+          // package name is anchored to the `Package(` initializer), and the
+          // product name is read from `.library(name:)`.
+          tvosDir.childFile('Package.swift').writeAsStringSync(
+            '// name: "not-the-package"\n'
+            'let package = Package(\n'
+            '  name: "gizmo_tvos",\n'
+            '  products: [.library(name: "gizmo-tvos", targets: ["gizmo_tvos"])]\n'
+            ')\n',
+          );
+        }
+      }
+
+      fileSystem
+          .directory('/p/.dart_tool')
+          .childFile('package_config.json')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'packages': <Map<String, String>>[
+              <String, String>{'name': 'gizmo_tvos', 'rootUri': 'file:///pubcache/gizmo_tvos'},
+              <String, String>{'name': 'widget_tvos', 'rootUri': 'file:///pubcache/widget_tvos'},
+            ],
+          }),
+        );
+      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+        json.encode(<String, dynamic>{
+          'dependencyGraph': <Map<String, String>>[
+            <String, String>{'name': 'gizmo_tvos'},
+            <String, String>{'name': 'widget_tvos'},
+          ],
+        }),
+      );
+      return FlutterProject.fromDirectory(projectDir);
+    }
+
+    testUsingContext(
+      'returns only plugins that ship a tvos/Package.swift',
+      () {
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedProject(gizmoHasPackageSwift: true),
+        );
+        expect(spm.map((p) => p.name), <String>['gizmo_tvos']);
+        expect(spm.single.packagePath, '/pubcache/gizmo_tvos/tvos');
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'returns empty when no plugin ships a Package.swift (pods-only)',
+      () {
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedProject(gizmoHasPackageSwift: false),
+        );
+        expect(spm, isEmpty);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'prefers the package name declared in the manifest, ignoring comments',
+      () {
+        // gizmo_tvos's manifest has a leading `// name: "not-the-package"`
+        // comment before `Package(name: "gizmo_tvos")`; the anchored parse
+        // must pick the real package name.
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedProject(gizmoHasPackageSwift: true),
+        );
+        expect(spm.single.name, 'gizmo_tvos');
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'reads the .library product name from the manifest',
+      () {
+        // gizmo_tvos declares `.library(name: "gizmo-tvos")` — the umbrella
+        // links that product, so it must be parsed rather than assumed.
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedProject(gizmoHasPackageSwift: true),
+        );
+        expect(spm.single.libraryName, 'gizmo-tvos');
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+  });
+
+  group('FFI forced references in GeneratedPluginRegistrant.m', () {
+    // Seeds an app with a single FFI plugin `native_gadget` that declares
+    // `ffiSymbols` and (optionally) ships a tvos/Package.swift, plus the
+    // tvos/Runner/ directory the ObjC registrant is written into.
+    FlutterProject seedFfiProject({
+      required bool hasPackageSwift,
+      List<String> ffiSymbols = const <String>[
+        'native_gadget_init',
+        'native_gadget_version',
+      ],
+    }) {
+      final Directory projectDir = fileSystem.directory('/p')..createSync();
+      projectDir.childDirectory('tvos').childDirectory('Runner').createSync(recursive: true);
+      projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+
+      final Directory pkgDir = fileSystem.directory('/pubcache/native_gadget')
+        ..createSync(recursive: true);
+      final String symbolsYaml = ffiSymbols.map((String s) => '          - $s').join('\n');
+      pkgDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: native_gadget
+flutter:
+  plugin:
+    platforms:
+      tvos:
+        ffiPlugin: true
+        ffiSymbols:
+$symbolsYaml
+''');
+      final Directory tvosDir = pkgDir.childDirectory('tvos')..createSync();
+      tvosDir.childFile('native_gadget.podspec').writeAsStringSync('# podspec');
+      if (hasPackageSwift) {
+        tvosDir.childFile('Package.swift').writeAsStringSync(
+          'let package = Package(name: "native_gadget")\n',
+        );
+      }
+
+      fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'packages': <Map<String, String>>[
+              <String, String>{
+                'name': 'native_gadget',
+                'rootUri': 'file:///pubcache/native_gadget',
+              },
+            ],
+          }),
+        );
+      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+        json.encode(<String, dynamic>{
+          'dependencyGraph': <Map<String, String>>[
+            <String, String>{'name': 'native_gadget'},
+          ],
+        }),
+      );
+      return FlutterProject.fromDirectory(projectDir);
+    }
+
+    String registrantOf(FlutterProject project) => project.directory
+        .childDirectory('tvos')
+        .childDirectory('Runner')
+        .childFile('GeneratedPluginRegistrant.m')
+        .readAsStringSync();
+
+    testUsingContext(
+      'emits a forced reference per symbol for an SPM FFI plugin',
+      () async {
+        final FlutterProject project = seedFfiProject(hasPackageSwift: true);
+        await ensureReadyForTvosTooling(project);
+
+        final String m = registrantOf(project);
+        // File-scope forward declarations.
+        expect(m, contains('extern void native_gadget_init(void);'));
+        expect(m, contains('extern void native_gadget_version(void);'));
+        // The anchor array + asm sink live INSIDE registerWithRegistry: so the
+        // linker keeps them (a file-scope used-anchor gets dead-stripped).
+        expect(m, contains('const void *_flutterTvosFfiForcedReferences[]'));
+        expect(m, contains('(const void *)&native_gadget_init,'));
+        expect(m, contains('(const void *)&native_gadget_version,'));
+        expect(m, contains('__asm__ volatile("" : : "r"(_flutterTvosFfiForcedReferences[_i]));'));
+        // The array reference must sit within the method body, not at file scope.
+        final int bodyStart = m.indexOf('+ (void)registerWithRegistry:');
+        expect(bodyStart, greaterThanOrEqualTo(0));
+        expect(
+          m.indexOf('_flutterTvosFfiForcedReferences[] ='),
+          greaterThan(bodyStart),
+          reason: 'anchor array must be emitted inside registerWithRegistry:',
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'emits NO forced references for a CocoaPods-only FFI plugin',
+      () async {
+        // No tvos/Package.swift → resolved via CocoaPods as a dynamic
+        // framework whose exports already survive; forcing a reference to a
+        // symbol that isn't on the link line would be a hard link error.
+        final FlutterProject project = seedFfiProject(hasPackageSwift: false);
+        await ensureReadyForTvosTooling(project);
+
+        final String m = registrantOf(project);
+        expect(m, isNot(contains('_flutterTvosFfiForcedReferences')));
+        expect(m, isNot(contains('native_gadget_init')));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'drops symbols that are not valid C identifiers',
+      () async {
+        final FlutterProject project = seedFfiProject(
+          hasPackageSwift: true,
+          ffiSymbols: <String>['good_symbol', 'bad symbol', '0bad', 'also_good'],
+        );
+        await ensureReadyForTvosTooling(project);
+
+        final String m = registrantOf(project);
+        expect(m, contains('(const void *)&good_symbol,'));
+        expect(m, contains('(const void *)&also_good,'));
+        // The invalid entries must never reach the generated C.
+        expect(m, isNot(contains('bad symbol')));
+        expect(m, isNot(contains('0bad')));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'omits the forced-reference block entirely when there are no FFI plugins',
+      () async {
+        // A method-channel-only app must produce byte-for-byte the same
+        // registrant as before this feature — no stray FFI block.
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        projectDir
+            .childDirectory('tvos')
+            .childDirectory('Runner')
+            .createSync(recursive: true);
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+        fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+          json.encode(<String, dynamic>{'dependencyGraph': <dynamic>[]}),
+        );
+
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+        await ensureReadyForTvosTooling(project);
+
+        expect(
+          registrantOf(project),
+          isNot(contains('_flutterTvosFfiForcedReferences')),
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+  });
+
+  group('TvosPlugin.ffiSymbols', () {
+    testWithoutContext('defaults to an empty list', () {
+      final plugin = TvosPlugin(name: 'm', path: '/p', pluginClass: 'MPlugin');
+      expect(plugin.ffiSymbols, isEmpty);
+    });
+
+    testWithoutContext('carries declared symbols', () {
+      final plugin = TvosPlugin(
+        name: 'native_gadget',
+        path: '/p',
+        ffiPlugin: true,
+        ffiSymbols: <String>['a_sym', 'b_sym'],
+      );
+      expect(plugin.ffiSymbols, <String>['a_sym', 'b_sym']);
+    });
   });
 }

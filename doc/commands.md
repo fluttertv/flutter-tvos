@@ -155,6 +155,32 @@ The following commands from the [Flutter CLI](https://flutter.dev/docs/reference
 
   For integration tests that must run on device, use the [`drive`](#drive) command instead.
 
+- ### `upgrade`
+
+  Upgrade the flutter-tvos toolchain to the **latest released version**. Unlike
+  stock `flutter upgrade` (which moves the bundled Flutter SDK toward upstream),
+  this updates your flutter-tvos checkout to its newest release tag — which bumps
+  the pinned Flutter version and the matching tvOS engine artifacts together —
+  and then re-downloads the correct engine.
+
+  ```sh
+  # Check whether a newer flutter-tvos release is available (no changes made).
+  flutter-tvos upgrade --verify-only
+
+  # Upgrade to the latest released version.
+  flutter-tvos upgrade
+  ```
+
+  Upgrading refuses to run if your checkout has uncommitted changes; pass
+  `--force` to discard them and upgrade anyway.
+
+  > **Note:** the upgrade moves your checkout with `git reset --hard` to the
+  > release commit. Uncommitted changes are guarded by the check above, but any
+  > **committed-but-unpushed** work on your current branch is discarded. This
+  > matches the recommended setup (clone the repo and stay on `main`). After
+  > upgrading, `pubspec.lock` will show as modified — that is the expected
+  > `pub get` output.
+
 ## Not supported
 
 The following commands from the Flutter CLI are not supported by flutter-tvos.
@@ -170,4 +196,3 @@ The following commands from the Flutter CLI are not supported by flutter-tvos.
 - `logs`
 - `screenshot`
 - `symbolize`
-- `upgrade`

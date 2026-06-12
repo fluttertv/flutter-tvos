@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:flutter_tools/src/artifacts.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart' show Status;
@@ -17,6 +18,7 @@ import 'package:meta/meta.dart';
 import '../tvos_artifacts.dart';
 import '../tvos_build_info.dart';
 import '../tvos_plugins.dart';
+import '../tvos_swift_package_manager.dart';
 
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with tvOS-
 /// aware plugin registrations, as a proper build target.
@@ -256,6 +258,12 @@ class NativeTvosBundle extends Target {
     // 6. Generate tvOS plugin dependencies (must run AFTER Flutter's pub get
     //    which overwrites .flutter-plugins-dependencies without tvos key)
     await ensureReadyForTvosTooling(project);
+
+    // 6b. Generate the Swift Package Manager packages the Runner project links
+    //     (FlutterFramework + the FlutterGeneratedPluginSwiftPackage umbrella).
+    //     SPM is the default for plugins shipping a tvos/Package.swift; plugins
+    //     with only a podspec still resolve via CocoaPods below (coexistence).
+    _generateSwiftPackages(project, tvosProjectDir);
 
     // 7. Run pod install if Podfile exists
     if (tvosProjectDir.childFile('Podfile').existsSync()) {
@@ -569,6 +577,156 @@ class NativeTvosBundle extends Target {
       globals.logger.printError('Flutter.framework not found at $frameworkPath');
       throw Exception('Flutter.framework not found. Run flutter-tvos precache first.');
     }
+  }
+
+  /// Generates the Swift Package Manager packages the Runner Xcode project
+  /// references: `FlutterFramework` (binary target wrapping `Flutter.xcframework`)
+  /// and the `FlutterGeneratedPluginSwiftPackage` umbrella that depends on it
+  /// plus every tvOS plugin shipping a `tvos/Package.swift`.
+  ///
+  /// Written under `tvos/Flutter/ephemeral/Packages/`. Always generated — the
+  /// project template always references the umbrella, so the reference must
+  /// resolve even when the app has no SPM plugins (then the umbrella depends on
+  /// `FlutterFramework` only).
+  void _generateSwiftPackages(FlutterProject project, Directory tvosProjectDir) {
+    final tvosArtifacts = globals.artifacts! as TvosArtifacts;
+    final EnvironmentType envType = buildInfo.simulator
+        ? EnvironmentType.simulator
+        : EnvironmentType.physical;
+    final Directory xcframework = globals.fs.directory(
+      tvosArtifacts.getArtifactPath(
+        Artifact.flutterXcframework,
+        mode: buildInfo.buildInfo.mode,
+        environmentType: envType,
+      ),
+    );
+    if (!xcframework.existsSync()) {
+      throwToolExit(
+        'Flutter.xcframework not found at ${xcframework.path}.\n'
+        'Run "flutter-tvos precache" to download the tvOS engine artifacts first.',
+      );
+    }
+
+    final Directory packagesDir = tvosProjectDir
+        .childDirectory('Flutter')
+        .childDirectory('ephemeral')
+        .childDirectory('Packages');
+    final Directory umbrellaDir = packagesDir.childDirectory(
+      TvosSwiftPackageManager.kGeneratedPluginsPackageName,
+    );
+
+    final spm = TvosSwiftPackageManager(fileSystem: globals.fs);
+    // FlutterFramework lives inside the umbrella's `.packages/` alongside the
+    // plugin symlinks, so a plugin's own `../FlutterFramework` dependency
+    // resolves (each plugin is symlinked at `.packages/<name>`). This mirrors
+    // stock Flutter's `relativeSwiftPackagesDirectory/FlutterFramework` layout.
+    spm.generateFlutterFrameworkPackage(
+      packageDirectory: umbrellaDir
+          .childDirectory('.packages')
+          .childDirectory(TvosSwiftPackageManager.kFlutterFrameworkPackageName),
+      xcframework: xcframework,
+    );
+    final List<TvosSpmPlugin> spmPlugins = discoverTvosSpmPlugins(project);
+    spm.generatePluginsSwiftPackage(
+      packageDirectory: umbrellaDir,
+      plugins: spmPlugins,
+      flutterFrameworkRelativePath:
+          '.packages/${TvosSwiftPackageManager.kFlutterFrameworkPackageName}',
+      deploymentTarget: _resolveTvosDeploymentTarget(tvosProjectDir),
+    );
+    globals.logger.printTrace(
+      'Generated Swift packages (${spmPlugins.length} SPM plugin(s)) under ${packagesDir.path}',
+    );
+
+    // Migration guard: an SPM plugin is linked *only* through the umbrella, and
+    // the new Podfile deliberately skips plugins that ship a Package.swift. If
+    // this app's Runner project predates SPM wiring (e.g. an app created before
+    // 1.3 and not regenerated), the umbrella is generated but linked by nothing,
+    // and the plugin would be missing at link/runtime with a cryptic error.
+    // Surface it here, where we can point at the cause.
+    if (spmPlugins.isNotEmpty) {
+      _verifyRunnerLinksUmbrella(tvosProjectDir, spmPlugins);
+      _warnIfPodfileMayDoubleLink(tvosProjectDir, spmPlugins);
+    }
+  }
+
+  /// Warns if the project's `Podfile` predates the SPM skip guard while SPM
+  /// plugins are present. The current Podfile skips any plugin that ships a
+  /// `Package.swift` (it references `'Package.swift'` in the guard); an older
+  /// Podfile without that guard would `pod` such a plugin *and* the umbrella
+  /// would link it via SwiftPM — linking it twice (duplicate ObjC classes; a
+  /// dlsym binds one of two symbol copies). A warning rather than a hard error:
+  /// the build can still succeed, and we don't want to break a project that
+  /// happens to work while the user migrates.
+  void _warnIfPodfileMayDoubleLink(
+    Directory tvosProjectDir,
+    List<TvosSpmPlugin> spmPlugins,
+  ) {
+    final File podfile = tvosProjectDir.childFile('Podfile');
+    if (!podfile.existsSync()) {
+      return;
+    }
+    if (podfile.readAsStringSync().contains('Package.swift')) {
+      return; // Has the skip guard — SPM plugins won't be pod'd.
+    }
+    final String names = spmPlugins.map((TvosSpmPlugin p) => p.name).join(', ');
+    globals.logger.printWarning(
+      'Warning: this project has a Podfile without the Swift Package Manager '
+      'skip guard, but uses SPM plugin(s) ($names) that also ship a podspec. '
+      'They may be linked twice (CocoaPods + SwiftPM), which can cause duplicate '
+      'symbols or the wrong plugin instance at runtime.\n'
+      'Regenerate the Podfile ("flutter-tvos create ." in the project root) so it '
+      'skips plugins that ship a Package.swift.',
+    );
+  }
+
+  /// Throws an actionable error if the Runner project does not reference the
+  /// generated `FlutterGeneratedPluginSwiftPackage` umbrella while the app has
+  /// SPM plugins to link. Skips the check when the pbxproj can't be read (the
+  /// xcodebuild step will report any genuine project problem itself).
+  void _verifyRunnerLinksUmbrella(
+    Directory tvosProjectDir,
+    List<TvosSpmPlugin> spmPlugins,
+  ) {
+    final File pbxproj = tvosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    if (!pbxproj.existsSync()) {
+      return;
+    }
+    if (pbxproj
+        .readAsStringSync()
+        .contains(TvosSwiftPackageManager.kGeneratedPluginsPackageName)) {
+      return;
+    }
+    final String names = spmPlugins.map((TvosSpmPlugin p) => p.name).join(', ');
+    throwToolExit(
+      'This app uses Swift Package Manager plugin(s) ($names), but its Xcode '
+      'project does not reference the generated '
+      '${TvosSwiftPackageManager.kGeneratedPluginsPackageName} — so they would '
+      'not be linked.\n'
+      'This usually means the tvos/ project was created before flutter-tvos 1.3 '
+      'and needs regenerating. Re-run "flutter-tvos create ." in the project '
+      'root (or restore the SPM package reference in Runner.xcodeproj).',
+    );
+  }
+
+  /// Reads `TVOS_DEPLOYMENT_TARGET` from the Runner `project.pbxproj` so the
+  /// generated umbrella's platform floor matches the app (SwiftPM rejects a
+  /// dependency whose deployment target exceeds the consuming project's).
+  /// Falls back to the package default when not found.
+  String _resolveTvosDeploymentTarget(Directory tvosProjectDir) {
+    final File pbxproj = tvosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    if (pbxproj.existsSync()) {
+      final Match? match = RegExp(r'TVOS_DEPLOYMENT_TARGET\s*=\s*([\d.]+)')
+          .firstMatch(pbxproj.readAsStringSync());
+      if (match != null) {
+        return match.group(1)!;
+      }
+    }
+    return TvosSwiftPackageManager.kDefaultDeploymentTarget;
   }
 
   /// Assembles flutter_assets from the build output (kernel_blob.bin, fonts,
