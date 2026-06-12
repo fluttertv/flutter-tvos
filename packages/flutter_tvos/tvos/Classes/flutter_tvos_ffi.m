@@ -37,7 +37,7 @@ static void _ensure_initialized(void) {
     }
 }
 
-bool flutter_tvos_is_tvos(void) {
+FLUTTER_TVOS_FFI_EXPORT bool flutter_tvos_is_tvos(void) {
 #if TARGET_OS_TV
     return true;
 #else
@@ -45,22 +45,22 @@ bool flutter_tvos_is_tvos(void) {
 #endif
 }
 
-const char* flutter_tvos_system_version(void) {
+FLUTTER_TVOS_FFI_EXPORT const char* flutter_tvos_system_version(void) {
     _ensure_initialized();
     return s_system_version;
 }
 
-const char* flutter_tvos_device_model(void) {
+FLUTTER_TVOS_FFI_EXPORT const char* flutter_tvos_device_model(void) {
     _ensure_initialized();
     return s_device_model;
 }
 
-const char* flutter_tvos_machine_id(void) {
+FLUTTER_TVOS_FFI_EXPORT const char* flutter_tvos_machine_id(void) {
     _ensure_initialized();
     return s_machine_id;
 }
 
-bool flutter_tvos_is_simulator(void) {
+FLUTTER_TVOS_FFI_EXPORT bool flutter_tvos_is_simulator(void) {
 #if TARGET_OS_SIMULATOR
     return true;
 #else
@@ -68,14 +68,14 @@ bool flutter_tvos_is_simulator(void) {
 #endif
 }
 
-bool flutter_tvos_supports_4k(void) {
+FLUTTER_TVOS_FFI_EXPORT bool flutter_tvos_supports_4k(void) {
     @autoreleasepool {
         CGFloat width = [UIScreen mainScreen].nativeBounds.size.width;
         return width >= 3840.0;
     }
 }
 
-bool flutter_tvos_supports_hdr(void) {
+FLUTTER_TVOS_FFI_EXPORT bool flutter_tvos_supports_hdr(void) {
 #if TARGET_OS_TV
     if (@available(tvOS 11.2, *)) {
         @autoreleasepool {
@@ -90,7 +90,7 @@ bool flutter_tvos_supports_hdr(void) {
     return false;
 }
 
-bool flutter_tvos_supports_multi_user(void) {
+FLUTTER_TVOS_FFI_EXPORT bool flutter_tvos_supports_multi_user(void) {
 #if TARGET_OS_TV
     if (@available(tvOS 14.0, *)) {
         return true;
@@ -99,13 +99,13 @@ bool flutter_tvos_supports_multi_user(void) {
     return false;
 }
 
-int32_t flutter_tvos_display_width(void) {
+FLUTTER_TVOS_FFI_EXPORT int32_t flutter_tvos_display_width(void) {
     @autoreleasepool {
         return (int32_t)[UIScreen mainScreen].nativeBounds.size.width;
     }
 }
 
-int32_t flutter_tvos_display_height(void) {
+FLUTTER_TVOS_FFI_EXPORT int32_t flutter_tvos_display_height(void) {
     @autoreleasepool {
         return (int32_t)[UIScreen mainScreen].nativeBounds.size.height;
     }

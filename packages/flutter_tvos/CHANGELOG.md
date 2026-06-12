@@ -1,3 +1,17 @@
+## 1.1.0
+
+- Added Swift Package Manager support. `flutter_tvos` now ships a
+  `tvos/Package.swift` alongside its podspec, so apps using SPM-based plugin
+  integration link it through the generated `FlutterGeneratedPluginSwiftPackage`
+  umbrella. Previously this FFI plugin was CocoaPods-only because its symbols,
+  resolved at runtime via `dart:ffi`, had no compile-time caller and the static
+  linker dropped them. The plugin now declares its exported C symbols under
+  `flutter.plugin.platforms.tvos.ffiSymbols`; flutter-tvos reads that list to
+  emit forced link references in the app's generated registrant, and each export
+  is annotated `__attribute__((used))` / `visibility("default")` so it reaches
+  the binary's dynamic symbol table. Requires flutter-tvos 1.3.0 or newer; older
+  CLIs ignore `ffiSymbols` and the plugin continues to work via CocoaPods.
+
 ## 1.0.5
 
 - Updated compatibility with Flutter 3.44.0.

@@ -32,11 +32,25 @@ command. No engine or Flutter SDK change — pinned versions match 1.2.0
   `shared_preferences`, `connectivity_plus`, `audioplayers`,
   `flutter_secure_storage`): a method-channel round-trip works on the simulator
   (debug), and a release (AOT) build installs and runs on a physical Apple TV
-  with the SPM-linked plugins statically embedded. FFI plugins (which resolve
-  their native symbols at runtime via `DynamicLibrary.process()`, so nothing in
-  the app references them and SwiftPM omits the unreferenced static member from
-  the link) remain CocoaPods-only for now — including the bundled `flutter_tvos`
-  package, which keeps resolving through its podspec as a dynamic framework.
+  with the SPM-linked plugins statically embedded.
+- **FFI plugins link via Swift Package Manager too.** An FFI plugin's C symbols
+  are resolved at runtime via `dart:ffi` (`DynamicLibrary.process()`), so
+  nothing in the compiled app references them; when such a plugin is linked
+  statically through the generated `FlutterGeneratedPluginSwiftPackage`
+  umbrella, the linker would drop its unreferenced archive member and the
+  symbols would be absent from the binary. A plugin therefore declares the
+  symbols it exports under `flutter.plugin.platforms.tvos.ffiSymbols` in its
+  `pubspec.yaml`; flutter-tvos reads that list and emits a forced reference to
+  each symbol in the app's generated `GeneratedPluginRegistrant.m` (a Runner
+  source that is always linked), so the static linker pulls the archive member —
+  exactly as a method-channel plugin's class reference does. Forced references
+  are emitted only for FFI plugins that ship a `tvos/Package.swift`; CocoaPods
+  FFI plugins are untouched (they ship dynamic frameworks whose exports already
+  survive, and the Podfile keeps resolving them). The CLI stays plugin-agnostic —
+  no symbol names are hardcoded. The bundled **`flutter_tvos`** package (1.1.0)
+  is the first to use this: it ships a `tvos/Package.swift` and declares its ten
+  `ffiSymbols`. Verified in both a simulator-debug build and a device-release
+  (AOT) build: all ten symbols are present and dlsym-reachable.
 - **`flutter-tvos upgrade`** — upgrades the flutter-tvos toolchain to the latest
   released version. Unlike stock `flutter upgrade` (which moves the bundled
   Flutter SDK toward upstream and would break our pinned Flutter ↔ engine-artifact

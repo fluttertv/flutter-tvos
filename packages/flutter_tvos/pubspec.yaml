@@ -1,6 +1,6 @@
 name: flutter_tvos
 description: Platform detection and utilities for Flutter apps running on Apple TV (tvOS). Provides runtime checks for tvOS, device info, and capability queries.
-version: 1.0.5
+version: 1.1.0
 homepage: https://fluttertv.dev
 repository: https://github.com/fluttertv/flutter-tvos
 issue_tracker: https://github.com/fluttertv/flutter-tvos/issues
@@ -24,3 +24,20 @@ flutter:
     platforms:
       tvos:
         ffiPlugin: true
+        # C symbols this FFI plugin exports for dart:ffi lookup. flutter-tvos
+        # reads this list to emit forced link references in the app's generated
+        # GeneratedPluginRegistrant.m, so the symbols survive a static (Swift
+        # Package Manager) link into the Runner binary. Without it, an FFI
+        # plugin linked via SPM has no compile-time caller and the linker drops
+        # its archive member. Keep in sync with Classes/flutter_tvos_ffi.h.
+        ffiSymbols:
+          - flutter_tvos_is_tvos
+          - flutter_tvos_system_version
+          - flutter_tvos_device_model
+          - flutter_tvos_machine_id
+          - flutter_tvos_is_simulator
+          - flutter_tvos_supports_4k
+          - flutter_tvos_supports_hdr
+          - flutter_tvos_supports_multi_user
+          - flutter_tvos_display_width
+          - flutter_tvos_display_height
