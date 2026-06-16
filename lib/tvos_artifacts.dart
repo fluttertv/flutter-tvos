@@ -86,10 +86,19 @@ class TvosArtifacts extends CachedArtifacts {
   }
 
   /// Path to the patched `flutter_patched_sdk` inside the host engine
-  /// artifact for [mode]. Profile and release both use `host_release`;
-  /// `host_debug_unopt` is only consulted for non-precompiled callers.
+  /// artifact for [mode].
+  ///
+  /// Release uses the **product** SDK (`host_release`); profile uses the
+  /// **non-product** SDK (`host_debug_unopt`). This mirrors stock Flutter's
+  /// `flutter_patched_sdk` (debug/profile) vs `flutter_patched_sdk_product`
+  /// (release) split: the non-product SDK marks entry-point classes that the
+  /// profile/JIT engine looks up natively — e.g. `dart:io`'s
+  /// `_NetworkProfiling` — so gen_snapshot keeps them through AOT
+  /// tree-shaking. Compiling a profile build against the product SDK drops
+  /// those classes and the engine aborts at startup with
+  /// `Type '_NetworkProfiling' not found in library 'dart.io'`.
   String _hostPatchedSdkDirectory(BuildMode mode) {
-    final dirName = mode == BuildMode.debug ? 'host_debug_unopt' : 'host_release';
+    final dirName = mode == BuildMode.release ? 'host_release' : 'host_debug_unopt';
     // Handle the nested directory that zip extraction can produce
     // (`<root>/<dir>/<dir>/flutter_patched_sdk`).
     final Directory nested = _fileSystem.directory(

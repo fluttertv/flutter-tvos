@@ -42,22 +42,29 @@ void main() {
   });
 
   group('TvosArtifacts patched-SDK override (AOT platform identity)', () {
-    test('release flutterPatchedSdkPath resolves to host_release patched SDK', () {
-      final String path = artifacts.getArtifactPath(
-        Artifact.flutterPatchedSdkPath,
-        mode: BuildMode.release,
-      );
-      expect(path, '/engine_artifacts/host_release/flutter_patched_sdk');
-    });
-
-    test('profile platformKernelDill resolves to host_release platform_strong.dill', () {
-      final String path = artifacts.getArtifactPath(
-        Artifact.platformKernelDill,
-        mode: BuildMode.profile,
+    test('release uses the product SDK (host_release)', () {
+      // Release rides the product SDK, matching stock flutter_patched_sdk_product.
+      expect(
+        artifacts.getArtifactPath(Artifact.flutterPatchedSdkPath, mode: BuildMode.release),
+        '/engine_artifacts/host_release/flutter_patched_sdk',
       );
       expect(
-        path,
+        artifacts.getArtifactPath(Artifact.platformKernelDill, mode: BuildMode.release),
         '/engine_artifacts/host_release/flutter_patched_sdk/platform_strong.dill',
+      );
+    });
+
+    test('profile uses the NON-product SDK (host_debug_unopt)', () {
+      // Profile must compile against the non-product SDK so AOT retains
+      // entry-point classes the profile engine looks up natively (e.g.
+      // dart:io _NetworkProfiling). Using the product SDK aborts at startup.
+      expect(
+        artifacts.getArtifactPath(Artifact.flutterPatchedSdkPath, mode: BuildMode.profile),
+        '/engine_artifacts/host_debug_unopt/flutter_patched_sdk',
+      );
+      expect(
+        artifacts.getArtifactPath(Artifact.platformKernelDill, mode: BuildMode.profile),
+        '/engine_artifacts/host_debug_unopt/flutter_patched_sdk/platform_strong.dill',
       );
     });
 

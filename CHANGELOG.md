@@ -17,6 +17,13 @@ Refreshes the pinned engine to **Flutter 3.44.2** (`c9a6c484`, Dart
   with `targetOS: null` and against the patched `flutter_patched_sdk` from the
   host engine artifact, so the getters resolve at runtime to `"tvos"` exactly as
   debug already did. Verified on a physical Apple TV.
+- **Profile builds no longer crash at startup** with `Type '_NetworkProfiling'
+  not found in library 'dart.io'`. Profile now compiles against the
+  **non-product** host SDK (`host_debug_unopt`) instead of the product
+  `host_release` one: the non-product engine looks up entry-point classes (e.g.
+  `dart:io` `_NetworkProfiling`) that the product SDK doesn't retain through AOT
+  tree-shaking. Mirrors stock Flutter's `flutter_patched_sdk` (profile) vs
+  `flutter_patched_sdk_product` (release) split. Release is unchanged.
 
 ### Changed
 - Bumped `bin/internal/flutter.version` to `c9a6c484` (Flutter 3.44.2) and
