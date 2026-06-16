@@ -24,6 +24,15 @@ Refreshes the pinned engine to **Flutter 3.44.2** (`c9a6c484`, Dart
   `dart:io` `_NetworkProfiling`) that the product SDK doesn't retain through AOT
   tree-shaking. Mirrors stock Flutter's `flutter_patched_sdk` (profile) vs
   `flutter_patched_sdk_product` (release) split. Release is unchanged.
+- **On-device `--debug` (JIT + hot reload) works on tvOS 26.** tvOS 26 denies
+  flipping JIT code pages RW→RX via `mprotect` (even with a debugger attached),
+  and the iOS dual-mapping RX workaround needs Mach exception-port APIs
+  unavailable on tvOS, so the debug VM aborted at `StubCode::Init`
+  (`mprotect failed: 13`). The device-debug engine now maps JIT pages **RWX up
+  front** (`FLAG_write_protect_code = false`, tvOS device only) — no RW↔RX flip
+  to be denied — restoring hot reload on hardware. Verified on a physical Apple
+  TV 4K (A15, tvOS 26.5). Debug-only (W+X); AOT release/profile keep W^X; the
+  simulator is unaffected.
 
 ### Changed
 - Bumped `bin/internal/flutter.version` to `c9a6c484` (Flutter 3.44.2) and
