@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_tvos/flutter_tvos.dart';
 
@@ -129,7 +131,13 @@ class PlatformInfoScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        _InfoTile(label: 'Is tvOS', value: '${TvOSInfo.isTvOS}'),
+        // Platform identity via the Dart VM (not FFI). These must read "tvos"
+        // / true in BOTH debug and release — they exercise the AOT
+        // platform-const path that the engine + CLI fix makes consistent.
+        _InfoTile(label: 'Platform.operatingSystem', value: Platform.operatingSystem),
+        _InfoTile(label: 'Platform.isIOS', value: '${Platform.isIOS}'),
+        _InfoTile(label: 'FlutterTvosPlatform.isTvos', value: '${FlutterTvosPlatform.isTvos}'),
+        _InfoTile(label: 'Is tvOS (FFI)', value: '${TvOSInfo.isTvOS}'),
         _InfoTile(label: 'tvOS Version', value: TvOSInfo.tvOSVersion),
         _InfoTile(label: 'Device Model', value: TvOSInfo.deviceModel),
         _InfoTile(label: 'Machine ID', value: TvOSInfo.machineId),

@@ -9,11 +9,15 @@ import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart' show Status;
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
+import 'package:flutter_tools/src/build_system/exceptions.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
+import 'package:flutter_tools/src/compile.dart';
+import 'package:flutter_tools/src/dart/package_map.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 import 'package:meta/meta.dart';
+import 'package:package_config/package_config.dart';
 
 import '../tvos_artifacts.dart';
 import '../tvos_build_info.dart';
@@ -81,6 +85,113 @@ class TvosKernelSnapshot extends KernelSnapshot {
     GenerateLocalizationsTarget(),
     TvosDartPluginRegistrantTarget(),
   ];
+
+  /// Mirrors [KernelSnapshot.build] but forces `targetOS: null` so the
+  /// frontend-server does **not** const-fold `Platform.operatingSystem` to
+  /// `"ios"` in AOT (profile/release) builds.
+  ///
+  /// `dart:io`'s `Platform.operatingSystem` / `isIOS` / `isTvOS` carry
+  /// `@pragma("vm:platform-const")`. When the kernel compiler is handed a
+  /// target OS (`--target-os`, which stock Flutter sets to `ios` for
+  /// `TargetPlatform.ios`), gen_snapshot const-folds those getters at compile
+  /// time from that name — baking in `operatingSystem == "ios"` and
+  /// `isTvOS == false`. The Dart SDK has no `tvos` target-OS, so the only way
+  /// to keep tvOS identity correct in release is to not fold at all: with
+  /// `targetOS == null` the getters stay live and resolve at runtime against
+  /// the engine's patched native VM (`kHostOperatingSystemName == "tvos"`),
+  /// exactly as JIT/debug already does. Debug and release then report
+  /// identical platform identity for *all* code and plugins, not just
+  /// `package:flutter_tvos`.
+  ///
+  /// The companion half is in [TvosArtifacts]: the AOT kernel is compiled
+  /// against our **patched** `flutter_patched_sdk`, so the (now un-folded)
+  /// `isIOS` initializer is `operatingSystem == "ios" || == "tvos"` and the
+  /// `isTvOS` getter exists.
+  ///
+  /// Kept in sync with upstream `KernelSnapshot.build`; re-mirror any change
+  /// on a Flutter upgrade. tvOS-specific simplifications: `targetPlatform` is
+  /// always `ios` (tvOS rides the iOS pipeline), so `forceLinkPlatform` is
+  /// false and `targetModel` is `flutter`; app flavors are not wired for tvOS,
+  /// so the flavor-define step is omitted.
+  @override
+  Future<void> build(Environment environment) async {
+    final compiler = KernelCompiler(
+      fileSystem: environment.fileSystem,
+      logger: environment.logger,
+      processManager: environment.processManager,
+      artifacts: environment.artifacts,
+      fileSystemRoots: <String>[],
+    );
+    final String? buildModeEnvironment = environment.defines[kBuildMode];
+    if (buildModeEnvironment == null) {
+      throw MissingDefineException(kBuildMode, 'kernel_snapshot');
+    }
+    final String? targetPlatformEnvironment = environment.defines[kTargetPlatform];
+    if (targetPlatformEnvironment == null) {
+      throw MissingDefineException(kTargetPlatform, 'kernel_snapshot');
+    }
+    final buildMode = BuildMode.fromCliName(buildModeEnvironment);
+    final String targetFile = environment.defines[kTargetFile] ??
+        environment.fileSystem.path.join('lib', 'main.dart');
+    final File packagesFile = findPackageConfigFileOrDefault(environment.projectDir);
+    final String targetFileAbsolute = environment.fileSystem.file(targetFile).absolute.path;
+    // everything besides 'false' is considered to be enabled.
+    final trackWidgetCreation = environment.defines[kTrackWidgetCreation] != 'false';
+    final TargetPlatform targetPlatform = getTargetPlatformForName(targetPlatformEnvironment);
+
+    // This configuration is all optional.
+    final String? frontendServerStarterPath = environment.defines[kFrontendServerStarterPath];
+    final List<String> extraFrontEndOptions =
+        decodeCommaSeparated(environment.defines, kExtraFrontEndOptions);
+    final List<String>? fileSystemRoots = environment.defines[kFileSystemRoots]?.split(',');
+    final String? fileSystemScheme = environment.defines[kFileSystemScheme];
+
+    // tvOS always rides the iOS pipeline (TargetPlatform.ios): never Fuchsia,
+    // never a desktop embedder. So the target model stays the default
+    // `TargetModel.flutter` and we don't need to force-link the platform.
+    const forceLinkPlatform = false;
+
+    final PackageConfig packageConfig = await loadPackageConfigWithLogging(
+      packagesFile,
+      logger: environment.logger,
+    );
+
+    final String dillPath = environment.buildDir.childFile(KernelSnapshot.dillName).path;
+    final List<String> dartDefines = decodeDartDefines(environment.defines, kDartDefines);
+
+    final CompilerOutput? output = await compiler.compile(
+      sdkRoot: environment.artifacts.getArtifactPath(
+        Artifact.flutterPatchedSdkPath,
+        platform: targetPlatform,
+        mode: buildMode,
+      ),
+      aot: buildMode.isPrecompiled,
+      buildMode: buildMode,
+      trackWidgetCreation: trackWidgetCreation && buildMode != BuildMode.release,
+      outputFilePath: dillPath,
+      initializeFromDill: buildMode.isPrecompiled ? null : dillPath,
+      packagesPath: packagesFile.path,
+      linkPlatformKernelIn: forceLinkPlatform || buildMode.isPrecompiled,
+      mainPath: targetFileAbsolute,
+      depFilePath: environment.buildDir.childFile(KernelSnapshot.depfile).path,
+      frontendServerStarterPath: frontendServerStarterPath,
+      extraFrontEndOptions: extraFrontEndOptions,
+      fileSystemRoots: fileSystemRoots,
+      fileSystemScheme: fileSystemScheme,
+      dartDefines: dartDefines,
+      packageConfig: packageConfig,
+      buildDir: environment.buildDir,
+      // The tvOS fix. Stock Flutter passes `ios` here for TargetPlatform.ios,
+      // which const-folds platform identity to iOS in AOT. Passing null keeps
+      // the platform-const getters live so they resolve at runtime to "tvos".
+      // ignore: avoid_redundant_argument_values
+      targetOS: null,
+      checkDartPluginRegistry: environment.generateDartPluginRegistry,
+    );
+    if (output == null || output.errorCount != 0) {
+      throw Exception();
+    }
+  }
 }
 
 /// [AotElfRelease] subclass that uses [TvosKernelSnapshot] instead of the

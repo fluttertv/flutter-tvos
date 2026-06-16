@@ -52,12 +52,53 @@ class TvosArtifacts extends CachedArtifacts {
         return _fileSystem.path.join(engineDir, 'Flutter.xcframework');
       }
     }
+
+    // For AOT (profile/release) builds, compile the app kernel against OUR
+    // patched `flutter_patched_sdk` (shipped inside the host engine artifact)
+    // rather than the stock Flutter checkout's. The patched dart:io
+    // `platform.dart` defines `isIOS = operatingSystem == "ios" || == "tvos"`
+    // and adds the `isTvOS` getter, so the un-folded platform-const getters
+    // evaluate correctly at runtime on tvOS. This is the companion to
+    // `TvosKernelSnapshot.build()`, which passes `targetOS: null` so those
+    // getters are not const-folded to "ios" at compile time.
+    //
+    // Debug (JIT) deliberately keeps the stock SDK: platform identity there is
+    // resolved by the device engine's own (patched) core libraries at runtime,
+    // so the compile SDK is irrelevant and we avoid disturbing the proven
+    // debug path. We only need our patched SDK where gen_snapshot bakes the
+    // SDK code into the app snapshot — i.e. precompiled builds.
+    if ((mode?.isPrecompiled ?? false) &&
+        (artifact == Artifact.flutterPatchedSdkPath ||
+            artifact == Artifact.platformKernelDill)) {
+      final String patchedSdkDir = _hostPatchedSdkDirectory(mode!);
+      if (artifact == Artifact.platformKernelDill) {
+        return _fileSystem.path.join(patchedSdkDir, 'platform_strong.dill');
+      }
+      return patchedSdkDir;
+    }
+
     return super.getArtifactPath(
       artifact,
       platform: platform,
       mode: mode,
       environmentType: environmentType,
     );
+  }
+
+  /// Path to the patched `flutter_patched_sdk` inside the host engine
+  /// artifact for [mode]. Profile and release both use `host_release`;
+  /// `host_debug_unopt` is only consulted for non-precompiled callers.
+  String _hostPatchedSdkDirectory(BuildMode mode) {
+    final dirName = mode == BuildMode.debug ? 'host_debug_unopt' : 'host_release';
+    // Handle the nested directory that zip extraction can produce
+    // (`<root>/<dir>/<dir>/flutter_patched_sdk`).
+    final Directory nested = _fileSystem.directory(
+      _fileSystem.path.join(_tvosArtifactRoot, dirName, dirName, 'flutter_patched_sdk'),
+    );
+    if (nested.existsSync()) {
+      return nested.path;
+    }
+    return _fileSystem.path.join(_tvosArtifactRoot, dirName, 'flutter_patched_sdk');
   }
 
   String get _tvosArtifactRoot {
