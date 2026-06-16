@@ -101,4 +101,39 @@ void main() {
       );
     });
   });
+
+  group('engine variant selection per build mode', () {
+    // Guards that each run mode resolves the correct engine artifact dir — a
+    // wrong mapping here is how debug_sim / debug / profile / release silently
+    // break (e.g. a device build picking up the simulator engine).
+    String variantFor(BuildMode mode, EnvironmentType env) {
+      final String p = artifacts.getArtifactPath(
+        Artifact.flutterFramework,
+        mode: mode,
+        environmentType: env,
+      );
+      return p
+          .split('/engine_artifacts/')
+          .last
+          .split('/Flutter.framework')
+          .first;
+    }
+
+    test('debug + simulator → tvos_debug_sim_arm64', () {
+      expect(variantFor(BuildMode.debug, EnvironmentType.simulator),
+          'tvos_debug_sim_arm64');
+    });
+    test('debug + device → tvos_debug_arm64', () {
+      expect(variantFor(BuildMode.debug, EnvironmentType.physical),
+          'tvos_debug_arm64');
+    });
+    test('profile + device → tvos_profile_arm64', () {
+      expect(variantFor(BuildMode.profile, EnvironmentType.physical),
+          'tvos_profile_arm64');
+    });
+    test('release + device → tvos_release_arm64', () {
+      expect(variantFor(BuildMode.release, EnvironmentType.physical),
+          'tvos_release_arm64');
+    });
+  });
 }
