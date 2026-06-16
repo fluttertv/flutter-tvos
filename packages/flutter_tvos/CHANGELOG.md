@@ -1,3 +1,12 @@
+## 1.1.1
+
+- Fixed the remote-control `configure` handshake racing native plugin
+  registration at startup. `TvRemoteController.init()` now retries the
+  `configure` call until the native `FlutterTvRemotePlugin` acknowledges it,
+  so the touchpad reliably starts forwarding swipe/touch events instead of
+  intermittently appearing dead when the first push landed before the native
+  handler was registered.
+
 ## 1.1.0
 
 - Added Swift Package Manager support. `flutter_tvos` now ships a

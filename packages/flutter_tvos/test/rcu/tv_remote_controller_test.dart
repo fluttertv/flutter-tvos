@@ -272,6 +272,32 @@ void main() {
       expect(configureCalls.length, greaterThan(baseline));
       expect(configureCalls.last['dpadDeadZone'], 0.8);
     });
+
+    test('configure handshake retries until the native handler is ready',
+        () async {
+      // Simulate native not registered yet (the AOT/release startup race):
+      // drop the recording handler the group's setUp installed.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(TvRemoteChannels.button, null);
+
+      TvRemoteController.instance.debugInit(); // fires the retry loop
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(configureCalls, isEmpty,
+          reason: 'no configure should land while native is unregistered');
+
+      // Native comes online — restore the recording handler.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(TvRemoteChannels.button,
+              (MethodCall call) async {
+        if (call.method == 'configure') {
+          configureCalls.add(Map<String, Object?>.from(call.arguments as Map));
+        }
+        return null;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(configureCalls, isNotEmpty,
+          reason: 'retry should deliver configure once native registers');
+    });
   });
 
   group('TvRemoteController platform guard', () {

@@ -187,6 +187,10 @@ class TvRemoteController {
   final _swipeListeners = <SwipeListener>[];
   bool _initialized = false;
 
+  /// Bumped on every [_pushConfig] (and [debugReset]) so an in-flight retry
+  /// loop from a superseded config can detect it is stale and bail out.
+  int _configPushGeneration = 0;
+
   /// Wire up channel handlers. Idempotent — subsequent calls are no-ops.
   /// Does nothing if not running on tvOS.
   void init() {
@@ -210,6 +214,8 @@ class TvRemoteController {
     _cachedSwipe = null;
     _config = const TvRemoteConfig();
     _initialized = false;
+    // Invalidate any in-flight retry loop from a previous test.
+    _configPushGeneration++;
   }
 
   void _attachChannelHandlers() {
@@ -222,14 +228,42 @@ class TvRemoteController {
   }
 
   void _pushConfig() {
-    unawaited(TvRemoteChannels.button
-        .invokeMethod<void>(TvRemoteProtocol.methodConfigure, _config.toMap())
-        .catchError((Object error, StackTrace stack) {
-      // Before native is reachable (e.g. iOS / Android / test binding
-      // without a plugin), the invocation fails. Silently ignore — the
-      // native side holds default values that match [TvRemoteConfig]
-      // defaults, so apps that never touch `config` behave identically.
-    }));
+    final int generation = ++_configPushGeneration;
+    unawaited(_pushConfigWithRetry(generation));
+  }
+
+  /// Ships the current [_config] to the native plugin, retrying until it is
+  /// acknowledged or [generation] is superseded.
+  ///
+  /// The native side only starts forwarding touch events once it has received
+  /// a `configure` call (it sets `frameworkReadyForTouches = YES` then). At
+  /// app startup there is a race: [init] may push the config before the native
+  /// `FlutterTvRemotePlugin` has registered its method-call handler, so the
+  /// first invocation throws `MissingPluginException` and the handshake is
+  /// lost — the touchpad then appears dead even though everything compiled.
+  /// Retrying closes that window. Once native is reachable the call succeeds
+  /// on the next attempt; on iOS / Android / a test binding without the plugin
+  /// it simply retries harmlessly until the generation is bumped (config
+  /// reassigned, or [debugReset]) or the attempt budget is exhausted — the
+  /// native side holds defaults that match [TvRemoteConfig], so apps that
+  /// never touch `config` behave identically.
+  Future<void> _pushConfigWithRetry(int generation) async {
+    const Duration retryDelay = Duration(milliseconds: 100);
+    const int maxAttempts = 50;
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+      if (generation != _configPushGeneration || !_initialized) {
+        return;
+      }
+      try {
+        await TvRemoteChannels.button.invokeMethod<void>(
+          TvRemoteProtocol.methodConfigure,
+          _config.toMap(),
+        );
+        return;
+      } catch (_) {
+        await Future<void>.delayed(retryDelay);
+      }
+    }
   }
 
   /// Register a listener that receives every raw touchpad event.
