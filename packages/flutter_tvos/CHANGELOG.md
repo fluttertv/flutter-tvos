@@ -5,7 +5,11 @@
   `configure` call until the native `FlutterTvRemotePlugin` acknowledges it,
   so the touchpad reliably starts forwarding swipe/touch events instead of
   intermittently appearing dead when the first push landed before the native
-  handler was registered.
+  handler was registered. The retry now only swallows the expected
+  `MissingPluginException` / `PlatformException` (any other error — e.g. a
+  config serialization bug — propagates instead of being silently retried),
+  and if the handshake is never acknowledged within the retry budget it
+  surfaces via `FlutterError.reportError` rather than giving up silently.
 
 ## 1.1.0
 

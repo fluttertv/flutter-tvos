@@ -6,6 +6,8 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/foundation.dart'
     show ErrorDescription, FlutterError, FlutterErrorDetails, visibleForTesting;
+import 'package:flutter/services.dart'
+    show MissingPluginException, PlatformException;
 
 import '../platform_extension.dart' show FlutterTvosPlatform;
 import 'swipe_detector.dart';
@@ -250,6 +252,8 @@ class TvRemoteController {
   Future<void> _pushConfigWithRetry(int generation) async {
     const Duration retryDelay = Duration(milliseconds: 100);
     const int maxAttempts = 50;
+    Object? lastError;
+    StackTrace? lastStack;
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
       if (generation != _configPushGeneration || !_initialized) {
         return;
@@ -260,9 +264,39 @@ class TvRemoteController {
           _config.toMap(),
         );
         return;
-      } catch (_) {
+      } on MissingPluginException catch (error, stack) {
+        // The handshake race this loop exists for: native
+        // `FlutterTvRemotePlugin` hasn't registered its handler yet. Retry.
+        lastError = error;
+        lastStack = stack;
+        await Future<void>.delayed(retryDelay);
+      } on PlatformException catch (error, stack) {
+        // Native is reachable but rejected the call (e.g. handler registered
+        // mid-startup). Retry in case it is transient. Any other error type
+        // (e.g. a serialization bug in _config.toMap()) is deliberately NOT
+        // caught — it propagates as an async error rather than being silently
+        // retried 50× and dropped indistinguishably from the race.
+        lastError = error;
+        lastStack = stack;
         await Future<void>.delayed(retryDelay);
       }
+    }
+    // Budget exhausted and the push is still current — the touchpad will run on
+    // native default tuning and never receive our overrides. Surface it instead
+    // of giving up silently (the rest of this class reports via reportError).
+    if (generation == _configPushGeneration && _initialized) {
+      FlutterError.reportError(FlutterErrorDetails(
+        exception: lastError ??
+            StateError('TV remote configure handshake was never acknowledged'),
+        stack: lastStack,
+        library: 'flutter_tvos',
+        context: ErrorDescription(
+          'while configuring the TV remote touchpad: the native `configure` '
+          'handshake was not acknowledged after $maxAttempts attempts '
+          '${retryDelay.inMilliseconds} ms apart. The touchpad will use native '
+          'default tuning; custom TvRemoteConfig values were not applied.',
+        ),
+      ));
     }
   }
 
