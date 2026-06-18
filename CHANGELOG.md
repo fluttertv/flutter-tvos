@@ -2,6 +2,48 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.3.1] — 2026-06-16
+
+Refreshes the pinned engine to **Flutter 3.44.2** (`c9a6c484`, Dart
+`d684a576`) and fixes tvOS platform identity in AOT (release/profile) builds.
+
+### Fixed
+- **`Platform.operatingSystem` / `isIOS` / `isTvOS` are now correct in release.**
+  These getters carry `@pragma("vm:platform-const")`, which `gen_snapshot`
+  const-folds in AOT from the build's `--target-os`. Stock Flutter passes
+  `--target-os ios` for `TargetPlatform.ios` (which tvOS rides), so release
+  baked in `operatingSystem == "ios"` and `isTvOS == false` for all app and
+  plugin code — debug/JIT was unaffected. `TvosKernelSnapshot` now compiles AOT
+  with `targetOS: null` and against the patched `flutter_patched_sdk` from the
+  host engine artifact, so the getters resolve at runtime to `"tvos"` exactly as
+  debug already did. Verified on a physical Apple TV.
+- **Profile builds no longer crash at startup** with `Type '_NetworkProfiling'
+  not found in library 'dart.io'`. Profile now compiles against the
+  **non-product** host SDK (`host_debug_unopt`) instead of the product
+  `host_release` one: the non-product engine looks up entry-point classes (e.g.
+  `dart:io` `_NetworkProfiling`) that the product SDK doesn't retain through AOT
+  tree-shaking. Mirrors stock Flutter's `flutter_patched_sdk` (profile) vs
+  `flutter_patched_sdk_product` (release) split. Release is unchanged.
+- **On-device `--debug` (JIT + hot reload) works on tvOS 26.** tvOS 26 denies
+  flipping JIT code pages RW→RX via `mprotect` (even with a debugger attached),
+  and the iOS dual-mapping RX workaround needs Mach exception-port APIs
+  unavailable on tvOS, so the debug VM aborted at `StubCode::Init`
+  (`mprotect failed: 13`). The device-debug engine now maps JIT pages **RWX up
+  front** (`FLAG_write_protect_code = false`, tvOS device only) — no RW↔RX flip
+  to be denied — restoring hot reload on hardware. Verified on a physical Apple
+  TV 4K (A15, tvOS 26.5). Debug-only (W+X); AOT release/profile keep W^X; the
+  simulator is unaffected.
+
+### Changed
+- Bumped `bin/internal/flutter.version` to `c9a6c484` (Flutter 3.44.2) and
+  `bin/internal/engine.version` to `v1.0.0-flutter3.44.2`.
+- Rebuilt all six engine artifact variants against Dart `d684a576`. Required: a
+  Flutter-version-only bump leaves debug/simulator builds working but breaks AOT
+  (`gen_snapshot: Invalid SDK hash`) because the old `gen_snapshot` cannot load
+  kernel compiled by the new Dart SDK.
+- Bundled `flutter_tvos` plugin updated to 1.1.1 (remote-control configure
+  handshake retry).
+
 ## [1.3.0] — 2026-06-12
 
 Minor release. Adds **Swift Package Manager support** for tvOS apps (the

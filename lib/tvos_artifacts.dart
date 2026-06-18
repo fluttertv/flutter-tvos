@@ -52,12 +52,62 @@ class TvosArtifacts extends CachedArtifacts {
         return _fileSystem.path.join(engineDir, 'Flutter.xcframework');
       }
     }
+
+    // For AOT (profile/release) builds, compile the app kernel against OUR
+    // patched `flutter_patched_sdk` (shipped inside the host engine artifact)
+    // rather than the stock Flutter checkout's. The patched dart:io
+    // `platform.dart` defines `isIOS = operatingSystem == "ios" || == "tvos"`
+    // and adds the `isTvOS` getter, so the un-folded platform-const getters
+    // evaluate correctly at runtime on tvOS. This is the companion to
+    // `TvosKernelSnapshot.build()`, which passes `targetOS: null` so those
+    // getters are not const-folded to "ios" at compile time.
+    //
+    // Debug (JIT) deliberately keeps the stock SDK: platform identity there is
+    // resolved by the device engine's own (patched) core libraries at runtime,
+    // so the compile SDK is irrelevant and we avoid disturbing the proven
+    // debug path. We only need our patched SDK where gen_snapshot bakes the
+    // SDK code into the app snapshot — i.e. precompiled builds.
+    if ((mode?.isPrecompiled ?? false) &&
+        (artifact == Artifact.flutterPatchedSdkPath ||
+            artifact == Artifact.platformKernelDill)) {
+      final String patchedSdkDir = _hostPatchedSdkDirectory(mode!);
+      if (artifact == Artifact.platformKernelDill) {
+        return _fileSystem.path.join(patchedSdkDir, 'platform_strong.dill');
+      }
+      return patchedSdkDir;
+    }
+
     return super.getArtifactPath(
       artifact,
       platform: platform,
       mode: mode,
       environmentType: environmentType,
     );
+  }
+
+  /// Path to the patched `flutter_patched_sdk` inside the host engine
+  /// artifact for [mode].
+  ///
+  /// Release uses the **product** SDK (`host_release`); profile uses the
+  /// **non-product** SDK (`host_debug_unopt`). This mirrors stock Flutter's
+  /// `flutter_patched_sdk` (debug/profile) vs `flutter_patched_sdk_product`
+  /// (release) split: the non-product SDK marks entry-point classes that the
+  /// profile/JIT engine looks up natively — e.g. `dart:io`'s
+  /// `_NetworkProfiling` — so gen_snapshot keeps them through AOT
+  /// tree-shaking. Compiling a profile build against the product SDK drops
+  /// those classes and the engine aborts at startup with
+  /// `Type '_NetworkProfiling' not found in library 'dart.io'`.
+  String _hostPatchedSdkDirectory(BuildMode mode) {
+    final dirName = mode == BuildMode.release ? 'host_release' : 'host_debug_unopt';
+    // Handle the nested directory that zip extraction can produce
+    // (`<root>/<dir>/<dir>/flutter_patched_sdk`).
+    final Directory nested = _fileSystem.directory(
+      _fileSystem.path.join(_tvosArtifactRoot, dirName, dirName, 'flutter_patched_sdk'),
+    );
+    if (nested.existsSync()) {
+      return nested.path;
+    }
+    return _fileSystem.path.join(_tvosArtifactRoot, dirName, 'flutter_patched_sdk');
   }
 
   String get _tvosArtifactRoot {

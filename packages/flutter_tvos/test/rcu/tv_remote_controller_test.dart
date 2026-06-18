@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -271,6 +272,72 @@ void main() {
 
       expect(configureCalls.length, greaterThan(baseline));
       expect(configureCalls.last['dpadDeadZone'], 0.8);
+    });
+
+    test('configure handshake retries until the native handler is ready', () {
+      // Virtual time (fakeAsync) so the 100 ms retry ticks are driven
+      // deterministically — no dependency on a real-wall-clock window landing
+      // a retry, which a starved CI runner could blow.
+      fakeAsync((async) {
+        // Simulate the AOT/release startup race deterministically: while
+        // `nativeReady` is false the handler throws MissingPluginException,
+        // exactly as the unregistered native side does. (Setting the mock
+        // handler to null instead would fall through to the real platform
+        // dispatcher, whose reply fakeAsync can't pump — the call would hang.)
+        bool nativeReady = false;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(TvRemoteChannels.button,
+                (MethodCall call) async {
+          if (!nativeReady) {
+            throw MissingPluginException('FlutterTvRemotePlugin not registered');
+          }
+          if (call.method == 'configure') {
+            configureCalls
+                .add(Map<String, Object?>.from(call.arguments as Map));
+          }
+          return null;
+        });
+
+        TvRemoteController.instance.debugInit(); // fires the retry loop
+
+        // Several 100 ms retry ticks pass with native unregistered — every
+        // attempt throws MissingPluginException and is retried; nothing lands.
+        async.elapse(const Duration(milliseconds: 500));
+        expect(configureCalls, isEmpty,
+            reason: 'no configure should land while native is unregistered');
+
+        // Native comes online — the next retry tick succeeds.
+        nativeReady = true;
+        async.elapse(const Duration(milliseconds: 100));
+        expect(configureCalls, isNotEmpty,
+            reason: 'retry should deliver configure once native registers');
+      });
+    });
+
+    test('exhausting the retry budget reports instead of failing silently', () {
+      fakeAsync((async) {
+        final errors = <FlutterErrorDetails>[];
+        final previousOnError = FlutterError.onError;
+        FlutterError.onError = errors.add;
+        addTearDown(() => FlutterError.onError = previousOnError);
+
+        // Native never registers — every one of the 50 attempts throws.
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(TvRemoteChannels.button,
+                (MethodCall call) async {
+          throw MissingPluginException('never registers');
+        });
+
+        TvRemoteController.instance.debugInit();
+        // 50 attempts × 100 ms = 5 s; elapse well past the budget.
+        async.elapse(const Duration(seconds: 7));
+
+        expect(configureCalls, isEmpty);
+        expect(errors, isNotEmpty,
+            reason: 'budget exhaustion must surface via FlutterError.reportError');
+        expect(errors.single.library, 'flutter_tvos');
+        expect(errors.single.exception, isA<MissingPluginException>());
+      });
     });
   });
 

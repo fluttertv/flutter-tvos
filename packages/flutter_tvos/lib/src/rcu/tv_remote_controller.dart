@@ -6,6 +6,8 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/foundation.dart'
     show ErrorDescription, FlutterError, FlutterErrorDetails, visibleForTesting;
+import 'package:flutter/services.dart'
+    show MissingPluginException, PlatformException;
 
 import '../platform_extension.dart' show FlutterTvosPlatform;
 import 'swipe_detector.dart';
@@ -187,6 +189,10 @@ class TvRemoteController {
   final _swipeListeners = <SwipeListener>[];
   bool _initialized = false;
 
+  /// Bumped on every [_pushConfig] (and [debugReset]) so an in-flight retry
+  /// loop from a superseded config can detect it is stale and bail out.
+  int _configPushGeneration = 0;
+
   /// Wire up channel handlers. Idempotent — subsequent calls are no-ops.
   /// Does nothing if not running on tvOS.
   void init() {
@@ -210,6 +216,8 @@ class TvRemoteController {
     _cachedSwipe = null;
     _config = const TvRemoteConfig();
     _initialized = false;
+    // Invalidate any in-flight retry loop from a previous test.
+    _configPushGeneration++;
   }
 
   void _attachChannelHandlers() {
@@ -222,14 +230,74 @@ class TvRemoteController {
   }
 
   void _pushConfig() {
-    unawaited(TvRemoteChannels.button
-        .invokeMethod<void>(TvRemoteProtocol.methodConfigure, _config.toMap())
-        .catchError((Object error, StackTrace stack) {
-      // Before native is reachable (e.g. iOS / Android / test binding
-      // without a plugin), the invocation fails. Silently ignore — the
-      // native side holds default values that match [TvRemoteConfig]
-      // defaults, so apps that never touch `config` behave identically.
-    }));
+    final int generation = ++_configPushGeneration;
+    unawaited(_pushConfigWithRetry(generation));
+  }
+
+  /// Ships the current [_config] to the native plugin, retrying until it is
+  /// acknowledged or [generation] is superseded.
+  ///
+  /// The native side only starts forwarding touch events once it has received
+  /// a `configure` call (it sets `frameworkReadyForTouches = YES` then). At
+  /// app startup there is a race: [init] may push the config before the native
+  /// `FlutterTvRemotePlugin` has registered its method-call handler, so the
+  /// first invocation throws `MissingPluginException` and the handshake is
+  /// lost — the touchpad then appears dead even though everything compiled.
+  /// Retrying closes that window. Once native is reachable the call succeeds
+  /// on the next attempt; on iOS / Android / a test binding without the plugin
+  /// it simply retries harmlessly until the generation is bumped (config
+  /// reassigned, or [debugReset]) or the attempt budget is exhausted — the
+  /// native side holds defaults that match [TvRemoteConfig], so apps that
+  /// never touch `config` behave identically.
+  Future<void> _pushConfigWithRetry(int generation) async {
+    const Duration retryDelay = Duration(milliseconds: 100);
+    const int maxAttempts = 50;
+    Object? lastError;
+    StackTrace? lastStack;
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+      if (generation != _configPushGeneration || !_initialized) {
+        return;
+      }
+      try {
+        await TvRemoteChannels.button.invokeMethod<void>(
+          TvRemoteProtocol.methodConfigure,
+          _config.toMap(),
+        );
+        return;
+      } on MissingPluginException catch (error, stack) {
+        // The handshake race this loop exists for: native
+        // `FlutterTvRemotePlugin` hasn't registered its handler yet. Retry.
+        lastError = error;
+        lastStack = stack;
+        await Future<void>.delayed(retryDelay);
+      } on PlatformException catch (error, stack) {
+        // Native is reachable but rejected the call (e.g. handler registered
+        // mid-startup). Retry in case it is transient. Any other error type
+        // (e.g. a serialization bug in _config.toMap()) is deliberately NOT
+        // caught — it propagates as an async error rather than being silently
+        // retried 50× and dropped indistinguishably from the race.
+        lastError = error;
+        lastStack = stack;
+        await Future<void>.delayed(retryDelay);
+      }
+    }
+    // Budget exhausted and the push is still current — the touchpad will run on
+    // native default tuning and never receive our overrides. Surface it instead
+    // of giving up silently (the rest of this class reports via reportError).
+    if (generation == _configPushGeneration && _initialized) {
+      FlutterError.reportError(FlutterErrorDetails(
+        exception: lastError ??
+            StateError('TV remote configure handshake was never acknowledged'),
+        stack: lastStack,
+        library: 'flutter_tvos',
+        context: ErrorDescription(
+          'while configuring the TV remote touchpad: the native `configure` '
+          'handshake was not acknowledged after $maxAttempts attempts '
+          '${retryDelay.inMilliseconds} ms apart. The touchpad will use native '
+          'default tuning; custom TvRemoteConfig values were not applied.',
+        ),
+      ));
+    }
   }
 
   /// Register a listener that receives every raw touchpad event.
