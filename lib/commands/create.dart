@@ -24,6 +24,12 @@ class TvosCreateCommand extends CreateCommand {
 
   @override
   Future<FlutterCommandResult> runCommand() async {
+    // Mirror stock `flutter create`: print the friendly usage message and exit
+    // (code 2) when no output directory is given — or more than one — instead
+    // of crashing on `rest.first` ("Bad state: No element"). The tvos-only path
+    // below reads `rest.first` before delegating to `super.runCommand()`, so
+    // validate up front.
+    validateOutputDirectoryArg();
     final String projectDirPath = argResults!.rest.first;
     final String name =
         stringArg('project-name') ?? globals.fs.path.basename(projectDirPath);
