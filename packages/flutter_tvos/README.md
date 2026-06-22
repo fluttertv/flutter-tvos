@@ -21,7 +21,7 @@ Add `flutter_tvos` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_tvos: ^1.1.1
+  flutter_tvos: ^1.1.2
 ```
 
 ## Usage

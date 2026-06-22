@@ -1,3 +1,9 @@
+## 1.1.2
+
+- Documentation: list Siri Remote support in the README feature summary and
+  bump the install snippet to the current version. No functional or API
+  changes.
+
 ## 1.1.1
 
 - Fixed the remote-control `configure` handshake racing native plugin

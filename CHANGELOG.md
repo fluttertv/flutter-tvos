@@ -19,6 +19,7 @@ Refreshes the pinned engine to **Flutter 3.44.3** (`e1fd963c`, Dart
 - Picks up the Flutter 3.44.3 `flutter_tools` fixes that ship in the SDK
   (asset hashing, `error_handling_io`, Swift Package Manager, Dart language
   version), since the CLI wraps the pinned SDK unmodified.
+- Bundled `flutter_tvos` plugin updated to 1.1.2 (README/docs refresh).
 - **`flutter-tvos precache` no longer downloads other platforms' artifacts.**
   With no platform flags it now fetches only the tvOS engine set plus the
   universal artifacts (fonts, patched SDK, host USB-deploy tools); the Android,
