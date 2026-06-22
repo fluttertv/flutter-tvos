@@ -457,6 +457,10 @@ tvos/.symlinks/
 tvos/Flutter/Flutter.framework
 tvos/Flutter/Flutter.podspec
 
+# Xcode / SwiftPM (per-user, generated when tvos/Package.swift is opened)
+**/.swiftpm/
+**/xcuserdata/
+
 # IDE
 .idea/
 .vscode/

@@ -1,0 +1,4 @@
+# Per-user Xcode / SwiftPM local state, generated when the tvos/Package.swift
+# is opened in Xcode. Not source — never commit.
+.swiftpm/
+xcuserdata/

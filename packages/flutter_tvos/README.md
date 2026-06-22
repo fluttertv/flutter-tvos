@@ -11,6 +11,9 @@ Part of the [flutter-tvos](https://fluttertv.dev) project — an open-source Flu
 - Check device capabilities: 4K, HDR, multi-user support
 - Get display resolution
 - **Synchronous API** — powered by dart:ffi, zero async overhead
+- **Siri Remote support** — swipes and buttons drive Flutter's standard
+  focus system, with raw-touch and high-level swipe listeners for custom
+  handling (see [Remote Control](#remote-control-siri-remote))
 
 ## Getting Started
 
@@ -18,7 +21,7 @@ Add `flutter_tvos` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_tvos: ^1.0.4
+  flutter_tvos: ^1.1.2
 ```
 
 ## Usage
