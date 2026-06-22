@@ -2,6 +2,22 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Changed
+- **`flutter-tvos precache` no longer downloads other platforms' artifacts.**
+  With no platform flags it now fetches only the tvOS engine set plus the
+  universal artifacts (fonts, patched SDK, host USB-deploy tools); the Android,
+  iOS-engine, web, and macOS SDKs are skipped. The stock per-platform flags
+  (`--ios`, `--android`, `--all-platforms`, …) still work when passed
+  explicitly. The tvOS engine artifacts also now render under a **tvOS Engine**
+  header in the same nested tree style as the bundled Flutter SDK.
+
+### Fixed
+- **`flutter-tvos create` with no output directory** now prints the usage
+  message and exits with code 2 (matching stock `flutter create`) instead of
+  crashing with `Bad state: No element`.
+
 ## [1.3.1] — 2026-06-16
 
 Refreshes the pinned engine to **Flutter 3.44.2** (`c9a6c484`, Dart
