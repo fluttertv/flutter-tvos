@@ -111,6 +111,12 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     'host_release.zip',
   ];
 
+  // The artifact-group header printed by `Cache.updateAll` — defaults to the
+  // (stamp) `name`, which reads as a bare "engine". Label it "tvOS Engine" so
+  // the precache output names the toolchain it belongs to.
+  @override
+  String get displayName => 'tvOS Engine';
+
   @override
   Directory get location => tvosArtifactDirectory(globals.fs);
 
@@ -194,14 +200,16 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     );
 
     try {
+      var index = 0;
       for (final String zipName in _artifactZipNames) {
+        index++;
         final String url = artifactDownloadUrl(zipName);
         final File tempZip = tempDir.childFile(zipName);
-        // Format mirrors stock Flutter cache:
-        //   `Downloading <name> tools...                     1,339ms`
-        // The Status object writes the elapsed time on stop().
+        // Render as a child of the framework-printed `[i/N] engine` header,
+        // mirroring stock Flutter's nested artifact tree. The Status object
+        // writes the elapsed time on stop().
         final Status status = _logger.startProgress(
-          'Downloading ${_friendlyName(zipName)} tools...',
+          _treeLine(index, _artifactZipNames.length, _friendlyName(zipName)),
         );
         try {
           final RunResult curlResult = await _processUtils.run(<String>[
@@ -264,9 +272,11 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     }
     location.createSync(recursive: true);
 
+    var index = 0;
     for (final zip in zips) {
+      index++;
       final Status status = _logger.startProgress(
-        'Extracting ${_friendlyName(zip.basename)} tools...',
+        _treeLine(index, zips.length, _friendlyName(zip.basename)),
       );
       try {
         final RunResult result = await _processUtils.run(<String>[
@@ -293,9 +303,19 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     _makeFilesExecutable(location, operatingSystemUtils);
   }
 
+  /// Formats one zip's progress line as a child of the framework-printed
+  /// `[i/N] engine` header, mirroring stock Flutter's nested artifact tree
+  /// (see `ArtifactUpdater.formatProgressMessage`): `  ├─ [1/6] tvos-debug-…`,
+  /// with `└─` on the final entry. The elapsed time is appended by the
+  /// [Status] on stop, exactly like the bundled "Flutter SDK" artifact.
+  String _treeLine(int index, int total, String name) {
+    final prefix = index == total ? '└─' : '├─';
+    return '  $prefix [$index/$total] $name';
+  }
+
   /// Converts a zip filename to the human-readable label that goes into the
-  /// `Downloading … tools...` line. Mirrors stock Flutter's `<target>/<host>`
-  /// format using hyphens.
+  /// progress line. Mirrors stock Flutter's `<target>/<host>` format using
+  /// hyphens.
   ///
   /// Examples:
   ///   tvos_debug_sim_arm64.zip → tvos-debug-sim-arm64

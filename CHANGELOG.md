@@ -2,6 +2,37 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.3.2] — 2026-06-22
+
+Refreshes the pinned engine to **Flutter 3.44.3** (`e1fd963c`, Dart
+`d684a576`).
+
+### Changed
+- Bumped `bin/internal/flutter.version` to `e1fd963c` (Flutter 3.44.3) and
+  `bin/internal/engine.version` to `v1.0.0-flutter3.44.3`.
+- Rebuilt all six engine artifact variants from the Flutter 3.44.3 source tree.
+  This carries the 3.44.3 engine fixes — notably the APNG image decoder
+  (`lib/ui/painting/image_generator_apng`). Dart is unchanged (`d684a576`), so
+  the SDK hash is stable and AOT loads kernel without an `Invalid SDK hash`
+  mismatch.
+- All 17 tvOS engine patches apply cleanly on the 3.44.3 tree.
+- Picks up the Flutter 3.44.3 `flutter_tools` fixes that ship in the SDK
+  (asset hashing, `error_handling_io`, Swift Package Manager, Dart language
+  version), since the CLI wraps the pinned SDK unmodified.
+- Bundled `flutter_tvos` plugin updated to 1.1.2 (README/docs refresh).
+- **`flutter-tvos precache` no longer downloads other platforms' artifacts.**
+  With no platform flags it now fetches only the tvOS engine set plus the
+  universal artifacts (fonts, patched SDK, host USB-deploy tools); the Android,
+  iOS-engine, web, and macOS SDKs are skipped. The stock per-platform flags
+  (`--ios`, `--android`, `--all-platforms`, …) still work when passed
+  explicitly. The tvOS engine artifacts also now render under a **tvOS Engine**
+  header in the same nested tree style as the bundled Flutter SDK.
+
+### Fixed
+- **`flutter-tvos create` with no output directory** now prints the usage
+  message and exits with code 2 (matching stock `flutter create`) instead of
+  crashing with `Bad state: No element`.
+
 ## [1.3.1] — 2026-06-16
 
 Refreshes the pinned engine to **Flutter 3.44.2** (`c9a6c484`, Dart
