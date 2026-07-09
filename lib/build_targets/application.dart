@@ -12,6 +12,7 @@ import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/exceptions.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
+import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/compile.dart';
 import 'package:flutter_tools/src/dart/package_map.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
@@ -1244,7 +1245,12 @@ class NativeTvosBundle extends Target {
         ?? project.manifest.buildNumber
         ?? '1';
 
+    final String flutterRoot = globals.fs.path.normalize(
+      globals.fs.path.join(Cache.flutterRoot!),
+    );
+
     final xcconfig = StringBuffer();
+    xcconfig.writeln('FLUTTER_ROOT=$flutterRoot');
     xcconfig.writeln('FLUTTER_APPLICATION_PATH=${project.directory.path}');
     xcconfig.writeln('FLUTTER_TARGET=$targetFile');
     xcconfig.writeln('FLUTTER_BUILD_DIR=${project.directory.childDirectory('build').path}');
@@ -1252,6 +1258,24 @@ class NativeTvosBundle extends Target {
     xcconfig.writeln('FLUTTER_BUILD_NUMBER=$buildNumber');
 
     flutterDir.childFile('Generated.xcconfig').writeAsStringSync(xcconfig.toString());
+
+    // flutter_export_environment.sh — upstream iOS/macOS write this next to
+    // Generated.xcconfig. Native-build tooling that runs inside pod script
+    // phases (e.g. cargokit) sources it to locate the Dart SDK via
+    // FLUTTER_ROOT, so tvOS must provide it too.
+    final exportEnvironment = StringBuffer()
+      ..writeln('#!/bin/sh')
+      ..writeln('# This is a generated file; do not edit or check into version control.')
+      ..writeln('export "FLUTTER_ROOT=$flutterRoot"')
+      ..writeln('export "FLUTTER_APPLICATION_PATH=${project.directory.path}"')
+      ..writeln('export "FLUTTER_TARGET=$targetFile"')
+      ..writeln('export "FLUTTER_BUILD_DIR=${project.directory.childDirectory('build').path}"')
+      ..writeln('export "FLUTTER_BUILD_NAME=$buildName"')
+      ..writeln('export "FLUTTER_BUILD_NUMBER=$buildNumber"')
+      ..writeln('export "COCOAPODS_PARALLEL_CODE_SIGN=true"');
+    flutterDir
+        .childFile('flutter_export_environment.sh')
+        .writeAsStringSync(exportEnvironment.toString());
 
     // Debug.xcconfig — always write with Pods include so CocoaPods sandbox check passes.
     flutterDir
