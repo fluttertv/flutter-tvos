@@ -2,6 +2,32 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.3.3] — 2026-07-07
+
+Refreshes the pinned engine to **Flutter 3.44.5** (`f94f4fc7`, Dart
+`d684a576`).
+
+### Changed
+- Bumped `bin/internal/flutter.version` to `f94f4fc7` (Flutter 3.44.5) and
+  `bin/internal/engine.version` to `v1.0.0-flutter3.44.5`.
+- Rebuilt all six engine artifact variants from the Flutter 3.44.5 source tree.
+  Dart is unchanged (`d684a576`, same as 3.44.3), so the SDK hash is stable and
+  AOT loads kernel without an `Invalid SDK hash` mismatch. All six variants
+  verified: simulator → `TVOSSIMULATOR`, device (debug/profile/release) → `TVOS`.
+- Picks up the Flutter 3.44.4 and 3.44.5 `flutter_tools` fixes shipped in the
+  SDK.
+
+### tvOS engine patch set (3.44.5)
+- Re-ported `dart_tvos`, `skia_tvos`, and `flutter_impl_tvos` to 3.44.5 upstream
+  (Skia refactored `GetGPUFamily` → `initGPUFamily`; iOS embedder context
+  shifted).
+- Added `accessibility_features_tvos` — the new-in-3.44 `AccessibilityFeatures.swift`
+  uses `@available(iOS 18.0, *)` guards for `animatedImages` / non-blinking-cursor
+  APIs that are tvOS 18+; widened them to `(iOS 18.0, tvOS 18.0, *)`.
+- Restored `dart_virtual_memory_tvos` (excludes tvOS from the Dart VM RX/JIT
+  Mach-exception-port workarounds — unavailable on tvOS, needed only by the
+  device variants).
+
 ## [1.3.2] — 2026-06-22
 
 Refreshes the pinned engine to **Flutter 3.44.3** (`e1fd963c`, Dart
