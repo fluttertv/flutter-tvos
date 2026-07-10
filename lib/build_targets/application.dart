@@ -9,13 +9,18 @@ import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart' show Status;
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
+import 'package:flutter_tools/src/build_system/depfile.dart';
 import 'package:flutter_tools/src/build_system/exceptions.dart';
+import 'package:flutter_tools/src/build_system/targets/assets.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
+import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/compile.dart';
 import 'package:flutter_tools/src/dart/package_map.dart';
+import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
@@ -237,21 +242,83 @@ class TvosCopyFlutterBundle extends CopyFlutterBundle {
     TvosKernelSnapshot(),
   ];
 
+  /// Mirrors [CopyFlutterBundle.build] with one change: assets are copied
+  /// with `targetPlatform: TargetPlatform.ios` instead of upstream's
+  /// hard-coded `TargetPlatform.android`.
+  ///
+  /// The target platform drives impellerc's runtime-stage flags for fragment
+  /// shaders (see `ShaderCompiler._shaderTargetsFromTargetPlatform`): android
+  /// yields SkSL/GLES/Vulkan stages, ios yields the Metal stage. Upstream can
+  /// hard-code android because on real iOS the release asset copy happens in
+  /// `ReleaseIosApplicationBundle`, which passes ios — but tvOS bundles assets
+  /// through this target, and the tvOS engine renders with Impeller/Metal, so
+  /// android-stage shaders fail at runtime with "does not contain appropriate
+  /// runtime stage data for current backend (Metal)".
+  ///
+  /// Kept in sync with upstream `CopyFlutterBundle.build`; re-mirror any
+  /// change there on a Flutter upgrade.
   @override
   Future<void> build(Environment environment) async {
     // We skip the native-assets targets for tvOS (see `dependencies`),
-    // so `native_assets.json` is never produced. Upstream
-    // CopyFlutterBundle.build() unconditionally bundles it as
-    // `NativeAssetsManifest.json` and throws PathNotFound without it.
-    // Write the canonical empty manifest first — tvOS genuinely has no
-    // Dart native assets — so the upstream copy succeeds. (In-policy:
-    // our code writes a file; flutter_tools is untouched.)
+    // so `native_assets.json` is never produced. The asset copy below
+    // bundles it as `NativeAssetsManifest.json` and throws PathNotFound
+    // without it. Write the canonical empty manifest first — tvOS genuinely
+    // has no Dart native assets — so the copy succeeds.
     final File manifest = environment.buildDir.childFile('native_assets.json');
     if (!manifest.existsSync()) {
       manifest.parent.createSync(recursive: true);
       manifest.writeAsStringSync('{"format-version":[1,0,0],"native-assets":{}}');
     }
-    await super.build(environment);
+
+    final String? buildModeEnvironment = environment.defines[kBuildMode];
+    if (buildModeEnvironment == null) {
+      throw MissingDefineException(kBuildMode, 'copy_flutter_bundle');
+    }
+    final String? flavor = environment.defines[kFlavor];
+
+    final buildMode = BuildMode.fromCliName(buildModeEnvironment);
+    environment.outputDir.createSync(recursive: true);
+
+    // Only copy the prebuilt runtimes and kernel blob in debug mode.
+    if (buildMode == BuildMode.debug) {
+      final String vmSnapshotData = environment.artifacts.getArtifactPath(
+        Artifact.vmSnapshotData,
+        mode: BuildMode.debug,
+      );
+      final String isolateSnapshotData = environment.artifacts.getArtifactPath(
+        Artifact.isolateSnapshotData,
+        mode: BuildMode.debug,
+      );
+      environment.buildDir
+          .childFile('app.dill')
+          .copySync(environment.outputDir.childFile('kernel_blob.bin').path);
+      environment.fileSystem
+          .file(vmSnapshotData)
+          .copySync(environment.outputDir.childFile('vm_snapshot_data').path);
+      environment.fileSystem
+          .file(isolateSnapshotData)
+          .copySync(environment.outputDir.childFile('isolate_snapshot_data').path);
+    }
+    final DartHooksResult dartHookResult = await DartBuild.loadHookResult(environment);
+    final Depfile assetDepfile = await copyAssets(
+      environment,
+      environment.outputDir,
+      dartHookResult: dartHookResult,
+      // tvOS rides the iOS engine (Impeller/Metal): shaders need the Metal
+      // runtime stage that only the ios shader target emits.
+      targetPlatform: TargetPlatform.ios,
+      buildMode: buildMode,
+      flavor: flavor,
+      additionalContent: <String, DevFSContent>{
+        'NativeAssetsManifest.json': DevFSFileContent(
+          environment.buildDir.childFile('native_assets.json'),
+        ),
+      },
+    );
+    environment.depFileService.writeToFile(
+      assetDepfile,
+      environment.buildDir.childFile('flutter_assets.d'),
+    );
   }
 }
 
