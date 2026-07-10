@@ -134,10 +134,21 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
       rawGraph is List<dynamic> ? rawGraph : <dynamic>[];
 
   // Build a name→path map from .dart_tool/package_config.json.
+  // Pub workspaces hoist package_config.json to the workspace root, so walk
+  // up from the project directory until one is found (the same resolution pub
+  // itself uses).
   final packagePaths = <String, String>{};
-  final File packageConfigFile = project.directory
+  File packageConfigFile = project.directory
       .childDirectory('.dart_tool')
       .childFile('package_config.json');
+  Directory packageConfigSearchDir = project.directory;
+  while (!packageConfigFile.existsSync() &&
+      packageConfigSearchDir.parent.path != packageConfigSearchDir.path) {
+    packageConfigSearchDir = packageConfigSearchDir.parent;
+    packageConfigFile = packageConfigSearchDir
+        .childDirectory('.dart_tool')
+        .childFile('package_config.json');
+  }
   if (packageConfigFile.existsSync()) {
     try {
       final packageConfig =
@@ -148,10 +159,12 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
         final pkgMap = pkg as Map<String, dynamic>;
         final name = pkgMap['name'] as String;
         var rootUri = pkgMap['rootUri'] as String;
-        // rootUri may be relative to .dart_tool/ or a file:// URI.
-        if (rootUri.startsWith('../')) {
+        // rootUri may be relative to the package_config.json's own directory
+        // (which is the workspace root's .dart_tool/ under pub workspaces) or
+        // a file:// URI.
+        if (rootUri.startsWith('../') || rootUri.startsWith('./')) {
           rootUri = globals.fs.path.normalize(
-            globals.fs.path.join(project.directory.path, '.dart_tool', rootUri),
+            globals.fs.path.join(packageConfigFile.parent.path, rootUri),
           );
         } else if (rootUri.startsWith('file://')) {
           rootUri = Uri.parse(rootUri).toFilePath();
