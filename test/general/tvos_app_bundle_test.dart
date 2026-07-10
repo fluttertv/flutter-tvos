@@ -176,6 +176,48 @@ void main() {
     }
   });
 
+  // --- ITMS-91065: embedded Flutter.framework is code-signed --------------
+  //
+  // The Flutter engine is pulled into the app bundle transitively through the
+  // static FlutterGeneratedPluginSwiftPackage umbrella (a .binaryTarget on the
+  // dynamic Flutter.xcframework). Xcode embeds it but does NOT code-sign it, so
+  // archives shipped an unsigned engine and Beta App Review / the App Store
+  // rejected them with ITMS-91065 ("Missing signature") — Flutter is a
+  // commonly-used third-party SDK that must ship signed. A dedicated build
+  // phase re-signs it with the app's own identity (like CocoaPods used to).
+  group('Xcode project signs the embedded Flutter.framework', () {
+    const fs = LocalFileSystem();
+
+    for (final relativePath in <String>[
+      'templates/app/swift/tvos.tmpl/Runner.xcodeproj/project.pbxproj.tmpl',
+      'packages/flutter_tvos/example/tvos/Runner.xcodeproj/project.pbxproj',
+    ]) {
+      test('$relativePath has a "Sign Flutter.framework" run-script phase', () {
+        final File file = fs.file(relativePath);
+        expect(file.existsSync(), isTrue, reason: 'expected to find $relativePath from package root');
+        final String pbxproj = file.readAsStringSync();
+
+        // The phase is declared and wired into the target's build phases
+        // (appears at least twice: buildPhases list + phase definition).
+        expect(pbxproj, contains('/* Sign Flutter.framework */'));
+        expect('/* Sign Flutter.framework */'.allMatches(pbxproj).length, greaterThanOrEqualTo(2));
+
+        // It must run AFTER Xcode embeds the SPM framework, so it is the last
+        // build phase (after "Copy flutter_assets") in the buildPhases list.
+        final int copyAssets = pbxproj.indexOf('9740EEB31CF901A200538489 /* Copy flutter_assets */,');
+        final int signFlutter = pbxproj.indexOf('AAF50000000000000000F00D /* Sign Flutter.framework */,');
+        expect(copyAssets, greaterThanOrEqualTo(0));
+        expect(signFlutter, greaterThan(copyAssets),
+            reason: 'Sign Flutter.framework must be listed after Copy flutter_assets');
+
+        // The script codesigns Flutter.framework with the app's own identity.
+        expect(pbxproj, contains(r'Frameworks/Flutter.framework'));
+        expect(pbxproj, contains(r'codesign --force --sign'));
+        expect(pbxproj, contains(r'EXPANDED_CODE_SIGN_IDENTITY'));
+      });
+    }
+  });
+
   // --- Swift Package Manager: umbrella wired into the Xcode project --------
   group('Xcode project references the FlutterGeneratedPluginSwiftPackage', () {
     const fs = LocalFileSystem();

@@ -125,6 +125,7 @@
 				97C146EC1CF9000082B4168C /* Resources */,
 				AAF10000000000000000F00D /* Embed App.framework */,
 				9740EEB31CF901A200538489 /* Copy flutter_assets */,
+				AAF50000000000000000F00D /* Sign Flutter.framework */,
 			);
 			buildRules = (
 			);
@@ -243,6 +244,21 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "#!/bin/sh\n# Embed App.framework (AOT Dart snapshots) into the app bundle.\n# Present only for release/profile (AOT) builds; debug/JIT has no App.framework.\n# Runs for build, run, AND archive, so TestFlight/App Store builds get it too.\nAPP_FRAMEWORK_SRC=\"${PROJECT_DIR}/Flutter/App.framework\"\nDEST_FRAMEWORKS=\"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Frameworks\"\nif [ -d \"${APP_FRAMEWORK_SRC}\" ]; then\n  echo \"Embedding App.framework...\"\n  mkdir -p \"${DEST_FRAMEWORKS}\"\n  rsync -av --delete \"${APP_FRAMEWORK_SRC}\" \"${DEST_FRAMEWORKS}/\"\n  if [ \"${CODE_SIGNING_REQUIRED}\" != \"NO\" ] && [ -n \"${EXPANDED_CODE_SIGN_IDENTITY}\" ]; then\n    echo \"Codesigning App.framework with ${EXPANDED_CODE_SIGN_IDENTITY}...\"\n    codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --timestamp=none --generate-entitlement-der \"${DEST_FRAMEWORKS}/App.framework\"\n  fi\nelse\n  echo \"No App.framework to embed (debug/JIT build).\"\nfi\n";
+		};
+		AAF50000000000000000F00D /* Sign Flutter.framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Sign Flutter.framework";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\n# Code-sign the Flutter engine embedded via the FlutterFramework Swift package.\n# Xcode auto-embeds the dynamic Flutter.framework that is pulled in transitively\n# through the static FlutterGeneratedPluginSwiftPackage umbrella, but it does NOT\n# code-sign it (Flutter.framework is not an explicit \"Embed & Sign\" product on this\n# target). An unsigned engine installs locally and via Internal TestFlight (Apple\n# re-signs during processing), but Beta App Review / the App Store reject it with\n# ITMS-91065 (\"Missing signature\") because Flutter is a commonly-used third-party SDK\n# that must ship signed. Sign it here with the app's own identity, the same way\n# CocoaPods' embed script did. Runs for build, run, AND archive.\nFRAMEWORK=\"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Frameworks/Flutter.framework\"\nif [ ! -d \"${FRAMEWORK}\" ]; then\n  echo \"warning: Flutter.framework not present at ${FRAMEWORK}; nothing to sign.\"\nelif [ \"${CODE_SIGNING_REQUIRED}\" = \"NO\" ] || [ -z \"${EXPANDED_CODE_SIGN_IDENTITY}\" ]; then\n  echo \"Skipping Flutter.framework signing (code signing not required for this build).\"\nelse\n  echo \"Codesigning Flutter.framework with ${EXPANDED_CODE_SIGN_IDENTITY}...\"\n  codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --timestamp=none --generate-entitlement-der \"${FRAMEWORK}\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
