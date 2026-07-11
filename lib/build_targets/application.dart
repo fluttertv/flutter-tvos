@@ -428,7 +428,7 @@ class NativeTvosBundle extends Target {
 
     // 4. For release/profile: compile AOT snapshot via gen_snapshot → App.framework
     if (!buildInfo.buildInfo.isDebug) {
-      await _compileAotSnapshot(project, tvosProjectDir, environment);
+      await compileAotSnapshot(project, tvosProjectDir, environment);
     }
 
     // 5. Generate xcconfig files
@@ -1176,7 +1176,13 @@ class NativeTvosBundle extends Target {
   ///
   /// This produces App.framework containing the AOT-compiled Dart code,
   /// which xcodebuild will link into the final .app bundle.
-  Future<void> _compileAotSnapshot(
+  ///
+  /// Exposed for testing so a unit test can assert the production call sites
+  /// thread the tvOS deployment-target flag into both AOT clang steps (the flag
+  /// value and the argv builders are unit-tested separately; this guards that
+  /// they are actually wired up — see `tvos_aot_compile_test.dart`).
+  @visibleForTesting
+  Future<void> compileAotSnapshot(
     FlutterProject project,
     Directory tvosProjectDir,
     Environment environment,

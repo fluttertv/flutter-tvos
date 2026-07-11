@@ -103,6 +103,9 @@ signed (`bin/internal/engine.version` → `v1.0.1-flutter3.44.5`).
 - A shader-bundle test drives the real `TvosCopyFlutterBundle` target and
   asserts impellerc is invoked with the Metal runtime stage (guards the #34 fix
   at its production call site, not just the argv builder).
+- An AOT-compile test drives the real `compileAotSnapshot` and asserts both
+  clang steps carry the tvOS version-min flag (guards the ITMS-90208 fix at its
+  production call sites; verified to fail if the flag is dropped).
 
 ## [1.3.3] — 2026-07-07
 
