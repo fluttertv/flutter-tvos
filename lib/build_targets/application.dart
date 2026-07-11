@@ -525,6 +525,9 @@ class NativeTvosBundle extends Target {
       // Warn if the Runner project can't code-sign the SPM-embedded Flutter
       // engine (see the method doc).
       _warnIfFlutterFrameworkUnsigned(tvosProjectDir);
+      // Warn if the Runner project's build phases predate 1.4.0 and resolve the
+      // bundle via ${PRODUCT_NAME}.app under a custom product name.
+      _warnIfStalePbxprojBundlePath(tvosProjectDir);
       // Warn if the app-icon catalog predates the completed template and would
       // fail App Store asset validation.
       _warnIfIncompleteAppIconCatalog(tvosProjectDir);
@@ -956,6 +959,72 @@ class NativeTvosBundle extends Target {
       'Regenerate the tvOS project ("flutter-tvos create ." in the project root) '
       'so it re-signs the embedded engine with your own identity.',
     );
+  }
+
+  /// Warns if the Runner project's generated build phases predate 1.4.0 and
+  /// still resolve the app bundle through `${PRODUCT_NAME}.app` while the target
+  /// overrides `PRODUCT_NAME`.
+  ///
+  /// The pre-1.4.0 "Embed App.framework" / "Copy flutter_assets" / "Sign
+  /// Flutter.framework" phases built the bundle path as
+  /// `${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/…`; the current template uses
+  /// `${WRAPPER_NAME}` / `${CODESIGNING_FOLDER_PATH}`, which are the values Xcode
+  /// actually signs. `project.pbxproj` is copied in once at `create` time and is
+  /// never rewritten on build, so an existing project keeps the old phases. For
+  /// the default product name (`$(TARGET_NAME)` → `Runner`) the two resolve to
+  /// the same path and the old phases still work — so we stay quiet there and
+  /// only warn when the target overrides `PRODUCT_NAME`, where the stale path
+  /// can miss the real bundle and the engine/asset copy silently no-ops.
+  void _warnIfStalePbxprojBundlePath(Directory tvosProjectDir) {
+    final File pbxproj = tvosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    if (!pbxproj.existsSync()) {
+      return;
+    }
+    String contents;
+    try {
+      contents = pbxproj.readAsStringSync();
+    } on FileSystemException {
+      return; // Unreadable — don't crash the build over an advisory check.
+    }
+    if (!pbxprojUsesStaleBundlePath(contents)) {
+      return;
+    }
+    globals.logger.printWarning(
+      'Warning: this project\'s Xcode project (Runner.xcodeproj) predates 1.4.0 '
+      'and its Flutter build phases resolve the app bundle via '
+      '"\${PRODUCT_NAME}.app" while the target overrides PRODUCT_NAME. That path '
+      'can differ from the bundle Xcode actually builds, so the engine/asset '
+      'copy and the engine re-sign may silently target a path that does not '
+      'exist.\n'
+      'Regenerate the tvOS project ("flutter-tvos create ." in the project root) '
+      'to pick up build phases that resolve the bundle via WRAPPER_NAME / '
+      'CODESIGNING_FOLDER_PATH.',
+    );
+  }
+
+  /// True if [pbxprojContents] still resolves the app bundle through
+  /// `${PRODUCT_NAME}.app/…` in the generated build phases (pre-1.4.0 template)
+  /// AND the target sets a non-default `PRODUCT_NAME`.
+  ///
+  /// The trailing slash keys on the phase *path* (`.app/Frameworks`,
+  /// `.app/flutter_assets`), not an incidental mention of the token in a
+  /// comment. The default `PRODUCT_NAME` (`$(TARGET_NAME)` / `Runner`) makes the
+  /// stale path equal the real bundle, so it is not flagged.
+  @visibleForTesting
+  static bool pbxprojUsesStaleBundlePath(String pbxprojContents) {
+    if (!pbxprojContents.contains('\${PRODUCT_NAME}.app/')) {
+      return false; // Already on WRAPPER_NAME / CODESIGNING_FOLDER_PATH.
+    }
+    final RegExp assignment = RegExp(r'PRODUCT_NAME = ([^;]+);');
+    for (final Match m in assignment.allMatches(pbxprojContents)) {
+      final String value = m.group(1)!.trim().replaceAll('"', '');
+      if (value != r'$(TARGET_NAME)' && value != 'Runner') {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Warns if the project's `Podfile` predates the SPM skip guard while SPM

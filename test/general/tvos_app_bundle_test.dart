@@ -436,6 +436,66 @@ void main() {
     });
   });
 
+  // --- Migration guard: a pre-1.4.0 project.pbxproj resolves the bundle via
+  // ${PRODUCT_NAME}.app in its build phases. That file is copied at `create`
+  // and never rewritten on build, so an old project keeps the stale phases.
+  // It only misresolves under a custom PRODUCT_NAME, so the check stays quiet
+  // for default-named projects.
+  group('pbxprojUsesStaleBundlePath', () {
+    // Old phase: bundle resolved as ${PRODUCT_NAME}.app/... (trailing slash).
+    String pbxproj({required String productName, required bool stalePath}) {
+      final String bundlePath = stalePath
+          ? r'${PRODUCT_NAME}.app/Frameworks'
+          : r'${WRAPPER_NAME}/Frameworks';
+      return '''
+/* pbxproj */
+  shellScript = "DEST=\\"\${BUILT_PRODUCTS_DIR}/$bundlePath\\"";
+  PRODUCT_NAME = "$productName";
+''';
+    }
+
+    test('true for a stale path under a custom product name', () {
+      expect(
+        NativeTvosBundle.pbxprojUsesStaleBundlePath(
+            pbxproj(productName: 'MyTvApp', stalePath: true)),
+        isTrue,
+      );
+    });
+
+    test('false for a stale path under the default \$(TARGET_NAME)', () {
+      expect(
+        NativeTvosBundle.pbxprojUsesStaleBundlePath(
+            pbxproj(productName: r'$(TARGET_NAME)', stalePath: true)),
+        isFalse,
+      );
+    });
+
+    test('false for a stale path under the default Runner', () {
+      expect(
+        NativeTvosBundle.pbxprojUsesStaleBundlePath(
+            pbxproj(productName: 'Runner', stalePath: true)),
+        isFalse,
+      );
+    });
+
+    test('false for the current WRAPPER_NAME phases even with a custom name', () {
+      expect(
+        NativeTvosBundle.pbxprojUsesStaleBundlePath(
+            pbxproj(productName: 'MyTvApp', stalePath: false)),
+        isFalse,
+      );
+    });
+
+    test('false when the token appears only in a comment (no trailing slash)',
+        () {
+      const String currentWithComment =
+          '# Use CODESIGNING_FOLDER_PATH, not \${PRODUCT_NAME}.app, which is wrong\n'
+          '  PRODUCT_NAME = "MyTvApp";\n';
+      expect(NativeTvosBundle.pbxprojUsesStaleBundlePath(currentWithComment),
+          isFalse);
+    });
+  });
+
   // --- #33: pod script phases need FLUTTER_ROOT + export environment -------
   //
   // Native-build tooling (e.g. cargokit for Rust FFI plugins) runs inside

@@ -84,6 +84,12 @@ signed (`bin/internal/engine.version` → `v1.0.1-flutter3.44.5`).
   half-done hand-migration is still flagged), listing exactly what is missing —
   and the warning is emitted after "Xcode build done." so it is the last thing
   on screen rather than scrolled away by the Xcode build.
+- **Migration warning for pre-1.4.0 Xcode projects with a custom product
+  name.** `project.pbxproj` is copied in at `create` time and never rewritten on
+  build, so an existing project keeps the old build phases that resolve the app
+  bundle via `${PRODUCT_NAME}.app`. Default-named projects (`$(TARGET_NAME)` /
+  `Runner`) build fine, but a target that overrides `PRODUCT_NAME` can miss the
+  real bundle. Device builds now warn and point at regeneration.
 - **"Sign Flutter.framework" build phase in generated projects.** Re-signs the
   Swift Package Manager–embedded engine with the app's own identity (as
   CocoaPods' embed script did) so device installs don't carry nested code signed
