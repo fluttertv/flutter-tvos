@@ -2,13 +2,36 @@
 
 All notable changes to flutter-tvos will be documented here.
 
-## [1.3.4] — 2026-07-11
+## [1.4.0] — 2026-07-11
 
-Bug-fix release: clears several App Store validation blockers, adds Dart pub
-workspace support, and re-signs the SPM-embedded engine for device installs.
-Same pinned engine as 1.3.3 (Flutter 3.44.5).
+Ships the last of the App Store submission blockers: the engine artifact is now
+**origin-signed** (ITMS-91065), and this release clears several validation
+blockers, adds Dart pub workspace support, and re-signs the SPM-embedded engine
+for device installs. Same Flutter 3.44.5 engine build as 1.3.3, re-published
+signed (`bin/internal/engine.version` → `v1.0.1-flutter3.44.5`).
+
+### Engine / signing (ITMS-91065)
+- **The tvOS engine artifact now ships origin-signed.** Flutter is on Apple's
+  "commonly used third-party SDK" list, so every app embedding it is checked at
+  external Beta App Review / App Store review for the SDK provider's origin
+  signature. Our artifacts shipped unsigned, so apps were rejected with
+  ITMS-91065 ("Missing signature") — only at external review, after passing
+  local build, upload, and internal TestFlight. An app-identity re-sign at
+  export does **not** satisfy the check; the artifact itself must carry the
+  origin signature. `Flutter.framework` / `Flutter.xcframework` are now signed
+  at engine-packaging time (Developer ID Application, hardened runtime + secure
+  timestamp), mirroring how flutter.dev signs its iOS artifacts.
+- `engine/build.sh` gained `--signing-identity` and refuses to `--publish`
+  without one; `engine/verify_artifacts.sh` fails the release if any tvOS engine
+  is not origin-signed.
 
 ### Fixed
+- **Custom fragment shaders now render on tvOS (Metal).** `TvosCopyFlutterBundle`
+  inherited upstream's asset copy, which hard-codes `TargetPlatform.android` and
+  so bundled shaders with SkSL/GLES/Vulkan stages only — every `.frag` failed at
+  runtime with "does not contain appropriate runtime stage data for current
+  backend (Metal)". It now mirrors the copy with `TargetPlatform.ios` so shaders
+  carry the Metal runtime stage. (#34)
 - **Apps that are members of a Dart pub workspace now register their tvOS
   plugins.** Under `resolution: workspace`, `dart pub get` writes
   `package_config.json` only at the workspace root — each member gets a
