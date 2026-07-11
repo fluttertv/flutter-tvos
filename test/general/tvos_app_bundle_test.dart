@@ -88,6 +88,7 @@ void main() {
       seedSource();
       fs.file('/build/tvos/Release-appletvos/Runner.app/Runner').createSync(recursive: true);
       fs.file('/build/tvos/Debug-appletvsimulator/Runner.app/Runner').createSync(recursive: true);
+      fs.file('/build/tvos/Profile-appletvos/Runner.app/Runner').createSync(recursive: true);
 
       NativeTvosBundle.copyFlutterAssetsTree(
         source: fs.directory('/build/tvos'),
@@ -101,6 +102,47 @@ void main() {
       expect(
         fs.directory('/tvos/Flutter/flutter_assets/Debug-appletvsimulator').existsSync(),
         isFalse,
+      );
+      expect(
+        fs.directory('/tvos/Flutter/flutter_assets/Profile-appletvos').existsSync(),
+        isFalse,
+      );
+    });
+
+    test('does NOT ship AOT intermediates inside flutter_assets', () {
+      // A stale build/tvos/aot/ from an older CLI (or any regression that
+      // writes intermediates into outputDir) must never reach the bundle:
+      // stray .S/.o files fail App Store validation.
+      seedSource();
+      fs.file('/build/tvos/aot/snapshot_assembly.S').createSync(recursive: true);
+      fs.file('/build/tvos/aot/snapshot_assembly.o').createSync(recursive: true);
+
+      NativeTvosBundle.copyFlutterAssetsTree(
+        source: fs.directory('/build/tvos'),
+        target: fs.directory('/tvos/Flutter/flutter_assets'),
+      );
+
+      expect(
+        fs.directory('/tvos/Flutter/flutter_assets/aot').existsSync(),
+        isFalse,
+        reason: 'AOT intermediates must not ship inside flutter_assets',
+      );
+    });
+  });
+
+  // --- ITMS-90208: App.framework minos must match MinimumOSVersion ---------
+  group('tvosVersionMinFlag', () {
+    test('device SDK pins the tvOS deployment target', () {
+      expect(
+        NativeTvosBundle.tvosVersionMinFlag('appletvos'),
+        '-mtvos-version-min=13.0',
+      );
+    });
+
+    test('simulator SDK uses the simulator flag', () {
+      expect(
+        NativeTvosBundle.tvosVersionMinFlag('appletvsimulator'),
+        '-mtvos-simulator-version-min=13.0',
       );
     });
   });
@@ -176,15 +218,23 @@ void main() {
     }
   });
 
-  // --- ITMS-91065: embedded Flutter.framework is code-signed --------------
+  // --- Embedded Flutter.framework is re-signed with the app identity ------
   //
   // The Flutter engine is pulled into the app bundle transitively through the
   // static FlutterGeneratedPluginSwiftPackage umbrella (a .binaryTarget on the
-  // dynamic Flutter.xcframework). Xcode embeds it but does NOT code-sign it, so
-  // archives shipped an unsigned engine and Beta App Review / the App Store
-  // rejected them with ITMS-91065 ("Missing signature") — Flutter is a
-  // commonly-used third-party SDK that must ship signed. A dedicated build
-  // phase re-signs it with the app's own identity (like CocoaPods used to).
+  // dynamic Flutter.xcframework). Xcode embeds it but does NOT code-sign it,
+  // so without this phase a device build embeds the framework exactly as
+  // shipped — origin-signed by the flutter-tvos maintainer's team — and
+  // nested code signed by a foreign team can fail device installs. A dedicated
+  // build phase re-signs it with the app's own identity (like CocoaPods'
+  // embed script used to).
+  //
+  // NOTE: this phase is NOT the ITMS-91065 ("Missing signature") fix. Apple's
+  // commonly-used-SDK check requires the SDK's ORIGIN signature on the
+  // artifact as vended to the build; an app-identity re-sign does not satisfy
+  // it (proven by real App Store submissions rejected with ITMS-91065 both
+  // with and without this phase). ITMS-91065 is fixed by signing the engine
+  // artifact at packaging time (engine/build.sh --signing-identity).
   group('Xcode project signs the embedded Flutter.framework', () {
     const fs = LocalFileSystem();
 
@@ -216,6 +266,58 @@ void main() {
         expect(pbxproj, contains(r'EXPANDED_CODE_SIGN_IDENTITY'));
       });
     }
+  });
+
+  // --- App Store validation: the template asset catalog is complete --------
+  //
+  // Apple rejects tvOS archives whose brand assets miss @2x layer images or
+  // the Top Shelf Image Wide asset. Every app created from the template must
+  // therefore start with a complete catalog (proven complete by a real App
+  // Store submission that passed asset validation).
+  group('tvOS template asset catalog', () {
+    const fs = LocalFileSystem();
+    const brand =
+        'templates/app/swift/tvos.tmpl/Runner/Assets.xcassets/AppIcon.brandassets';
+    const suffix = '.copy.tmpl';
+
+    test('every icon layer ships 1x + 2x images declared in Contents.json', () {
+      for (final stack in <String>['Small', 'Large']) {
+        final prefix = stack.toLowerCase();
+        for (final layer in <String>['Back', 'Middle', 'Front']) {
+          final dir =
+              '$brand/App Icon - $stack.imagestack/$layer.imagestacklayer/Content.imageset';
+          final base = '${prefix}_${layer.toLowerCase()}';
+          expect(fs.file('$dir/$base.png$suffix').existsSync(), isTrue,
+              reason: 'missing $base.png');
+          expect(fs.file('$dir/$base@2x.png$suffix').existsSync(), isTrue,
+              reason: 'missing $base@2x.png (App Store rejects 1x-only layers)');
+          final json = fs.file('$dir/Contents.json$suffix').readAsStringSync();
+          expect(json, contains('"$base.png"'));
+          expect(json, contains('"$base@2x.png"'));
+        }
+      }
+    });
+
+    test('top shelf ships standard + wide, each with @2x', () {
+      expect(fs.file('$brand/Top Shelf Image.imageset/top_shelf.png$suffix').existsSync(), isTrue);
+      expect(fs.file('$brand/Top Shelf Image.imageset/top_shelf@2x.png$suffix').existsSync(), isTrue);
+      expect(
+        fs.file('$brand/Top Shelf Image Wide.imageset/top_shelf_wide.png$suffix').existsSync(),
+        isTrue,
+        reason: 'Top Shelf Image Wide is required by App Store validation',
+      );
+      expect(
+        fs.file('$brand/Top Shelf Image Wide.imageset/top_shelf_wide@2x.png$suffix').existsSync(),
+        isTrue,
+      );
+    });
+
+    test('brand-assets index declares the wide top shelf role', () {
+      final json = fs.file('$brand/Contents.json$suffix').readAsStringSync();
+      expect(json, contains('"top-shelf-image-wide"'));
+      expect(json, contains('"Top Shelf Image Wide.imageset"'));
+      expect(json, contains('"2320x720"'));
+    });
   });
 
   // --- Swift Package Manager: umbrella wired into the Xcode project --------
