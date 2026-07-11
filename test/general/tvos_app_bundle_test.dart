@@ -147,6 +147,39 @@ void main() {
     });
   });
 
+  // Both AOT clang steps must carry the min-version flag, else App.framework's
+  // LC_BUILD_VERSION minos is stamped with the SDK version (ITMS-90208). The
+  // flag's value is covered above; here we assert it actually reaches the argv.
+  group('AOT clang argv carry the min-version flag', () {
+    const String flag = '-mtvos-version-min=13.0';
+
+    test('aotAssembleArgs (cc) includes the flag and inputs', () {
+      final List<String> args = NativeTvosBundle.aotAssembleArgs(
+        versionMinFlag: flag,
+        sdkPath: '/sdk',
+        assemblyPath: '/a/snapshot_assembly.S',
+        objectPath: '/a/snapshot_assembly.o',
+      );
+      expect(args, containsAllInOrder(<String>['xcrun', 'cc']));
+      expect(args, contains(flag));
+      expect(args, containsAllInOrder(<String>['-c', '/a/snapshot_assembly.S']));
+      expect(args, containsAllInOrder(<String>['-o', '/a/snapshot_assembly.o']));
+    });
+
+    test('aotLinkArgs (clang) includes the flag and outputs a dylib', () {
+      final List<String> args = NativeTvosBundle.aotLinkArgs(
+        versionMinFlag: flag,
+        sdkPath: '/sdk',
+        objectPath: '/a/snapshot_assembly.o',
+        appBinaryPath: '/f/App.framework/App',
+      );
+      expect(args, containsAllInOrder(<String>['xcrun', 'clang']));
+      expect(args, contains(flag));
+      expect(args, contains('-dynamiclib'));
+      expect(args, containsAllInOrder(<String>['-o', '/f/App.framework/App']));
+    });
+  });
+
   // --- Issue #2: App.framework Info.plist completeness --------------------
   group('buildAppFrameworkInfoPlist', () {
     test('includes the keys App Store / TestFlight validation requires', () {
@@ -362,6 +395,53 @@ void main() {
         () {
       expect(NativeTvosBundle.appIconCatalogNeedsMigration(fs.directory('/tvos')),
           isFalse);
+    });
+  });
+
+  // --- #33: pod script phases need FLUTTER_ROOT + export environment -------
+  //
+  // Native-build tooling (e.g. cargokit for Rust FFI plugins) runs inside
+  // CocoaPods script phases and sources tvos/Flutter/flutter_export_environment.sh
+  // (or reads Generated.xcconfig) to locate the Dart SDK via FLUTTER_ROOT. The
+  // tvOS build wrote neither before 1.3.4, so those phases failed with
+  // "dart: command not found".
+  group('Generated.xcconfig / flutter_export_environment content', () {
+    test('Generated.xcconfig exports FLUTTER_ROOT and the build variables', () {
+      final String xcconfig = NativeTvosBundle.buildGeneratedXcconfig(
+        flutterRoot: '/opt/flutter-tvos/flutter',
+        applicationPath: '/app',
+        targetFile: 'lib/main.dart',
+        buildDir: '/app/build',
+        buildName: '2.3.4',
+        buildNumber: '17',
+      );
+      expect(xcconfig, contains('FLUTTER_ROOT=/opt/flutter-tvos/flutter'));
+      expect(xcconfig, contains('FLUTTER_APPLICATION_PATH=/app'));
+      expect(xcconfig, contains('FLUTTER_TARGET=lib/main.dart'));
+      expect(xcconfig, contains('FLUTTER_BUILD_DIR=/app/build'));
+      expect(xcconfig, contains('FLUTTER_BUILD_NAME=2.3.4'));
+      expect(xcconfig, contains('FLUTTER_BUILD_NUMBER=17'));
+    });
+
+    test('flutter_export_environment.sh is a shell script exporting the vars',
+        () {
+      final String sh = NativeTvosBundle.buildFlutterExportEnvironment(
+        flutterRoot: '/opt/flutter-tvos/flutter',
+        applicationPath: '/app',
+        targetFile: 'lib/main.dart',
+        buildDir: '/app/build',
+        buildName: '2.3.4',
+        buildNumber: '17',
+      );
+      expect(sh, startsWith('#!/bin/sh'));
+      // cargokit sources this and reads $FLUTTER_ROOT to find the Dart SDK.
+      expect(sh, contains('export "FLUTTER_ROOT=/opt/flutter-tvos/flutter"'));
+      expect(sh, contains('export "FLUTTER_APPLICATION_PATH=/app"'));
+      expect(sh, contains('export "FLUTTER_TARGET=lib/main.dart"'));
+      expect(sh, contains('export "FLUTTER_BUILD_DIR=/app/build"'));
+      expect(sh, contains('export "FLUTTER_BUILD_NAME=2.3.4"'));
+      expect(sh, contains('export "FLUTTER_BUILD_NUMBER=17"'));
+      expect(sh, contains('export "COCOAPODS_PARALLEL_CODE_SIGN=true"'));
     });
   });
 

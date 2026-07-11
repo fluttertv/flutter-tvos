@@ -52,8 +52,10 @@ Same pinned engine as 1.3.3 (Flutter 3.44.5).
 ### Tests
 - Regression coverage for pub-workspace plugin discovery (verified failing on
   the pre-fix code), the AOT-intermediate leak, the `App.framework` min-version
-  flag, the completed template asset catalog, and the app-icon migration
-  warning.
+  flag (both at the flag value and that both AOT clang steps carry it), the
+  completed template asset catalog, the app-icon migration warning, and the
+  `FLUTTER_ROOT` / `flutter_export_environment.sh` generation for pod script
+  phases.
 
 ## [1.3.3] — 2026-07-07
 

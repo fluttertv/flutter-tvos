@@ -1202,19 +1202,14 @@ class NativeTvosBundle extends Target {
 
     // Compile assembly to object file
     final String objectPath = globals.fs.path.join(aotDir.path, 'snapshot_assembly.o');
-    final ProcessResult ccResult = await globals.processManager.run(<String>[
-      'xcrun',
-      'cc',
-      '-arch',
-      'arm64',
-      versionMinFlag,
-      '-isysroot',
-      await _sdkPath(buildInfo.sdkName),
-      '-c',
-      assemblyPath,
-      '-o',
-      objectPath,
-    ]);
+    final ProcessResult ccResult = await globals.processManager.run(
+      aotAssembleArgs(
+        versionMinFlag: versionMinFlag,
+        sdkPath: await _sdkPath(buildInfo.sdkName),
+        assemblyPath: assemblyPath,
+        objectPath: objectPath,
+      ),
+    );
 
     if (ccResult.exitCode != 0) {
       globals.logger.printError('Assembly compilation failed:');
@@ -1229,29 +1224,14 @@ class NativeTvosBundle extends Target {
     appFramework.createSync(recursive: true);
 
     final String appBinaryPath = globals.fs.path.join(appFramework.path, 'App');
-    final ProcessResult linkResult = await globals.processManager.run(<String>[
-      'xcrun',
-      'clang',
-      '-arch',
-      'arm64',
-      versionMinFlag,
-      '-isysroot',
-      await _sdkPath(buildInfo.sdkName),
-      '-dynamiclib',
-      '-Xlinker',
-      '-rpath',
-      '-Xlinker',
-      '@executable_path/Frameworks',
-      '-Xlinker',
-      '-rpath',
-      '-Xlinker',
-      '@loader_path/Frameworks',
-      '-install_name',
-      '@rpath/App.framework/App',
-      '-o',
-      appBinaryPath,
-      objectPath,
-    ]);
+    final ProcessResult linkResult = await globals.processManager.run(
+      aotLinkArgs(
+        versionMinFlag: versionMinFlag,
+        sdkPath: await _sdkPath(buildInfo.sdkName),
+        objectPath: objectPath,
+        appBinaryPath: appBinaryPath,
+      ),
+    );
 
     if (linkResult.exitCode != 0) {
       globals.logger.printError('Linking App.framework failed:');
@@ -1291,6 +1271,68 @@ class NativeTvosBundle extends Target {
       sdkName.contains('simulator')
           ? '-mtvos-simulator-version-min=$_kTvosMinimumOSVersion'
           : '-mtvos-version-min=$_kTvosMinimumOSVersion';
+
+  /// `xcrun cc` argv that assembles the gen_snapshot output to an object file.
+  ///
+  /// [versionMinFlag] MUST be present so `LC_BUILD_VERSION`'s `minos` matches
+  /// `App.framework`'s `MinimumOSVersion` (ITMS-90208) — see [tvosVersionMinFlag].
+  @visibleForTesting
+  static List<String> aotAssembleArgs({
+    required String versionMinFlag,
+    required String sdkPath,
+    required String assemblyPath,
+    required String objectPath,
+  }) {
+    return <String>[
+      'xcrun',
+      'cc',
+      '-arch',
+      'arm64',
+      versionMinFlag,
+      '-isysroot',
+      sdkPath,
+      '-c',
+      assemblyPath,
+      '-o',
+      objectPath,
+    ];
+  }
+
+  /// `xcrun clang` argv that links the object file into `App.framework/App`.
+  ///
+  /// Carries [versionMinFlag] for the same ITMS-90208 reason as
+  /// [aotAssembleArgs].
+  @visibleForTesting
+  static List<String> aotLinkArgs({
+    required String versionMinFlag,
+    required String sdkPath,
+    required String objectPath,
+    required String appBinaryPath,
+  }) {
+    return <String>[
+      'xcrun',
+      'clang',
+      '-arch',
+      'arm64',
+      versionMinFlag,
+      '-isysroot',
+      sdkPath,
+      '-dynamiclib',
+      '-Xlinker',
+      '-rpath',
+      '-Xlinker',
+      '@executable_path/Frameworks',
+      '-Xlinker',
+      '-rpath',
+      '-Xlinker',
+      '@loader_path/Frameworks',
+      '-install_name',
+      '@rpath/App.framework/App',
+      '-o',
+      appBinaryPath,
+      objectPath,
+    ];
+  }
 
   /// Generates the `Info.plist` embedded inside `App.framework`.
   ///
@@ -1442,34 +1484,34 @@ class NativeTvosBundle extends Target {
     final String flutterRoot = globals.fs.path.normalize(
       globals.fs.path.join(Cache.flutterRoot!),
     );
+    final String applicationPath = project.directory.path;
+    final String buildDir = project.directory.childDirectory('build').path;
 
-    final xcconfig = StringBuffer();
-    xcconfig.writeln('FLUTTER_ROOT=$flutterRoot');
-    xcconfig.writeln('FLUTTER_APPLICATION_PATH=${project.directory.path}');
-    xcconfig.writeln('FLUTTER_TARGET=$targetFile');
-    xcconfig.writeln('FLUTTER_BUILD_DIR=${project.directory.childDirectory('build').path}');
-    xcconfig.writeln('FLUTTER_BUILD_NAME=$buildName');
-    xcconfig.writeln('FLUTTER_BUILD_NUMBER=$buildNumber');
-
-    flutterDir.childFile('Generated.xcconfig').writeAsStringSync(xcconfig.toString());
+    flutterDir.childFile('Generated.xcconfig').writeAsStringSync(
+          buildGeneratedXcconfig(
+            flutterRoot: flutterRoot,
+            applicationPath: applicationPath,
+            targetFile: targetFile,
+            buildDir: buildDir,
+            buildName: buildName,
+            buildNumber: buildNumber,
+          ),
+        );
 
     // flutter_export_environment.sh — upstream iOS/macOS write this next to
     // Generated.xcconfig. Native-build tooling that runs inside pod script
     // phases (e.g. cargokit) sources it to locate the Dart SDK via
     // FLUTTER_ROOT, so tvOS must provide it too.
-    final exportEnvironment = StringBuffer()
-      ..writeln('#!/bin/sh')
-      ..writeln('# This is a generated file; do not edit or check into version control.')
-      ..writeln('export "FLUTTER_ROOT=$flutterRoot"')
-      ..writeln('export "FLUTTER_APPLICATION_PATH=${project.directory.path}"')
-      ..writeln('export "FLUTTER_TARGET=$targetFile"')
-      ..writeln('export "FLUTTER_BUILD_DIR=${project.directory.childDirectory('build').path}"')
-      ..writeln('export "FLUTTER_BUILD_NAME=$buildName"')
-      ..writeln('export "FLUTTER_BUILD_NUMBER=$buildNumber"')
-      ..writeln('export "COCOAPODS_PARALLEL_CODE_SIGN=true"');
-    flutterDir
-        .childFile('flutter_export_environment.sh')
-        .writeAsStringSync(exportEnvironment.toString());
+    flutterDir.childFile('flutter_export_environment.sh').writeAsStringSync(
+          buildFlutterExportEnvironment(
+            flutterRoot: flutterRoot,
+            applicationPath: applicationPath,
+            targetFile: targetFile,
+            buildDir: buildDir,
+            buildName: buildName,
+            buildNumber: buildNumber,
+          ),
+        );
 
     // Debug.xcconfig — always write with Pods include so CocoaPods sandbox check passes.
     flutterDir
@@ -1486,5 +1528,53 @@ class NativeTvosBundle extends Target {
           '#include "Generated.xcconfig"\n'
           '#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"\n',
         );
+  }
+
+  /// Body of `tvos/Flutter/Generated.xcconfig`.
+  ///
+  /// `FLUTTER_ROOT` is required by CocoaPods script phases that source the
+  /// Flutter build environment (e.g. cargokit locating the Dart SDK); it was
+  /// missing from tvOS builds before 1.3.4.
+  @visibleForTesting
+  static String buildGeneratedXcconfig({
+    required String flutterRoot,
+    required String applicationPath,
+    required String targetFile,
+    required String buildDir,
+    required String buildName,
+    required String buildNumber,
+  }) {
+    return (StringBuffer()
+          ..writeln('FLUTTER_ROOT=$flutterRoot')
+          ..writeln('FLUTTER_APPLICATION_PATH=$applicationPath')
+          ..writeln('FLUTTER_TARGET=$targetFile')
+          ..writeln('FLUTTER_BUILD_DIR=$buildDir')
+          ..writeln('FLUTTER_BUILD_NAME=$buildName')
+          ..writeln('FLUTTER_BUILD_NUMBER=$buildNumber'))
+        .toString();
+  }
+
+  /// Body of `tvos/Flutter/flutter_export_environment.sh`, sourced by pod
+  /// script phases to export the same variables upstream iOS/macOS provide.
+  @visibleForTesting
+  static String buildFlutterExportEnvironment({
+    required String flutterRoot,
+    required String applicationPath,
+    required String targetFile,
+    required String buildDir,
+    required String buildName,
+    required String buildNumber,
+  }) {
+    return (StringBuffer()
+          ..writeln('#!/bin/sh')
+          ..writeln('# This is a generated file; do not edit or check into version control.')
+          ..writeln('export "FLUTTER_ROOT=$flutterRoot"')
+          ..writeln('export "FLUTTER_APPLICATION_PATH=$applicationPath"')
+          ..writeln('export "FLUTTER_TARGET=$targetFile"')
+          ..writeln('export "FLUTTER_BUILD_DIR=$buildDir"')
+          ..writeln('export "FLUTTER_BUILD_NAME=$buildName"')
+          ..writeln('export "FLUTTER_BUILD_NUMBER=$buildNumber"')
+          ..writeln('export "COCOAPODS_PARALLEL_CODE_SIGN=true"'))
+        .toString();
   }
 }
