@@ -358,16 +358,33 @@ void main() {
   // The asset catalog is copied into a project once (at `create`) and never
   // regenerated on build, so a project created before the catalog fix keeps an
   // incomplete catalog and still fails App Store validation even with a new
-  // CLI. appIconCatalogNeedsMigration flags that so the build can warn.
-  group('appIconCatalogNeedsMigration', () {
+  // CLI. missingAppIconAssets lists exactly what's absent so the build can warn
+  // — structurally, so a half-migrated catalog (wide role pasted in but the
+  // @2x layers never produced) is still flagged.
+  group('missingAppIconAssets', () {
     late MemoryFileSystem fs;
 
     setUp(() {
       fs = MemoryFileSystem.test();
     });
 
-    File indexFile() => fs.file(
-        '/tvos/Runner/Assets.xcassets/AppIcon.brandassets/Contents.json');
+    const String brandRoot =
+        '/tvos/Runner/Assets.xcassets/AppIcon.brandassets';
+
+    File indexFile() => fs.file('$brandRoot/Contents.json');
+
+    // Creates the six @2x icon-layer PNGs the completed template ships.
+    void createAll2xLayers() {
+      for (final String stack in <String>['Small', 'Large']) {
+        for (final String layer in <String>['Back', 'Middle', 'Front']) {
+          fs
+              .file('$brandRoot/App Icon - $stack.imagestack/'
+                  '$layer.imagestacklayer/Content.imageset/'
+                  '${stack.toLowerCase()}_${layer.toLowerCase()}@2x.png')
+              .createSync(recursive: true);
+        }
+      }
+    }
 
     // An old (pre-fix) index lists only the standard top shelf, no wide role.
     const String oldIndex =
@@ -375,26 +392,47 @@ void main() {
     const String completedIndex =
         '{"assets":[{"filename":"Top Shelf Image Wide.imageset","idiom":"tv","role":"top-shelf-image-wide","size":"2320x720"}],"info":{"version":1}}';
 
-    test('true for an old catalog missing the wide top shelf role', () {
+    test('flags the wide role and every @2x layer for an old catalog', () {
       indexFile()
         ..createSync(recursive: true)
         ..writeAsStringSync(oldIndex);
-      expect(NativeTvosBundle.appIconCatalogNeedsMigration(fs.directory('/tvos')),
-          isTrue);
+      final List<String> missing =
+          NativeTvosBundle.missingAppIconAssets(fs.directory('/tvos'));
+      expect(missing, isNotEmpty);
+      expect(missing.first, contains('top-shelf-image-wide'));
+      // The wide role plus all six @2x layer images are absent.
+      expect(missing.length, 7);
     });
 
-    test('false for a completed catalog with the wide top shelf role', () {
+    // The regression the structural check exists for: a user pastes the wide
+    // role into the index but never produces the @2x PNGs. The string-only
+    // check would have gone quiet here.
+    test('flags the @2x layers even when the wide role is already present', () {
       indexFile()
         ..createSync(recursive: true)
         ..writeAsStringSync(completedIndex);
-      expect(NativeTvosBundle.appIconCatalogNeedsMigration(fs.directory('/tvos')),
+      final List<String> missing =
+          NativeTvosBundle.missingAppIconAssets(fs.directory('/tvos'));
+      expect(missing, isNotEmpty);
+      expect(missing.any((String m) => m.contains('top-shelf-image-wide')),
           isFalse);
+      expect(missing.every((String m) => m.endsWith('@2x.png')), isTrue);
+      expect(missing.length, 6);
     });
 
-    test('false when no brand-assets catalog exists (nothing stock to check)',
+    test('empty for a fully complete catalog (wide role + all @2x layers)', () {
+      indexFile()
+        ..createSync(recursive: true)
+        ..writeAsStringSync(completedIndex);
+      createAll2xLayers();
+      expect(NativeTvosBundle.missingAppIconAssets(fs.directory('/tvos')),
+          isEmpty);
+    });
+
+    test('empty when no brand-assets catalog exists (nothing stock to check)',
         () {
-      expect(NativeTvosBundle.appIconCatalogNeedsMigration(fs.directory('/tvos')),
-          isFalse);
+      expect(NativeTvosBundle.missingAppIconAssets(fs.directory('/tvos')),
+          isEmpty);
     });
   });
 
@@ -421,6 +459,10 @@ void main() {
       expect(xcconfig, contains('FLUTTER_BUILD_DIR=/app/build'));
       expect(xcconfig, contains('FLUTTER_BUILD_NAME=2.3.4'));
       expect(xcconfig, contains('FLUTTER_BUILD_NUMBER=17'));
+      // COCOAPODS_PARALLEL_CODE_SIGN is an Xcode build setting consumed by the
+      // `[CP] Embed Pods Frameworks` phase, so it only has an effect from the
+      // xcconfig — never the .sh (that phase never sources it).
+      expect(xcconfig, contains('COCOAPODS_PARALLEL_CODE_SIGN=true'));
     });
 
     test('flutter_export_environment.sh is a shell script exporting the vars',
@@ -441,7 +483,44 @@ void main() {
       expect(sh, contains('export "FLUTTER_BUILD_DIR=/app/build"'));
       expect(sh, contains('export "FLUTTER_BUILD_NAME=2.3.4"'));
       expect(sh, contains('export "FLUTTER_BUILD_NUMBER=17"'));
-      expect(sh, contains('export "COCOAPODS_PARALLEL_CODE_SIGN=true"'));
+      // COCOAPODS_PARALLEL_CODE_SIGN must NOT live here — the .sh is not sourced
+      // by the CocoaPods embed phase, so it would be dead weight (it belongs in
+      // the xcconfig, asserted above).
+      expect(sh, isNot(contains('COCOAPODS_PARALLEL_CODE_SIGN')));
+    });
+
+    // Upstream invariant: the .sh is a strict subset of the xcconfig — every
+    // unconditional `export "K=V"` in the script must appear as `K=V` in the
+    // xcconfig. This catches settings that drift into the (ineffective) .sh
+    // without a matching xcconfig entry.
+    test('every export in the .sh has a matching Generated.xcconfig entry', () {
+      const String flutterRoot = '/opt/flutter-tvos/flutter';
+      const String applicationPath = '/app';
+      const String targetFile = 'lib/main.dart';
+      const String buildDir = '/app/build';
+      const String buildName = '2.3.4';
+      const String buildNumber = '17';
+      final String sh = NativeTvosBundle.buildFlutterExportEnvironment(
+        flutterRoot: flutterRoot,
+        applicationPath: applicationPath,
+        targetFile: targetFile,
+        buildDir: buildDir,
+        buildName: buildName,
+        buildNumber: buildNumber,
+      );
+      final String xcconfig = NativeTvosBundle.buildGeneratedXcconfig(
+        flutterRoot: flutterRoot,
+        applicationPath: applicationPath,
+        targetFile: targetFile,
+        buildDir: buildDir,
+        buildName: buildName,
+        buildNumber: buildNumber,
+      );
+      final RegExp exportLine = RegExp(r'^export "([^"]+)"$', multiLine: true);
+      for (final Match m in exportLine.allMatches(sh)) {
+        expect(xcconfig, contains(m.group(1)!),
+            reason: 'setting from the .sh is missing from Generated.xcconfig');
+      }
     });
   });
 

@@ -516,6 +516,20 @@ class NativeTvosBundle extends Target {
     }
     globals.logger.printStatus('Xcode build done.');
 
+    // Migration guards for device builds. Emitted *after* "Xcode build done."
+    // so they are the last thing on screen — the submission path is the user
+    // archiving from Xcode, and pod install + the multi-minute Xcode spinner
+    // would otherwise scroll an earlier warning out of view. Only signed
+    // (device) builds care: the simulator never signs and is never submitted.
+    if (!buildInfo.simulator) {
+      // Warn if the Runner project can't code-sign the SPM-embedded Flutter
+      // engine (see the method doc).
+      _warnIfFlutterFrameworkUnsigned(tvosProjectDir);
+      // Warn if the app-icon catalog predates the completed template and would
+      // fail App Store asset validation.
+      _warnIfIncompleteAppIconCatalog(tvosProjectDir);
+    }
+
     final platformSuffix = buildInfo.simulator
         ? '$configuration-appletvsimulator'
         : '$configuration-appletvos';
@@ -827,14 +841,6 @@ class NativeTvosBundle extends Target {
       _verifyRunnerLinksUmbrella(tvosProjectDir, spmPlugins);
       _warnIfPodfileMayDoubleLink(tvosProjectDir, spmPlugins);
     }
-
-    // Migration guard: on a device build, warn if the Runner project can't
-    // code-sign the SPM-embedded Flutter engine (see the method doc). Only
-    // matters for signed builds — the simulator never signs.
-    if (!buildInfo.simulator) {
-      _warnIfFlutterFrameworkUnsigned(tvosProjectDir);
-      _warnIfIncompleteAppIconCatalog(tvosProjectDir);
-    }
   }
 
   /// Warns if the app's tvOS brand-asset catalog predates the completed
@@ -846,46 +852,71 @@ class NativeTvosBundle extends Target {
   /// therefore keep an incomplete catalog — missing the `@2x` layer images and
   /// the "Top Shelf Image Wide" asset — and App Store validation rejects the
   /// archive, even when built with an up-to-date CLI. The build itself can't
-  /// repair it without clobbering custom icons, so surface it here.
-  ///
-  /// Detection uses the definitive marker of the old catalog: the brand-assets
-  /// index lists a `top-shelf-image-wide` role only in the completed template.
-  /// If the catalog is absent entirely (a project that removed or restructured
-  /// it), stay silent — that is the user's own catalog to own.
+  /// repair it without clobbering custom icons, so surface it here, listing
+  /// exactly what is missing so the message stays actionable and stays on
+  /// until the migration is genuinely complete.
   void _warnIfIncompleteAppIconCatalog(Directory tvosProjectDir) {
-    if (!appIconCatalogNeedsMigration(tvosProjectDir)) {
+    final List<String> missing = missingAppIconAssets(tvosProjectDir);
+    if (missing.isEmpty) {
       return;
     }
     globals.logger.printWarning(
       'Warning: this project\'s tvOS app-icon catalog '
-      '(Runner/Assets.xcassets/AppIcon.brandassets) predates the current '
-      'template — it is missing the @2x icon layers and the "Top Shelf Image '
-      'Wide" asset, so App Store validation will reject the archive.\n'
+      '(Runner/Assets.xcassets/AppIcon.brandassets) is incomplete and App '
+      'Store validation will reject the archive. Missing:\n'
+      '${missing.map((String m) => '  - $m').join('\n')}\n'
       'Regenerate the tvOS project ("flutter-tvos create ." in the project '
       'root) to complete the catalog. Note that regeneration overwrites '
       'AppIcon.brandassets with the template art — if you have customized your '
-      'icons, add the missing @2x layers and Top Shelf Wide asset by hand '
-      'instead so you keep your art.',
+      'icons, add the missing assets listed above by hand instead so you keep '
+      'your art.',
     );
   }
 
-  /// True if the app's tvOS brand-asset catalog exists but predates the
-  /// completed template (missing the Top Shelf Wide asset), so it would fail
-  /// App Store validation and the user should regenerate or complete it.
+  /// The brand-asset entries the app's tvOS catalog is missing relative to the
+  /// completed template, or `[]` when the catalog is complete or absent
+  /// entirely (nothing stock to validate).
   ///
-  /// Returns false when the catalog is complete (has a `top-shelf-image-wide`
-  /// role) or absent entirely (nothing stock to validate).
+  /// Checks the catalog *structurally* — both the `top-shelf-image-wide` role
+  /// in the index AND the six `@2x` icon-layer images — because a user who
+  /// hand-fixes only the visible half (pastes the wide role into the index but
+  /// never produces the `@2x` PNGs) would otherwise get a clean bill of health
+  /// and still be rejected. A migration check that goes quiet on a half-done
+  /// migration is worse than none.
   @visibleForTesting
-  static bool appIconCatalogNeedsMigration(Directory tvosProjectDir) {
-    final File index = tvosProjectDir
+  static List<String> missingAppIconAssets(Directory tvosProjectDir) {
+    final Directory brand = tvosProjectDir
         .childDirectory('Runner')
         .childDirectory('Assets.xcassets')
-        .childDirectory('AppIcon.brandassets')
-        .childFile('Contents.json');
+        .childDirectory('AppIcon.brandassets');
+    final File index = brand.childFile('Contents.json');
     if (!index.existsSync()) {
-      return false; // No stock catalog to validate.
+      return const <String>[]; // No stock catalog to validate.
     }
-    return !index.readAsStringSync().contains('top-shelf-image-wide');
+    final List<String> missing = <String>[];
+    String indexContents;
+    try {
+      indexContents = index.readAsStringSync();
+    } on FileSystemException {
+      return const <String>[]; // Unreadable — don't crash the build over it.
+    }
+    if (!indexContents.contains('top-shelf-image-wide')) {
+      missing.add('the "top-shelf-image-wide" role in '
+          'AppIcon.brandassets/Contents.json');
+    }
+    for (final String stack in const <String>['Small', 'Large']) {
+      for (final String layer in const <String>['Back', 'Middle', 'Front']) {
+        final File layerImage = brand
+            .childDirectory('App Icon - $stack.imagestack')
+            .childDirectory('$layer.imagestacklayer')
+            .childDirectory('Content.imageset')
+            .childFile('${stack.toLowerCase()}_${layer.toLowerCase()}@2x.png');
+        if (!layerImage.existsSync()) {
+          missing.add(layerImage.path);
+        }
+      }
+    }
+    return missing;
   }
 
   /// Warns if the Runner project lacks the "Sign Flutter.framework" build phase.
@@ -1013,12 +1044,18 @@ class NativeTvosBundle extends Target {
     final Directory buildDir = project.directory.childDirectory('build');
 
     // CopyFlutterBundle writes to outputDir (build/tvos/).
-    // Look for kernel_blob.bin there first, then build/flutter_assets/ as fallback.
+    // Probe for AssetManifest.bin, which `copyAssets` writes in EVERY build
+    // mode. The earlier probe checked kernel_blob.bin, but that is written only
+    // in debug — in release the assets are all present (AssetManifest.bin,
+    // fonts/, assets/, shaders/) except the kernel blob, so the probe missed
+    // and the copy silently skipped, shipping a release archive with no assets.
+    // (It only appeared to work when a stale debug build had left a
+    // kernel_blob.bin behind — invisible on a dev machine, fatal on clean CI.)
     Directory? flutterAssetsSource;
     final Directory tvosOutputDir = buildDir.childDirectory('tvos');
     final Directory defaultDir = buildDir.childDirectory('flutter_assets');
 
-    if (tvosOutputDir.childFile('kernel_blob.bin').existsSync()) {
+    if (tvosOutputDir.childFile('AssetManifest.bin').existsSync()) {
       flutterAssetsSource = tvosOutputDir;
     } else if (defaultDir.existsSync()) {
       flutterAssetsSource = defaultDir;
@@ -1028,12 +1065,19 @@ class NativeTvosBundle extends Target {
         .childDirectory('Flutter')
         .childDirectory('flutter_assets');
 
-    if (flutterAssetsSource != null) {
-      copyFlutterAssetsTree(source: flutterAssetsSource, target: flutterAssetsTarget);
-      globals.logger.printTrace('Copied flutter_assets to ${flutterAssetsTarget.path}');
-    } else {
-      globals.logger.printTrace('flutter_assets not found in build output, skipping.');
+    if (flutterAssetsSource == null) {
+      // There is no legitimate Flutter build that produces no assets; a miss
+      // means the asset-bundling step never ran. Fail loudly rather than ship
+      // an assetless bundle (MaterialIcons boxes, "Unable to load asset").
+      throwToolExit(
+        'No Flutter assets found in ${tvosOutputDir.path}. The asset bundling '
+        'step did not run. Try "flutter-tvos clean" and rebuild; if it '
+        'persists, please file an issue.',
+      );
     }
+
+    copyFlutterAssetsTree(source: flutterAssetsSource, target: flutterAssetsTarget);
+    globals.logger.printTrace('Copied flutter_assets to ${flutterAssetsTarget.path}');
   }
 
   /// Mirrors the build output's flutter_assets tree into [target].
@@ -1535,6 +1579,12 @@ class NativeTvosBundle extends Target {
   /// `FLUTTER_ROOT` is required by CocoaPods script phases that source the
   /// Flutter build environment (e.g. cargokit locating the Dart SDK); it was
   /// missing from tvOS builds before 1.3.4.
+  ///
+  /// `COCOAPODS_PARALLEL_CODE_SIGN` is consumed by CocoaPods' `[CP] Embed Pods
+  /// Frameworks` phase as an *Xcode build setting*, so it must live in the
+  /// xcconfig — not the `.sh`, which that phase never sources. Upstream feeds a
+  /// single settings list to both writers, keeping the `.sh` a strict subset of
+  /// the xcconfig; we mirror that invariant here.
   @visibleForTesting
   static String buildGeneratedXcconfig({
     required String flutterRoot,
@@ -1550,7 +1600,8 @@ class NativeTvosBundle extends Target {
           ..writeln('FLUTTER_TARGET=$targetFile')
           ..writeln('FLUTTER_BUILD_DIR=$buildDir')
           ..writeln('FLUTTER_BUILD_NAME=$buildName')
-          ..writeln('FLUTTER_BUILD_NUMBER=$buildNumber'))
+          ..writeln('FLUTTER_BUILD_NUMBER=$buildNumber')
+          ..writeln('COCOAPODS_PARALLEL_CODE_SIGN=true'))
         .toString();
   }
 
@@ -1573,8 +1624,7 @@ class NativeTvosBundle extends Target {
           ..writeln('export "FLUTTER_TARGET=$targetFile"')
           ..writeln('export "FLUTTER_BUILD_DIR=$buildDir"')
           ..writeln('export "FLUTTER_BUILD_NAME=$buildName"')
-          ..writeln('export "FLUTTER_BUILD_NUMBER=$buildNumber"')
-          ..writeln('export "COCOAPODS_PARALLEL_CODE_SIGN=true"'))
+          ..writeln('export "FLUTTER_BUILD_NUMBER=$buildNumber"'))
         .toString();
   }
 }

@@ -134,21 +134,13 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
       rawGraph is List<dynamic> ? rawGraph : <dynamic>[];
 
   // Build a name→path map from .dart_tool/package_config.json.
-  // Pub workspaces hoist package_config.json to the workspace root, so walk
-  // up from the project directory until one is found (the same resolution pub
-  // itself uses).
+  // Pub workspaces hoist package_config.json to the workspace root, so this
+  // walks up from the project directory until one is found. Use the same
+  // helper upstream's plugin discovery uses (and that tvos_builder.dart:79
+  // already uses), so both places in this build resolve package_config.json
+  // with identical (normalized, path-equals-terminated) semantics.
   final packagePaths = <String, String>{};
-  File packageConfigFile = project.directory
-      .childDirectory('.dart_tool')
-      .childFile('package_config.json');
-  Directory packageConfigSearchDir = project.directory;
-  while (!packageConfigFile.existsSync() &&
-      packageConfigSearchDir.parent.path != packageConfigSearchDir.path) {
-    packageConfigSearchDir = packageConfigSearchDir.parent;
-    packageConfigFile = packageConfigSearchDir
-        .childDirectory('.dart_tool')
-        .childFile('package_config.json');
-  }
+  final File packageConfigFile = project.packageConfig;
   if (packageConfigFile.existsSync()) {
     try {
       final packageConfig =

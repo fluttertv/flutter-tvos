@@ -21,9 +21,10 @@ signed (`bin/internal/engine.version` → `v1.0.1-flutter3.44.5`).
   origin signature. `Flutter.framework` / `Flutter.xcframework` are now signed
   at engine-packaging time (Developer ID Application, hardened runtime + secure
   timestamp), mirroring how flutter.dev signs its iOS artifacts.
-- `engine/build.sh` gained `--signing-identity` and refuses to `--publish`
-  without one; `engine/verify_artifacts.sh` fails the release if any tvOS engine
-  is not origin-signed.
+- `build.sh` gained `--signing-identity` and refuses to `--publish` without
+  one; `verify_artifacts.sh` fails the release if any tvOS engine is not
+  origin-signed. (Both live in the separate `fluttertv/engine` repo, not this
+  one.)
 
 ### Fixed
 - **Custom fragment shaders now render on tvOS (Metal).** `TvosCopyFlutterBundle`
@@ -56,14 +57,33 @@ signed (`bin/internal/engine.version` → `v1.0.1-flutter3.44.5`).
 - **The tvOS app-icon template ships a complete asset catalog.** Newly created
   projects now include `@2x` images for every brand-asset layer and the Top
   Shelf Image Wide asset, both required by App Store asset validation.
+- **Clean release builds no longer ship without `flutter_assets`.** The asset
+  copy probed for `kernel_blob.bin`, which exists only in debug — so on a clean
+  checkout a `--release` build found no probe hit, skipped the copy with only a
+  trace log, and archived an assetless bundle (missing icons, "Unable to load
+  asset"). It now probes `AssetManifest.bin` (written in every mode) and hard
+  fails if no assets are found.
+- **Generated Xcode phases resolve the app bundle by `WRAPPER_NAME` /
+  `CODESIGNING_FOLDER_PATH`, not `PRODUCT_NAME`.** A target with a custom product
+  name resolved to a nonexistent path, silently skipping the framework/asset
+  copy and the engine re-sign. The "Sign Flutter.framework" phase now also
+  hard-fails (rather than warns) when the engine is missing on a signing build.
+- **`COCOAPODS_PARALLEL_CODE_SIGN` moved to `Generated.xcconfig`.** It is an
+  Xcode build setting consumed by the CocoaPods embed phase, so it had no effect
+  in the `.sh` where it was previously written.
+- **`flutter-tvos clean` removes `flutter_export_environment.sh`.** A stale copy
+  with an absolute `FLUTTER_ROOT` otherwise survived a clean.
 
 ### Added
 - **Migration warning for app-icon catalogs created before 1.3.4.** The brand
   asset catalog is copied into a project once at `create` time and is never
   regenerated on build (it holds your own icon art), so an existing project
   keeps its incomplete catalog and still fails App Store asset validation with a
-  new CLI. Device builds now warn when the catalog predates the fix and point at
-  regeneration, or a by-hand fix that preserves custom icons.
+  new CLI. Device builds now warn when the catalog is incomplete — checked
+  structurally (the Top Shelf Wide role AND the six `@2x` layer images, so a
+  half-done hand-migration is still flagged), listing exactly what is missing —
+  and the warning is emitted after "Xcode build done." so it is the last thing
+  on screen rather than scrolled away by the Xcode build.
 - **"Sign Flutter.framework" build phase in generated projects.** Re-signs the
   Swift Package Manager–embedded engine with the app's own identity (as
   CocoaPods' embed script did) so device installs don't carry nested code signed
@@ -76,9 +96,13 @@ signed (`bin/internal/engine.version` → `v1.0.1-flutter3.44.5`).
 - Regression coverage for pub-workspace plugin discovery (verified failing on
   the pre-fix code), the AOT-intermediate leak, the `App.framework` min-version
   flag (both at the flag value and that both AOT clang steps carry it), the
-  completed template asset catalog, the app-icon migration warning, and the
-  `FLUTTER_ROOT` / `flutter_export_environment.sh` generation for pod script
-  phases.
+  completed template asset catalog, the structural app-icon migration check
+  (including the half-migrated case), and the `FLUTTER_ROOT` /
+  `flutter_export_environment.sh` generation for pod script phases (with a parity
+  guard that every `.sh` export has a matching xcconfig entry).
+- A shader-bundle test drives the real `TvosCopyFlutterBundle` target and
+  asserts impellerc is invoked with the Metal runtime stage (guards the #34 fix
+  at its production call site, not just the argv builder).
 
 ## [1.3.3] — 2026-07-07
 
