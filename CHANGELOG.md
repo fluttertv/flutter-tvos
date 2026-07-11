@@ -2,6 +2,59 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.3.4] — 2026-07-11
+
+Bug-fix release: clears several App Store validation blockers, adds Dart pub
+workspace support, and re-signs the SPM-embedded engine for device installs.
+Same pinned engine as 1.3.3 (Flutter 3.44.5).
+
+### Fixed
+- **Apps that are members of a Dart pub workspace now register their tvOS
+  plugins.** Under `resolution: workspace`, `dart pub get` writes
+  `package_config.json` only at the workspace root — each member gets a
+  `workspace_ref.json` pointer instead. Plugin discovery read the member's own
+  `.dart_tool/package_config.json`, found nothing, and silently produced a
+  binary with no plugins registered (no warning). It now walks up to the
+  workspace root's `package_config.json` and resolves each relative `rootUri`
+  against it. (#29, #32)
+- **CocoaPods build-script phases get `FLUTTER_ROOT` and
+  `flutter_export_environment.sh`.** Pod script phases that reference them no
+  longer fail on a clean checkout. (#33)
+- **AOT intermediates no longer leak into `flutter_assets`.** `gen_snapshot`'s
+  `snapshot_assembly.S`/`.o` were written under `build/tvos/`, which the asset
+  copier mirrors into the app bundle — shipping stray `.S`/`.o` files that App
+  Store validation rejects. They now go to the build's `.dart_tool` working
+  directory, and the asset copier also skips any stale `aot/` / `Profile-` dirs.
+- **`App.framework`'s deployment target matches its `MinimumOSVersion` (13.0).**
+  The AOT clang steps omitted the min-version flag, so `LC_BUILD_VERSION`'s
+  `minos` was stamped with the SDK version (e.g. 26.0) — rejected by App Store
+  validation as ITMS-90208. Both clang calls (assemble + link) now pass the
+  correct `-mtvos-version-min` / `-mtvos-simulator-version-min` flag.
+- **The tvOS app-icon template ships a complete asset catalog.** Newly created
+  projects now include `@2x` images for every brand-asset layer and the Top
+  Shelf Image Wide asset, both required by App Store asset validation.
+
+### Added
+- **Migration warning for app-icon catalogs created before 1.3.4.** The brand
+  asset catalog is copied into a project once at `create` time and is never
+  regenerated on build (it holds your own icon art), so an existing project
+  keeps its incomplete catalog and still fails App Store asset validation with a
+  new CLI. Device builds now warn when the catalog predates the fix and point at
+  regeneration, or a by-hand fix that preserves custom icons.
+- **"Sign Flutter.framework" build phase in generated projects.** Re-signs the
+  Swift Package Manager–embedded engine with the app's own identity (as
+  CocoaPods' embed script did) so device installs don't carry nested code signed
+  by a foreign team; a build-time warning flags projects that lack the phase.
+  Note: this does not by itself satisfy Apple's commonly-used-SDK signature
+  check (ITMS-91065), which requires an origin-signed engine artifact shipped in
+  a separate engine release.
+
+### Tests
+- Regression coverage for pub-workspace plugin discovery (verified failing on
+  the pre-fix code), the AOT-intermediate leak, the `App.framework` min-version
+  flag, the completed template asset catalog, and the app-icon migration
+  warning.
+
 ## [1.3.3] — 2026-07-07
 
 Refreshes the pinned engine to **Flutter 3.44.5** (`f94f4fc7`, Dart
