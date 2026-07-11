@@ -833,7 +833,59 @@ class NativeTvosBundle extends Target {
     // matters for signed builds — the simulator never signs.
     if (!buildInfo.simulator) {
       _warnIfFlutterFrameworkUnsigned(tvosProjectDir);
+      _warnIfIncompleteAppIconCatalog(tvosProjectDir);
     }
+  }
+
+  /// Warns if the app's tvOS brand-asset catalog predates the completed
+  /// template and would fail App Store asset validation.
+  ///
+  /// The `AppIcon.brandassets` catalog is copied into the project once, at
+  /// `flutter-tvos create` time, and is never regenerated on build (it holds
+  /// the user's own app-icon art). Projects created before the catalog fix
+  /// therefore keep an incomplete catalog — missing the `@2x` layer images and
+  /// the "Top Shelf Image Wide" asset — and App Store validation rejects the
+  /// archive, even when built with an up-to-date CLI. The build itself can't
+  /// repair it without clobbering custom icons, so surface it here.
+  ///
+  /// Detection uses the definitive marker of the old catalog: the brand-assets
+  /// index lists a `top-shelf-image-wide` role only in the completed template.
+  /// If the catalog is absent entirely (a project that removed or restructured
+  /// it), stay silent — that is the user's own catalog to own.
+  void _warnIfIncompleteAppIconCatalog(Directory tvosProjectDir) {
+    if (!appIconCatalogNeedsMigration(tvosProjectDir)) {
+      return;
+    }
+    globals.logger.printWarning(
+      'Warning: this project\'s tvOS app-icon catalog '
+      '(Runner/Assets.xcassets/AppIcon.brandassets) predates the current '
+      'template — it is missing the @2x icon layers and the "Top Shelf Image '
+      'Wide" asset, so App Store validation will reject the archive.\n'
+      'Regenerate the tvOS project ("flutter-tvos create ." in the project '
+      'root) to complete the catalog. Note that regeneration overwrites '
+      'AppIcon.brandassets with the template art — if you have customized your '
+      'icons, add the missing @2x layers and Top Shelf Wide asset by hand '
+      'instead so you keep your art.',
+    );
+  }
+
+  /// True if the app's tvOS brand-asset catalog exists but predates the
+  /// completed template (missing the Top Shelf Wide asset), so it would fail
+  /// App Store validation and the user should regenerate or complete it.
+  ///
+  /// Returns false when the catalog is complete (has a `top-shelf-image-wide`
+  /// role) or absent entirely (nothing stock to validate).
+  @visibleForTesting
+  static bool appIconCatalogNeedsMigration(Directory tvosProjectDir) {
+    final File index = tvosProjectDir
+        .childDirectory('Runner')
+        .childDirectory('Assets.xcassets')
+        .childDirectory('AppIcon.brandassets')
+        .childFile('Contents.json');
+    if (!index.existsSync()) {
+      return false; // No stock catalog to validate.
+    }
+    return !index.readAsStringSync().contains('top-shelf-image-wide');
   }
 
   /// Warns if the Runner project lacks the "Sign Flutter.framework" build phase.

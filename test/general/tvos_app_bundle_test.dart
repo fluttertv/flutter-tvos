@@ -320,6 +320,51 @@ void main() {
     });
   });
 
+  // --- Migration guard: an OLD project keeps its incomplete catalog ---------
+  //
+  // The asset catalog is copied into a project once (at `create`) and never
+  // regenerated on build, so a project created before the catalog fix keeps an
+  // incomplete catalog and still fails App Store validation even with a new
+  // CLI. appIconCatalogNeedsMigration flags that so the build can warn.
+  group('appIconCatalogNeedsMigration', () {
+    late MemoryFileSystem fs;
+
+    setUp(() {
+      fs = MemoryFileSystem.test();
+    });
+
+    File indexFile() => fs.file(
+        '/tvos/Runner/Assets.xcassets/AppIcon.brandassets/Contents.json');
+
+    // An old (pre-fix) index lists only the standard top shelf, no wide role.
+    const String oldIndex =
+        '{"assets":[{"filename":"App Icon - Large.imagestack","idiom":"tv","role":"primary-app-icon","size":"1280x768"},{"filename":"Top Shelf Image.imageset","idiom":"tv","role":"top-shelf-image","size":"1920x720"}],"info":{"version":1}}';
+    const String completedIndex =
+        '{"assets":[{"filename":"Top Shelf Image Wide.imageset","idiom":"tv","role":"top-shelf-image-wide","size":"2320x720"}],"info":{"version":1}}';
+
+    test('true for an old catalog missing the wide top shelf role', () {
+      indexFile()
+        ..createSync(recursive: true)
+        ..writeAsStringSync(oldIndex);
+      expect(NativeTvosBundle.appIconCatalogNeedsMigration(fs.directory('/tvos')),
+          isTrue);
+    });
+
+    test('false for a completed catalog with the wide top shelf role', () {
+      indexFile()
+        ..createSync(recursive: true)
+        ..writeAsStringSync(completedIndex);
+      expect(NativeTvosBundle.appIconCatalogNeedsMigration(fs.directory('/tvos')),
+          isFalse);
+    });
+
+    test('false when no brand-assets catalog exists (nothing stock to check)',
+        () {
+      expect(NativeTvosBundle.appIconCatalogNeedsMigration(fs.directory('/tvos')),
+          isFalse);
+    });
+  });
+
   // --- Swift Package Manager: umbrella wired into the Xcode project --------
   group('Xcode project references the FlutterGeneratedPluginSwiftPackage', () {
     const fs = LocalFileSystem();
