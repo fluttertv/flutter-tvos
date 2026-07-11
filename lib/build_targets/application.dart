@@ -9,12 +9,18 @@ import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart' show Status;
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
+import 'package:flutter_tools/src/build_system/depfile.dart';
 import 'package:flutter_tools/src/build_system/exceptions.dart';
+import 'package:flutter_tools/src/build_system/targets/assets.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
+import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
+import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/compile.dart';
 import 'package:flutter_tools/src/dart/package_map.dart';
+import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
@@ -236,21 +242,83 @@ class TvosCopyFlutterBundle extends CopyFlutterBundle {
     TvosKernelSnapshot(),
   ];
 
+  /// Mirrors [CopyFlutterBundle.build] with one change: assets are copied
+  /// with `targetPlatform: TargetPlatform.ios` instead of upstream's
+  /// hard-coded `TargetPlatform.android`.
+  ///
+  /// The target platform drives impellerc's runtime-stage flags for fragment
+  /// shaders (see `ShaderCompiler._shaderTargetsFromTargetPlatform`): android
+  /// yields SkSL/GLES/Vulkan stages, ios yields the Metal stage. Upstream can
+  /// hard-code android because on real iOS the release asset copy happens in
+  /// `ReleaseIosApplicationBundle`, which passes ios — but tvOS bundles assets
+  /// through this target, and the tvOS engine renders with Impeller/Metal, so
+  /// android-stage shaders fail at runtime with "does not contain appropriate
+  /// runtime stage data for current backend (Metal)".
+  ///
+  /// Kept in sync with upstream `CopyFlutterBundle.build`; re-mirror any
+  /// change there on a Flutter upgrade.
   @override
   Future<void> build(Environment environment) async {
     // We skip the native-assets targets for tvOS (see `dependencies`),
-    // so `native_assets.json` is never produced. Upstream
-    // CopyFlutterBundle.build() unconditionally bundles it as
-    // `NativeAssetsManifest.json` and throws PathNotFound without it.
-    // Write the canonical empty manifest first — tvOS genuinely has no
-    // Dart native assets — so the upstream copy succeeds. (In-policy:
-    // our code writes a file; flutter_tools is untouched.)
+    // so `native_assets.json` is never produced. The asset copy below
+    // bundles it as `NativeAssetsManifest.json` and throws PathNotFound
+    // without it. Write the canonical empty manifest first — tvOS genuinely
+    // has no Dart native assets — so the copy succeeds.
     final File manifest = environment.buildDir.childFile('native_assets.json');
     if (!manifest.existsSync()) {
       manifest.parent.createSync(recursive: true);
       manifest.writeAsStringSync('{"format-version":[1,0,0],"native-assets":{}}');
     }
-    await super.build(environment);
+
+    final String? buildModeEnvironment = environment.defines[kBuildMode];
+    if (buildModeEnvironment == null) {
+      throw MissingDefineException(kBuildMode, 'copy_flutter_bundle');
+    }
+    final String? flavor = environment.defines[kFlavor];
+
+    final buildMode = BuildMode.fromCliName(buildModeEnvironment);
+    environment.outputDir.createSync(recursive: true);
+
+    // Only copy the prebuilt runtimes and kernel blob in debug mode.
+    if (buildMode == BuildMode.debug) {
+      final String vmSnapshotData = environment.artifacts.getArtifactPath(
+        Artifact.vmSnapshotData,
+        mode: BuildMode.debug,
+      );
+      final String isolateSnapshotData = environment.artifacts.getArtifactPath(
+        Artifact.isolateSnapshotData,
+        mode: BuildMode.debug,
+      );
+      environment.buildDir
+          .childFile('app.dill')
+          .copySync(environment.outputDir.childFile('kernel_blob.bin').path);
+      environment.fileSystem
+          .file(vmSnapshotData)
+          .copySync(environment.outputDir.childFile('vm_snapshot_data').path);
+      environment.fileSystem
+          .file(isolateSnapshotData)
+          .copySync(environment.outputDir.childFile('isolate_snapshot_data').path);
+    }
+    final DartHooksResult dartHookResult = await DartBuild.loadHookResult(environment);
+    final Depfile assetDepfile = await copyAssets(
+      environment,
+      environment.outputDir,
+      dartHookResult: dartHookResult,
+      // tvOS rides the iOS engine (Impeller/Metal): shaders need the Metal
+      // runtime stage that only the ios shader target emits.
+      targetPlatform: TargetPlatform.ios,
+      buildMode: buildMode,
+      flavor: flavor,
+      additionalContent: <String, DevFSContent>{
+        'NativeAssetsManifest.json': DevFSFileContent(
+          environment.buildDir.childFile('native_assets.json'),
+        ),
+      },
+    );
+    environment.depFileService.writeToFile(
+      assetDepfile,
+      environment.buildDir.childFile('flutter_assets.d'),
+    );
   }
 }
 
@@ -360,7 +428,7 @@ class NativeTvosBundle extends Target {
 
     // 4. For release/profile: compile AOT snapshot via gen_snapshot → App.framework
     if (!buildInfo.buildInfo.isDebug) {
-      await _compileAotSnapshot(project, tvosProjectDir, environment);
+      await compileAotSnapshot(project, tvosProjectDir, environment);
     }
 
     // 5. Generate xcconfig files
@@ -447,6 +515,23 @@ class NativeTvosBundle extends Target {
       throw Exception('Xcode build failed');
     }
     globals.logger.printStatus('Xcode build done.');
+
+    // Migration guards for device builds. Emitted *after* "Xcode build done."
+    // so they are the last thing on screen — the submission path is the user
+    // archiving from Xcode, and pod install + the multi-minute Xcode spinner
+    // would otherwise scroll an earlier warning out of view. Only signed
+    // (device) builds care: the simulator never signs and is never submitted.
+    if (!buildInfo.simulator) {
+      // Warn if the Runner project can't code-sign the SPM-embedded Flutter
+      // engine (see the method doc).
+      _warnIfFlutterFrameworkUnsigned(tvosProjectDir);
+      // Warn if the Runner project's build phases predate 1.4.0 and resolve the
+      // bundle via ${PRODUCT_NAME}.app under a custom product name.
+      _warnIfStalePbxprojBundlePath(tvosProjectDir);
+      // Warn if the app-icon catalog predates the completed template and would
+      // fail App Store asset validation.
+      _warnIfIncompleteAppIconCatalog(tvosProjectDir);
+    }
 
     final platformSuffix = buildInfo.simulator
         ? '$configuration-appletvsimulator'
@@ -761,6 +846,187 @@ class NativeTvosBundle extends Target {
     }
   }
 
+  /// Warns if the app's tvOS brand-asset catalog predates the completed
+  /// template and would fail App Store asset validation.
+  ///
+  /// The `AppIcon.brandassets` catalog is copied into the project once, at
+  /// `flutter-tvos create` time, and is never regenerated on build (it holds
+  /// the user's own app-icon art). Projects created before the catalog fix
+  /// therefore keep an incomplete catalog — missing the `@2x` layer images and
+  /// the "Top Shelf Image Wide" asset — and App Store validation rejects the
+  /// archive, even when built with an up-to-date CLI. The build itself can't
+  /// repair it without clobbering custom icons, so surface it here, listing
+  /// exactly what is missing so the message stays actionable and stays on
+  /// until the migration is genuinely complete.
+  void _warnIfIncompleteAppIconCatalog(Directory tvosProjectDir) {
+    final List<String> missing = missingAppIconAssets(tvosProjectDir);
+    if (missing.isEmpty) {
+      return;
+    }
+    globals.logger.printWarning(
+      'Warning: this project\'s tvOS app-icon catalog '
+      '(Runner/Assets.xcassets/AppIcon.brandassets) is incomplete and App '
+      'Store validation will reject the archive. Missing:\n'
+      '${missing.map((String m) => '  - $m').join('\n')}\n'
+      'Regenerate the tvOS project ("flutter-tvos create ." in the project '
+      'root) to complete the catalog. Note that regeneration overwrites '
+      'AppIcon.brandassets with the template art — if you have customized your '
+      'icons, add the missing assets listed above by hand instead so you keep '
+      'your art.',
+    );
+  }
+
+  /// The brand-asset entries the app's tvOS catalog is missing relative to the
+  /// completed template, or `[]` when the catalog is complete or absent
+  /// entirely (nothing stock to validate).
+  ///
+  /// Checks the catalog *structurally* — both the `top-shelf-image-wide` role
+  /// in the index AND the six `@2x` icon-layer images — because a user who
+  /// hand-fixes only the visible half (pastes the wide role into the index but
+  /// never produces the `@2x` PNGs) would otherwise get a clean bill of health
+  /// and still be rejected. A migration check that goes quiet on a half-done
+  /// migration is worse than none.
+  @visibleForTesting
+  static List<String> missingAppIconAssets(Directory tvosProjectDir) {
+    final Directory brand = tvosProjectDir
+        .childDirectory('Runner')
+        .childDirectory('Assets.xcassets')
+        .childDirectory('AppIcon.brandassets');
+    final File index = brand.childFile('Contents.json');
+    if (!index.existsSync()) {
+      return const <String>[]; // No stock catalog to validate.
+    }
+    final List<String> missing = <String>[];
+    String indexContents;
+    try {
+      indexContents = index.readAsStringSync();
+    } on FileSystemException {
+      return const <String>[]; // Unreadable — don't crash the build over it.
+    }
+    if (!indexContents.contains('top-shelf-image-wide')) {
+      missing.add('the "top-shelf-image-wide" role in '
+          'AppIcon.brandassets/Contents.json');
+    }
+    for (final String stack in const <String>['Small', 'Large']) {
+      for (final String layer in const <String>['Back', 'Middle', 'Front']) {
+        final File layerImage = brand
+            .childDirectory('App Icon - $stack.imagestack')
+            .childDirectory('$layer.imagestacklayer')
+            .childDirectory('Content.imageset')
+            .childFile('${stack.toLowerCase()}_${layer.toLowerCase()}@2x.png');
+        if (!layerImage.existsSync()) {
+          missing.add(layerImage.path);
+        }
+      }
+    }
+    return missing;
+  }
+
+  /// Warns if the Runner project lacks the "Sign Flutter.framework" build phase.
+  ///
+  /// The engine is pulled into the app bundle transitively through the static
+  /// `FlutterGeneratedPluginSwiftPackage` umbrella as a dynamic binary
+  /// framework. Xcode embeds it but does NOT code-sign it (it is not an explicit
+  /// "Embed & Sign" product on the Runner target). The phase re-signs the
+  /// embedded engine with the app's own identity (like CocoaPods' embed script
+  /// did) so device installs and dev builds don't carry a framework signed by a
+  /// foreign team — the engine artifact itself ships ORIGIN-signed by
+  /// flutter-tvos.
+  ///
+  /// Note: this phase does NOT address ITMS-91065 ("Missing signature").
+  /// Apple's commonly-used-SDK check requires the SDK provider's origin
+  /// signature on the artifact as vended to the build; an app-identity re-sign
+  /// (this phase, or the export re-sign) does not satisfy it — proven by real
+  /// App Store submissions that were rejected with ITMS-91065 both with and
+  /// without this phase while the framework carried a valid Distribution
+  /// signature. ITMS-91065 is fixed by the signed engine artifact
+  /// (engine/build.sh --signing-identity), not here.
+  void _warnIfFlutterFrameworkUnsigned(Directory tvosProjectDir) {
+    final File pbxproj = tvosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    if (!pbxproj.existsSync()) {
+      return;
+    }
+    if (pbxproj.readAsStringSync().contains('Sign Flutter.framework')) {
+      return; // Already has the signing phase.
+    }
+    globals.logger.printWarning(
+      'Warning: this project\'s Xcode project has no "Sign Flutter.framework" '
+      'build phase, so the Flutter engine embedded via Swift Package Manager '
+      'keeps its SDK-origin signature instead of being re-signed with your own '
+      'identity. Device installs may fail with a code-signature error.\n'
+      'Regenerate the tvOS project ("flutter-tvos create ." in the project root) '
+      'so it re-signs the embedded engine with your own identity.',
+    );
+  }
+
+  /// Warns if the Runner project's generated build phases predate 1.4.0 and
+  /// still resolve the app bundle through `${PRODUCT_NAME}.app` while the target
+  /// overrides `PRODUCT_NAME`.
+  ///
+  /// The pre-1.4.0 "Embed App.framework" / "Copy flutter_assets" / "Sign
+  /// Flutter.framework" phases built the bundle path as
+  /// `${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/…`; the current template uses
+  /// `${WRAPPER_NAME}` / `${CODESIGNING_FOLDER_PATH}`, which are the values Xcode
+  /// actually signs. `project.pbxproj` is copied in once at `create` time and is
+  /// never rewritten on build, so an existing project keeps the old phases. For
+  /// the default product name (`$(TARGET_NAME)` → `Runner`) the two resolve to
+  /// the same path and the old phases still work — so we stay quiet there and
+  /// only warn when the target overrides `PRODUCT_NAME`, where the stale path
+  /// can miss the real bundle and the engine/asset copy silently no-ops.
+  void _warnIfStalePbxprojBundlePath(Directory tvosProjectDir) {
+    final File pbxproj = tvosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    if (!pbxproj.existsSync()) {
+      return;
+    }
+    String contents;
+    try {
+      contents = pbxproj.readAsStringSync();
+    } on FileSystemException {
+      return; // Unreadable — don't crash the build over an advisory check.
+    }
+    if (!pbxprojUsesStaleBundlePath(contents)) {
+      return;
+    }
+    globals.logger.printWarning(
+      'Warning: this project\'s Xcode project (Runner.xcodeproj) predates 1.4.0 '
+      'and its Flutter build phases resolve the app bundle via '
+      '"\${PRODUCT_NAME}.app" while the target overrides PRODUCT_NAME. That path '
+      'can differ from the bundle Xcode actually builds, so the engine/asset '
+      'copy and the engine re-sign may silently target a path that does not '
+      'exist.\n'
+      'Regenerate the tvOS project ("flutter-tvos create ." in the project root) '
+      'to pick up build phases that resolve the bundle via WRAPPER_NAME / '
+      'CODESIGNING_FOLDER_PATH.',
+    );
+  }
+
+  /// True if [pbxprojContents] still resolves the app bundle through
+  /// `${PRODUCT_NAME}.app/…` in the generated build phases (pre-1.4.0 template)
+  /// AND the target sets a non-default `PRODUCT_NAME`.
+  ///
+  /// The trailing slash keys on the phase *path* (`.app/Frameworks`,
+  /// `.app/flutter_assets`), not an incidental mention of the token in a
+  /// comment. The default `PRODUCT_NAME` (`$(TARGET_NAME)` / `Runner`) makes the
+  /// stale path equal the real bundle, so it is not flagged.
+  @visibleForTesting
+  static bool pbxprojUsesStaleBundlePath(String pbxprojContents) {
+    if (!pbxprojContents.contains('\${PRODUCT_NAME}.app/')) {
+      return false; // Already on WRAPPER_NAME / CODESIGNING_FOLDER_PATH.
+    }
+    final RegExp assignment = RegExp(r'PRODUCT_NAME = ([^;]+);');
+    for (final Match m in assignment.allMatches(pbxprojContents)) {
+      final String value = m.group(1)!.trim().replaceAll('"', '');
+      if (value != r'$(TARGET_NAME)' && value != 'Runner') {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Warns if the project's `Podfile` predates the SPM skip guard while SPM
   /// plugins are present. The current Podfile skips any plugin that ships a
   /// `Package.swift` (it references `'Package.swift'` in the guard); an older
@@ -847,12 +1113,18 @@ class NativeTvosBundle extends Target {
     final Directory buildDir = project.directory.childDirectory('build');
 
     // CopyFlutterBundle writes to outputDir (build/tvos/).
-    // Look for kernel_blob.bin there first, then build/flutter_assets/ as fallback.
+    // Probe for AssetManifest.bin, which `copyAssets` writes in EVERY build
+    // mode. The earlier probe checked kernel_blob.bin, but that is written only
+    // in debug — in release the assets are all present (AssetManifest.bin,
+    // fonts/, assets/, shaders/) except the kernel blob, so the probe missed
+    // and the copy silently skipped, shipping a release archive with no assets.
+    // (It only appeared to work when a stale debug build had left a
+    // kernel_blob.bin behind — invisible on a dev machine, fatal on clean CI.)
     Directory? flutterAssetsSource;
     final Directory tvosOutputDir = buildDir.childDirectory('tvos');
     final Directory defaultDir = buildDir.childDirectory('flutter_assets');
 
-    if (tvosOutputDir.childFile('kernel_blob.bin').existsSync()) {
+    if (tvosOutputDir.childFile('AssetManifest.bin').existsSync()) {
       flutterAssetsSource = tvosOutputDir;
     } else if (defaultDir.existsSync()) {
       flutterAssetsSource = defaultDir;
@@ -862,12 +1134,19 @@ class NativeTvosBundle extends Target {
         .childDirectory('Flutter')
         .childDirectory('flutter_assets');
 
-    if (flutterAssetsSource != null) {
-      copyFlutterAssetsTree(source: flutterAssetsSource, target: flutterAssetsTarget);
-      globals.logger.printTrace('Copied flutter_assets to ${flutterAssetsTarget.path}');
-    } else {
-      globals.logger.printTrace('flutter_assets not found in build output, skipping.');
+    if (flutterAssetsSource == null) {
+      // There is no legitimate Flutter build that produces no assets; a miss
+      // means the asset-bundling step never ran. Fail loudly rather than ship
+      // an assetless bundle (MaterialIcons boxes, "Unable to load asset").
+      throwToolExit(
+        'No Flutter assets found in ${tvosOutputDir.path}. The asset bundling '
+        'step did not run. Try "flutter-tvos clean" and rebuild; if it '
+        'persists, please file an issue.',
+      );
     }
+
+    copyFlutterAssetsTree(source: flutterAssetsSource, target: flutterAssetsTarget);
+    globals.logger.printTrace('Copied flutter_assets to ${flutterAssetsTarget.path}');
   }
 
   /// Mirrors the build output's flutter_assets tree into [target].
@@ -892,7 +1171,16 @@ class NativeTvosBundle extends Target {
 
     for (final FileSystemEntity entity in source.listSync()) {
       final String name = source.fileSystem.path.basename(entity.path);
-      if (entity is Directory && (name.contains('Debug-') || name.contains('Release-'))) {
+      if (entity is Directory &&
+          (name.contains('Debug-') ||
+              name.contains('Release-') ||
+              name.contains('Profile-') ||
+              name == 'aot')) {
+        // Skip xcodebuild output dirs and AOT intermediates sitting alongside
+        // the assets. `aot/` is written to buildDir since the leak fix, but
+        // projects built with an older CLI may still carry a stale
+        // build/tvos/aot/ — copying it ships snapshot_assembly.S/.o inside
+        // flutter_assets and App Store validation rejects the archive.
         continue;
       }
       final String destPath = target.fileSystem.path.join(target.path, name);
@@ -957,7 +1245,13 @@ class NativeTvosBundle extends Target {
   ///
   /// This produces App.framework containing the AOT-compiled Dart code,
   /// which xcodebuild will link into the final .app bundle.
-  Future<void> _compileAotSnapshot(
+  ///
+  /// Exposed for testing so a unit test can assert the production call sites
+  /// thread the tvOS deployment-target flag into both AOT clang steps (the flag
+  /// value and the argv builders are unit-tested separately; this guards that
+  /// they are actually wired up — see `tvos_aot_compile_test.dart`).
+  @visibleForTesting
+  Future<void> compileAotSnapshot(
     FlutterProject project,
     Directory tvosProjectDir,
     Environment environment,
@@ -989,8 +1283,13 @@ class NativeTvosBundle extends Target {
       );
     }
 
-    // Output directory for AOT artifacts
-    final Directory aotDir = environment.outputDir.childDirectory('aot');
+    // Working directory for AOT intermediates (assembly + object file).
+    // MUST live in buildDir (.dart_tool/flutter_build/<hash>/), NOT outputDir
+    // (build/tvos/): outputDir is the tree copyFlutterAssetsTree mirrors into
+    // the app's flutter_assets, so intermediates placed there ship inside the
+    // bundle and App Store validation rejects the archive (stray .S/.o files
+    // are not permitted bundle contents).
+    final Directory aotDir = environment.buildDir.childDirectory('aot');
     aotDir.createSync(recursive: true);
 
     final String assemblyPath = globals.fs.path.join(aotDir.path, 'snapshot_assembly.S');
@@ -1018,20 +1317,18 @@ class NativeTvosBundle extends Target {
       throw Exception('gen_snapshot failed');
     }
 
+    final String versionMinFlag = tvosVersionMinFlag(buildInfo.sdkName);
+
     // Compile assembly to object file
     final String objectPath = globals.fs.path.join(aotDir.path, 'snapshot_assembly.o');
-    final ProcessResult ccResult = await globals.processManager.run(<String>[
-      'xcrun',
-      'cc',
-      '-arch',
-      'arm64',
-      '-isysroot',
-      await _sdkPath(buildInfo.sdkName),
-      '-c',
-      assemblyPath,
-      '-o',
-      objectPath,
-    ]);
+    final ProcessResult ccResult = await globals.processManager.run(
+      aotAssembleArgs(
+        versionMinFlag: versionMinFlag,
+        sdkPath: await _sdkPath(buildInfo.sdkName),
+        assemblyPath: assemblyPath,
+        objectPath: objectPath,
+      ),
+    );
 
     if (ccResult.exitCode != 0) {
       globals.logger.printError('Assembly compilation failed:');
@@ -1046,28 +1343,14 @@ class NativeTvosBundle extends Target {
     appFramework.createSync(recursive: true);
 
     final String appBinaryPath = globals.fs.path.join(appFramework.path, 'App');
-    final ProcessResult linkResult = await globals.processManager.run(<String>[
-      'xcrun',
-      'clang',
-      '-arch',
-      'arm64',
-      '-isysroot',
-      await _sdkPath(buildInfo.sdkName),
-      '-dynamiclib',
-      '-Xlinker',
-      '-rpath',
-      '-Xlinker',
-      '@executable_path/Frameworks',
-      '-Xlinker',
-      '-rpath',
-      '-Xlinker',
-      '@loader_path/Frameworks',
-      '-install_name',
-      '@rpath/App.framework/App',
-      '-o',
-      appBinaryPath,
-      objectPath,
-    ]);
+    final ProcessResult linkResult = await globals.processManager.run(
+      aotLinkArgs(
+        versionMinFlag: versionMinFlag,
+        sdkPath: await _sdkPath(buildInfo.sdkName),
+        objectPath: objectPath,
+        appBinaryPath: appBinaryPath,
+      ),
+    );
 
     if (linkResult.exitCode != 0) {
       globals.logger.printError('Linking App.framework failed:');
@@ -1096,6 +1379,79 @@ class NativeTvosBundle extends Target {
   /// `TVOS_DEPLOYMENT_TARGET` baked into the Xcode project template, otherwise
   /// App Store validation rejects the binary for a deployment-target mismatch.
   static const String _kTvosMinimumOSVersion = '13.0';
+
+  /// Deployment-target flag for the AOT clang steps (assemble + link).
+  ///
+  /// Without it clang stamps LC_BUILD_VERSION `minos` with the SDK version
+  /// (e.g. 26.0) and App Store validation rejects the archive with
+  /// ITMS-90208: App.framework's `MinimumOSVersion` (13.0) must match the
+  /// binary's `minos`.
+  static String tvosVersionMinFlag(String sdkName) =>
+      sdkName.contains('simulator')
+          ? '-mtvos-simulator-version-min=$_kTvosMinimumOSVersion'
+          : '-mtvos-version-min=$_kTvosMinimumOSVersion';
+
+  /// `xcrun cc` argv that assembles the gen_snapshot output to an object file.
+  ///
+  /// [versionMinFlag] MUST be present so `LC_BUILD_VERSION`'s `minos` matches
+  /// `App.framework`'s `MinimumOSVersion` (ITMS-90208) — see [tvosVersionMinFlag].
+  @visibleForTesting
+  static List<String> aotAssembleArgs({
+    required String versionMinFlag,
+    required String sdkPath,
+    required String assemblyPath,
+    required String objectPath,
+  }) {
+    return <String>[
+      'xcrun',
+      'cc',
+      '-arch',
+      'arm64',
+      versionMinFlag,
+      '-isysroot',
+      sdkPath,
+      '-c',
+      assemblyPath,
+      '-o',
+      objectPath,
+    ];
+  }
+
+  /// `xcrun clang` argv that links the object file into `App.framework/App`.
+  ///
+  /// Carries [versionMinFlag] for the same ITMS-90208 reason as
+  /// [aotAssembleArgs].
+  @visibleForTesting
+  static List<String> aotLinkArgs({
+    required String versionMinFlag,
+    required String sdkPath,
+    required String objectPath,
+    required String appBinaryPath,
+  }) {
+    return <String>[
+      'xcrun',
+      'clang',
+      '-arch',
+      'arm64',
+      versionMinFlag,
+      '-isysroot',
+      sdkPath,
+      '-dynamiclib',
+      '-Xlinker',
+      '-rpath',
+      '-Xlinker',
+      '@executable_path/Frameworks',
+      '-Xlinker',
+      '-rpath',
+      '-Xlinker',
+      '@loader_path/Frameworks',
+      '-install_name',
+      '@rpath/App.framework/App',
+      '-o',
+      appBinaryPath,
+      objectPath,
+    ];
+  }
 
   /// Generates the `Info.plist` embedded inside `App.framework`.
   ///
@@ -1244,14 +1600,37 @@ class NativeTvosBundle extends Target {
         ?? project.manifest.buildNumber
         ?? '1';
 
-    final xcconfig = StringBuffer();
-    xcconfig.writeln('FLUTTER_APPLICATION_PATH=${project.directory.path}');
-    xcconfig.writeln('FLUTTER_TARGET=$targetFile');
-    xcconfig.writeln('FLUTTER_BUILD_DIR=${project.directory.childDirectory('build').path}');
-    xcconfig.writeln('FLUTTER_BUILD_NAME=$buildName');
-    xcconfig.writeln('FLUTTER_BUILD_NUMBER=$buildNumber');
+    final String flutterRoot = globals.fs.path.normalize(
+      globals.fs.path.join(Cache.flutterRoot!),
+    );
+    final String applicationPath = project.directory.path;
+    final String buildDir = project.directory.childDirectory('build').path;
 
-    flutterDir.childFile('Generated.xcconfig').writeAsStringSync(xcconfig.toString());
+    flutterDir.childFile('Generated.xcconfig').writeAsStringSync(
+          buildGeneratedXcconfig(
+            flutterRoot: flutterRoot,
+            applicationPath: applicationPath,
+            targetFile: targetFile,
+            buildDir: buildDir,
+            buildName: buildName,
+            buildNumber: buildNumber,
+          ),
+        );
+
+    // flutter_export_environment.sh — upstream iOS/macOS write this next to
+    // Generated.xcconfig. Native-build tooling that runs inside pod script
+    // phases (e.g. cargokit) sources it to locate the Dart SDK via
+    // FLUTTER_ROOT, so tvOS must provide it too.
+    flutterDir.childFile('flutter_export_environment.sh').writeAsStringSync(
+          buildFlutterExportEnvironment(
+            flutterRoot: flutterRoot,
+            applicationPath: applicationPath,
+            targetFile: targetFile,
+            buildDir: buildDir,
+            buildName: buildName,
+            buildNumber: buildNumber,
+          ),
+        );
 
     // Debug.xcconfig — always write with Pods include so CocoaPods sandbox check passes.
     flutterDir
@@ -1268,5 +1647,59 @@ class NativeTvosBundle extends Target {
           '#include "Generated.xcconfig"\n'
           '#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"\n',
         );
+  }
+
+  /// Body of `tvos/Flutter/Generated.xcconfig`.
+  ///
+  /// `FLUTTER_ROOT` is required by CocoaPods script phases that source the
+  /// Flutter build environment (e.g. cargokit locating the Dart SDK); it was
+  /// missing from tvOS builds before 1.3.4.
+  ///
+  /// `COCOAPODS_PARALLEL_CODE_SIGN` is consumed by CocoaPods' `[CP] Embed Pods
+  /// Frameworks` phase as an *Xcode build setting*, so it must live in the
+  /// xcconfig — not the `.sh`, which that phase never sources. Upstream feeds a
+  /// single settings list to both writers, keeping the `.sh` a strict subset of
+  /// the xcconfig; we mirror that invariant here.
+  @visibleForTesting
+  static String buildGeneratedXcconfig({
+    required String flutterRoot,
+    required String applicationPath,
+    required String targetFile,
+    required String buildDir,
+    required String buildName,
+    required String buildNumber,
+  }) {
+    return (StringBuffer()
+          ..writeln('FLUTTER_ROOT=$flutterRoot')
+          ..writeln('FLUTTER_APPLICATION_PATH=$applicationPath')
+          ..writeln('FLUTTER_TARGET=$targetFile')
+          ..writeln('FLUTTER_BUILD_DIR=$buildDir')
+          ..writeln('FLUTTER_BUILD_NAME=$buildName')
+          ..writeln('FLUTTER_BUILD_NUMBER=$buildNumber')
+          ..writeln('COCOAPODS_PARALLEL_CODE_SIGN=true'))
+        .toString();
+  }
+
+  /// Body of `tvos/Flutter/flutter_export_environment.sh`, sourced by pod
+  /// script phases to export the same variables upstream iOS/macOS provide.
+  @visibleForTesting
+  static String buildFlutterExportEnvironment({
+    required String flutterRoot,
+    required String applicationPath,
+    required String targetFile,
+    required String buildDir,
+    required String buildName,
+    required String buildNumber,
+  }) {
+    return (StringBuffer()
+          ..writeln('#!/bin/sh')
+          ..writeln('# This is a generated file; do not edit or check into version control.')
+          ..writeln('export "FLUTTER_ROOT=$flutterRoot"')
+          ..writeln('export "FLUTTER_APPLICATION_PATH=$applicationPath"')
+          ..writeln('export "FLUTTER_TARGET=$targetFile"')
+          ..writeln('export "FLUTTER_BUILD_DIR=$buildDir"')
+          ..writeln('export "FLUTTER_BUILD_NAME=$buildName"')
+          ..writeln('export "FLUTTER_BUILD_NUMBER=$buildNumber"'))
+        .toString();
   }
 }

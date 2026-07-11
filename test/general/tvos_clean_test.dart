@@ -42,6 +42,10 @@ void main() {
             .childDirectory('Flutter')
             .childFile('Generated.xcconfig')
             .createSync(recursive: true);
+        tvosDir
+            .childDirectory('Flutter')
+            .childFile('flutter_export_environment.sh')
+            .createSync(recursive: true);
         tvosDir.childFile('Podfile.lock').createSync();
         tvosDir
             .childDirectory('Flutter')
@@ -69,6 +73,10 @@ void main() {
           tvosDir.childDirectory('Flutter').childFile('Generated.xcconfig').existsSync(),
           isTrue,
         );
+        expect(
+          tvosDir.childDirectory('Flutter').childFile('flutter_export_environment.sh').existsSync(),
+          isTrue,
+        );
         expect(tvosDir.childFile('Podfile.lock').existsSync(), isTrue);
         expect(projectDir.childDirectory('build').childDirectory('tvos').existsSync(), isTrue);
 
@@ -87,6 +95,7 @@ void main() {
             .childDirectory('flutter_assets')
             .deleteSync(recursive: true);
         tvosDir.childDirectory('Flutter').childFile('Generated.xcconfig').deleteSync();
+        tvosDir.childDirectory('Flutter').childFile('flutter_export_environment.sh').deleteSync();
         tvosDir.childFile('Podfile.lock').deleteSync();
         tvosDir.childDirectory('Flutter').childFile('GeneratedPluginRegistrant.swift').deleteSync();
         projectDir.childDirectory('build').childDirectory('tvos').deleteSync(recursive: true);
@@ -107,6 +116,10 @@ void main() {
         );
         expect(
           tvosDir.childDirectory('Flutter').childFile('Generated.xcconfig').existsSync(),
+          isFalse,
+        );
+        expect(
+          tvosDir.childDirectory('Flutter').childFile('flutter_export_environment.sh').existsSync(),
           isFalse,
         );
         expect(tvosDir.childFile('Podfile.lock').existsSync(), isFalse);

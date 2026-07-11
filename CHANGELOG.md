@@ -2,6 +2,117 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.4.0] — 2026-07-11
+
+Ships the last of the App Store submission blockers: the engine artifact is now
+**origin-signed** (ITMS-91065), and this release clears several validation
+blockers, adds Dart pub workspace support, and re-signs the SPM-embedded engine
+for device installs. Same Flutter 3.44.5 engine build as 1.3.3, re-published
+signed (`bin/internal/engine.version` → `v1.0.1-flutter3.44.5`).
+
+### Engine / signing (ITMS-91065)
+- **The tvOS engine artifact now ships origin-signed.** Flutter is on Apple's
+  "commonly used third-party SDK" list, so every app embedding it is checked at
+  external Beta App Review / App Store review for the SDK provider's origin
+  signature. Our artifacts shipped unsigned, so apps were rejected with
+  ITMS-91065 ("Missing signature") — only at external review, after passing
+  local build, upload, and internal TestFlight. An app-identity re-sign at
+  export does **not** satisfy the check; the artifact itself must carry the
+  origin signature. `Flutter.framework` / `Flutter.xcframework` are now signed
+  at engine-packaging time (Developer ID Application, hardened runtime + secure
+  timestamp), mirroring how flutter.dev signs its iOS artifacts.
+- `build.sh` gained `--signing-identity` and refuses to `--publish` without
+  one; `verify_artifacts.sh` fails the release if any tvOS engine is not
+  origin-signed. (Both live in the separate `fluttertv/engine` repo, not this
+  one.)
+
+### Fixed
+- **Custom fragment shaders now render on tvOS (Metal).** `TvosCopyFlutterBundle`
+  inherited upstream's asset copy, which hard-codes `TargetPlatform.android` and
+  so bundled shaders with SkSL/GLES/Vulkan stages only — every `.frag` failed at
+  runtime with "does not contain appropriate runtime stage data for current
+  backend (Metal)". It now mirrors the copy with `TargetPlatform.ios` so shaders
+  carry the Metal runtime stage. (#34)
+- **Apps that are members of a Dart pub workspace now register their tvOS
+  plugins.** Under `resolution: workspace`, `dart pub get` writes
+  `package_config.json` only at the workspace root — each member gets a
+  `workspace_ref.json` pointer instead. Plugin discovery read the member's own
+  `.dart_tool/package_config.json`, found nothing, and silently produced a
+  binary with no plugins registered (no warning). It now walks up to the
+  workspace root's `package_config.json` and resolves each relative `rootUri`
+  against it. (#29, #32)
+- **CocoaPods build-script phases get `FLUTTER_ROOT` and
+  `flutter_export_environment.sh`.** Pod script phases that reference them no
+  longer fail on a clean checkout. (#33)
+- **AOT intermediates no longer leak into `flutter_assets`.** `gen_snapshot`'s
+  `snapshot_assembly.S`/`.o` were written under `build/tvos/`, which the asset
+  copier mirrors into the app bundle — shipping stray `.S`/`.o` files that App
+  Store validation rejects. They now go to the build's `.dart_tool` working
+  directory, and the asset copier also skips any stale `aot/` / `Profile-` dirs.
+- **`App.framework`'s deployment target matches its `MinimumOSVersion` (13.0).**
+  The AOT clang steps omitted the min-version flag, so `LC_BUILD_VERSION`'s
+  `minos` was stamped with the SDK version (e.g. 26.0) — rejected by App Store
+  validation as ITMS-90208. Both clang calls (assemble + link) now pass the
+  correct `-mtvos-version-min` / `-mtvos-simulator-version-min` flag.
+- **The tvOS app-icon template ships a complete asset catalog.** Newly created
+  projects now include `@2x` images for every brand-asset layer and the Top
+  Shelf Image Wide asset, both required by App Store asset validation.
+- **Clean release builds no longer ship without `flutter_assets`.** The asset
+  copy probed for `kernel_blob.bin`, which exists only in debug — so on a clean
+  checkout a `--release` build found no probe hit, skipped the copy with only a
+  trace log, and archived an assetless bundle (missing icons, "Unable to load
+  asset"). It now probes `AssetManifest.bin` (written in every mode) and hard
+  fails if no assets are found.
+- **Generated Xcode phases resolve the app bundle by `WRAPPER_NAME` /
+  `CODESIGNING_FOLDER_PATH`, not `PRODUCT_NAME`.** A target with a custom product
+  name resolved to a nonexistent path, silently skipping the framework/asset
+  copy and the engine re-sign. The "Sign Flutter.framework" phase now also
+  hard-fails (rather than warns) when the engine is missing on a signing build.
+- **`COCOAPODS_PARALLEL_CODE_SIGN` moved to `Generated.xcconfig`.** It is an
+  Xcode build setting consumed by the CocoaPods embed phase, so it had no effect
+  in the `.sh` where it was previously written.
+- **`flutter-tvos clean` removes `flutter_export_environment.sh`.** A stale copy
+  with an absolute `FLUTTER_ROOT` otherwise survived a clean.
+
+### Added
+- **Migration warning for app-icon catalogs created before 1.3.4.** The brand
+  asset catalog is copied into a project once at `create` time and is never
+  regenerated on build (it holds your own icon art), so an existing project
+  keeps its incomplete catalog and still fails App Store asset validation with a
+  new CLI. Device builds now warn when the catalog is incomplete — checked
+  structurally (the Top Shelf Wide role AND the six `@2x` layer images, so a
+  half-done hand-migration is still flagged), listing exactly what is missing —
+  and the warning is emitted after "Xcode build done." so it is the last thing
+  on screen rather than scrolled away by the Xcode build.
+- **Migration warning for pre-1.4.0 Xcode projects with a custom product
+  name.** `project.pbxproj` is copied in at `create` time and never rewritten on
+  build, so an existing project keeps the old build phases that resolve the app
+  bundle via `${PRODUCT_NAME}.app`. Default-named projects (`$(TARGET_NAME)` /
+  `Runner`) build fine, but a target that overrides `PRODUCT_NAME` can miss the
+  real bundle. Device builds now warn and point at regeneration.
+- **"Sign Flutter.framework" build phase in generated projects.** Re-signs the
+  Swift Package Manager–embedded engine with the app's own identity (as
+  CocoaPods' embed script did) so device installs don't carry nested code signed
+  by a foreign team; a build-time warning flags projects that lack the phase.
+  Note: this does not by itself satisfy Apple's commonly-used-SDK signature
+  check (ITMS-91065), which requires an origin-signed engine artifact shipped in
+  a separate engine release.
+
+### Tests
+- Regression coverage for pub-workspace plugin discovery (verified failing on
+  the pre-fix code), the AOT-intermediate leak, the `App.framework` min-version
+  flag (both at the flag value and that both AOT clang steps carry it), the
+  completed template asset catalog, the structural app-icon migration check
+  (including the half-migrated case), and the `FLUTTER_ROOT` /
+  `flutter_export_environment.sh` generation for pod script phases (with a parity
+  guard that every `.sh` export has a matching xcconfig entry).
+- A shader-bundle test drives the real `TvosCopyFlutterBundle` target and
+  asserts impellerc is invoked with the Metal runtime stage (guards the #34 fix
+  at its production call site, not just the argv builder).
+- An AOT-compile test drives the real `compileAotSnapshot` and asserts both
+  clang steps carry the tvOS version-min flag (guards the ITMS-90208 fix at its
+  production call sites; verified to fail if the flag is dropped).
+
 ## [1.3.3] — 2026-07-07
 
 Refreshes the pinned engine to **Flutter 3.44.5** (`f94f4fc7`, Dart

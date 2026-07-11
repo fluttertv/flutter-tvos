@@ -26,6 +26,10 @@ class TvosCleanCommand extends CleanCommand {
       _cleanDirectory(tvosDir, 'Flutter/App.framework');
       _cleanDirectory(tvosDir, 'Flutter/flutter_assets');
       _cleanFile(tvosDir, 'Flutter/Generated.xcconfig');
+      // Sibling of Generated.xcconfig, written since 1.4.0. Holds an absolute
+      // FLUTTER_ROOT; if a stale copy survives a clean and the project is later
+      // moved, cargokit sources a dead SDK path.
+      _cleanFile(tvosDir, 'Flutter/flutter_export_environment.sh');
       _cleanFile(tvosDir, 'Podfile.lock');
       _cleanFile(tvosDir, '.symlinks');
 
