@@ -36,6 +36,13 @@ import {{name}}
 {{/methodChannelPlugins}}
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
+  // The registry returns nil registrars when the Flutter engine is not
+  // running (on a physical Apple TV the debug engine requires an attached
+  // debugger). Nil crashes plugin registration, so bail out loudly.
+  guard registry.registrar(forPlugin: "__flutter_tvos_engine_probe__") != nil else {
+    NSLog("[GeneratedPluginRegistrant] Flutter engine is not running; skipping plugin registration. Debug builds on a physical Apple TV must be launched via 'flutter-tvos run' (the debug engine requires an attached debugger).")
+    return
+  }
   {{#methodChannelPlugins}}
   {{class}}.register(with: registry.registrar(forPlugin: "{{class}}"))
 {{/methodChannelPlugins}}
@@ -677,6 +684,25 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
       }
     }
 
+    // A nil registrar means the engine never started (on a physical Apple TV
+    // the debug engine requires an attached debugger — see
+    // doc/architecture.md). Bridged into a Swift plugin's nonnull parameter,
+    // that nil crashes registration with an unsymbolized SIGSEGV blaming the
+    // first plugin. Probe once with a synthetic key (a real plugin key would
+    // trip the engine's duplicate-registration assert) and bail out loudly.
+    final engineGuard = registrations.isEmpty
+        ? ''
+        : '  // The registry returns nil registrars when the Flutter engine is not\n'
+            '  // running (on a physical Apple TV the debug engine requires an attached\n'
+            '  // debugger). Nil crashes Swift plugin registration, so bail out loudly.\n'
+            '  if ([registry registrarForPlugin:@"__flutter_tvos_engine_probe__"] == nil) {\n'
+            '    NSLog(@"[GeneratedPluginRegistrant] Flutter engine is not running; skipping "\n'
+            '          @"plugin registration. Debug builds on a physical Apple TV must be "\n'
+            '          @"launched via \'flutter-tvos run\' (the debug engine requires an "\n'
+            '          @"attached debugger).");\n'
+            '    return;\n'
+            '  }\n';
+
     // Force-reference the C symbols of any statically-linked (SPM) FFI plugin
     // so the linker keeps them in the Runner binary; empty for the common case.
     final List<String> ffiForcedSymbols =
@@ -721,6 +747,7 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
       '@implementation GeneratedPluginRegistrant\n'
       '\n'
       '+ (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry {\n'
+      '$engineGuard'
       '$registrations'
       '$ffiForcedBody'
       '}\n'
