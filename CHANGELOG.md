@@ -8,6 +8,16 @@ All notable changes to flutter-tvos will be documented here.
      Do not add a version heading or bump pubspec.yaml — maintainers assign
      versions at release time. -->
 
+### Fixed
+- **Debug builds launched outside `flutter-tvos run` on a physical Apple TV no
+  longer crash during plugin registration.** The debug engine refuses to start
+  without an attached debugger, so the plugin registry hands back nil
+  registrars — which crashed the generated registrant with an unsymbolized
+  SIGSEGV blaming whichever plugin registered first. The registrant now probes
+  the registry once, logs a clear "engine is not running" message explaining
+  the `flutter-tvos run` requirement, and skips registration instead of
+  crashing. (#37)
+
 ## [1.4.0] — 2026-07-11
 
 Ships the last of the App Store submission blockers: the engine artifact is now
