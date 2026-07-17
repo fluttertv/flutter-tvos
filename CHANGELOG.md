@@ -2,6 +2,12 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+<!-- Contributors: add entries for user-visible changes here (see CONTRIBUTING.md).
+     Do not add a version heading or bump pubspec.yaml — maintainers assign
+     versions at release time. -->
+
 ## [1.4.0] — 2026-07-11
 
 Ships the last of the App Store submission blockers: the engine artifact is now
