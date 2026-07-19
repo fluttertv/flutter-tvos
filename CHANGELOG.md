@@ -14,7 +14,7 @@ Refreshes the pinned engine to **Flutter 3.44.6** (`ee80f08b`, Dart 3.12.2).
 
 ### Engine / SDK
 - Bumped `bin/internal/flutter.version` to `ee80f08b` (Flutter 3.44.6) and
-  `bin/internal/engine.version` to `v1.0.0-flutter3.44.6`.
+  `bin/internal/engine.version` to `v1.0.1-flutter3.44.6`.
 - Rebuilt and origin-signed all six engine artifact variants from the 3.44.6
   source tree, against tvOS SDK 26.5 (Xcode 26.6).
 - All 17 tvOS engine patches apply unchanged: the 3.44.5 → 3.44.6 delta touches
@@ -24,6 +24,18 @@ Refreshes the pinned engine to **Flutter 3.44.6** (`ee80f08b`, Dart 3.12.2).
   pin in lockstep.
 
 ### Fixed
+- **Apps no longer crash on first frame on tvOS simulators older than 26.** The
+  simulator engine embedded Impeller metallibs compiled for the *iOS* simulator
+  (target triple `air64-apple-ios13.0.0-simulator`), because the shader build
+  assumed the tvOS simulator would load iphonesimulator libraries fine — it runs
+  on the host Mac GPU, after all. Metal actually validates the library's target
+  platform when a pipeline is created, so on a tvOS 17.5 simulator every one of
+  the ~60 render pipelines failed with `Target OS is incompatible` and the engine
+  aborted with a `raw_ptr` check failure. tvOS 26 tolerates the mismatch, which
+  is why it only showed up on older runtimes. The simulator engine is now built
+  against the AppleTVSimulator SDK (`air64-apple-tvos13.0.0-simulator`). Device
+  builds were never affected. Requires the engine bump to
+  `v1.0.1-flutter3.44.6`. (#38)
 - **Debug builds launched outside `flutter-tvos run` on a physical Apple TV no
   longer crash during plugin registration.** The debug engine refuses to start
   without an attached debugger, so the plugin registry hands back nil
