@@ -1,6 +1,6 @@
 name: flutter_tvos
 description: Flutter CLI tool for building and running Flutter apps on Apple TV (tvOS). A custom embedder wrapping Flutter SDK with tvOS-specific build targets, device management, and plugin support.
-version: 1.4.0
+version: 1.4.1
 homepage: https://fluttertv.dev
 repository: https://github.com/fluttertv/flutter-tvos
 publish_to: "none"

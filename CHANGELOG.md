@@ -8,6 +8,21 @@ All notable changes to flutter-tvos will be documented here.
      Do not add a version heading or bump pubspec.yaml — maintainers assign
      versions at release time. -->
 
+## [1.4.1] — 2026-07-19
+
+Refreshes the pinned engine to **Flutter 3.44.6** (`ee80f08b`, Dart 3.12.2).
+
+### Engine / SDK
+- Bumped `bin/internal/flutter.version` to `ee80f08b` (Flutter 3.44.6) and
+  `bin/internal/engine.version` to `v1.0.0-flutter3.44.6`.
+- Rebuilt and origin-signed all six engine artifact variants from the 3.44.6
+  source tree, against tvOS SDK 26.5 (Xcode 26.6).
+- All 17 tvOS engine patches apply unchanged: the 3.44.5 → 3.44.6 delta touches
+  only `flutter_tools` and the Android Gradle plugin, so no patched file moved.
+- Dart revision is unchanged from 3.44.5, so this is not an SDK-hash-breaking
+  roll — the artifacts were rebuilt anyway to keep the engine tag and the SDK
+  pin in lockstep.
+
 ### Fixed
 - **Debug builds launched outside `flutter-tvos run` on a physical Apple TV no
   longer crash during plugin registration.** The debug engine refuses to start
@@ -17,6 +32,11 @@ All notable changes to flutter-tvos will be documented here.
   the registry once, logs a clear "engine is not running" message explaining
   the `flutter-tvos run` requirement, and skips registration instead of
   crashing. (#37)
+
+### Upstream fixes picked up
+- Flutter 3.44.6 hotfixes for a native-assets crash on Linux custom devices and
+  for jniLibs staging in the Android Gradle plugin. Neither affects tvOS builds;
+  they ship because the SDK pin moves as a whole.
 
 ## [1.4.0] — 2026-07-11
 
