@@ -1087,6 +1087,108 @@ $symbolsYaml
     );
   });
 
+  group('engine guard in GeneratedPluginRegistrant.m', () {
+    // Seeds an app with a single method-channel plugin `gadget` plus the
+    // tvos/Runner/ directory the ObjC registrant is written into.
+    FlutterProject seedMethodChannelProject() {
+      final Directory projectDir = fileSystem.directory('/p')..createSync();
+      projectDir.childDirectory('tvos').childDirectory('Runner').createSync(recursive: true);
+      projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+
+      final Directory pkgDir = fileSystem.directory('/pubcache/gadget')
+        ..createSync(recursive: true);
+      pkgDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: gadget
+flutter:
+  plugin:
+    platforms:
+      tvos:
+        pluginClass: GadgetPlugin
+''');
+      final Directory tvosDir = pkgDir.childDirectory('tvos')..createSync();
+      tvosDir.childFile('gadget.podspec').writeAsStringSync('# podspec');
+
+      fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'packages': <Map<String, String>>[
+              <String, String>{
+                'name': 'gadget',
+                'rootUri': 'file:///pubcache/gadget',
+              },
+            ],
+          }),
+        );
+      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+        json.encode(<String, dynamic>{
+          'dependencyGraph': <Map<String, String>>[
+            <String, String>{'name': 'gadget'},
+          ],
+        }),
+      );
+      return FlutterProject.fromDirectory(projectDir);
+    }
+
+    String registrantOf(FlutterProject project) => project.directory
+        .childDirectory('tvos')
+        .childDirectory('Runner')
+        .childFile('GeneratedPluginRegistrant.m')
+        .readAsStringSync();
+
+    testUsingContext(
+      'guards registration behind an engine probe when method-channel plugins exist',
+      () async {
+        final FlutterProject project = seedMethodChannelProject();
+        await ensureReadyForTvosTooling(project);
+
+        final String m = registrantOf(project);
+        expect(m, contains('registrarForPlugin:@"__flutter_tvos_engine_probe__"'));
+        expect(m, contains('Flutter engine is not running'));
+        // The guard must run before any plugin registration.
+        expect(
+          m.indexOf('__flutter_tvos_engine_probe__'),
+          lessThan(m.indexOf('[GadgetPlugin registerWithRegistrar:')),
+          reason: 'engine probe must precede the first registration',
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'omits the guard when there are no method-channel plugins',
+      () async {
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        projectDir
+            .childDirectory('tvos')
+            .childDirectory('Runner')
+            .createSync(recursive: true);
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+        fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+          json.encode(<String, dynamic>{'dependencyGraph': <dynamic>[]}),
+        );
+
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+        await ensureReadyForTvosTooling(project);
+
+        expect(
+          registrantOf(project),
+          isNot(contains('__flutter_tvos_engine_probe__')),
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+  });
+
   group('TvosPlugin.ffiSymbols', () {
     testWithoutContext('defaults to an empty list', () {
       final plugin = TvosPlugin(name: 'm', path: '/p', pluginClass: 'MPlugin');

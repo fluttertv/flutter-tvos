@@ -103,6 +103,12 @@ xcrun devicectl device process launch --console \
 
 `<device_id>` is the UUID shown by `xcrun devicectl list devices`. The `--console` flag attaches stdout/stderr to your terminal session.
 
+> **Note:** standalone launches like this only work for **profile and release**
+> builds. A debug build launched outside `flutter-tvos run` cannot start its
+> engine (the debug engine requires an attached debugger) — plugin
+> registration is skipped and a `[GeneratedPluginRegistrant]` message
+> explaining this appears in the console.
+
 ## Other Resources
 
 - [Flutter debugging documentation](https://docs.flutter.dev/testing/debugging) — core Dart and Flutter debugging concepts that apply equally to tvOS.

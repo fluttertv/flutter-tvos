@@ -14,14 +14,27 @@ Open an issue on [GitHub Issues](https://github.com/fluttertv/flutter-tvos/issue
 
 The more detail you provide, the faster the bug can be tracked down.
 
+## Branching Model
+
+- **`main`** holds released code only. Every commit on `main` corresponds to a published release (or the release process itself). Nothing is merged into `main` directly.
+- **`dev`** is the integration branch. All pull requests target `dev`. It always contains the latest `main` plus the changes queued for the next release.
+- At release time, maintainers merge `dev` into `main`, tag, and publish; `main` is then merged back into `dev` so the two stay in sync.
+
 ## Submitting a Pull Request
 
-1. Fork the repository and create a branch from `main`
+1. Fork the repository and create a branch from `dev`
 2. Make your changes
-3. Run the test suite and static analysis (see below)
-4. Open a PR against `main` with a clear description of what changed and why
+3. Add a `CHANGELOG.md` entry under `[Unreleased]` (see below)
+4. Run the test suite and static analysis (see below)
+5. Open a PR against **`dev`** with a clear description of what changed and why
 
 Keep PRs focused. One logical change per PR makes review faster.
+
+## Changelog
+
+User-visible changes (fixes, features, behavior changes) get an entry in `CHANGELOG.md` under the `[Unreleased]` heading, written in the same style as the released sections. **Do not bump the version** in `pubspec.yaml` or add a version heading — maintainers assign version numbers when cutting a release, at which point `[Unreleased]` entries are moved into the new version's section.
+
+Internal-only changes (refactors, CI, test-only changes) don't need a changelog entry.
 
 ## Running Tests
 
