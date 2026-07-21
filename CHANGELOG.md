@@ -4,6 +4,41 @@ All notable changes to flutter-tvos will be documented here.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-07-21
+
+### Changed
+
+- Bumped the pinned Flutter SDK to **3.44.7** (`84fc5cbb223b`).
+- Engine artifacts are now `v1.0.1-flutter3.44.7`. These are **byte-identical**
+  to `v1.0.1-flutter3.44.6`, republished under the new name rather than
+  rebuilt: nothing in 3.44.7 reaches the tvOS engine. The only functional
+  change in the range is Android-side (`FlutterRenderer.java`), `DEPS` is
+  byte-identical, the Dart submodule is unchanged, and `darwin/`, `ios/` and
+  `impeller/` are untouched. The remaining commits are CI config and changelog
+  text.
+
+Verified with these artifacts against the 3.44.7 SDK before shipping: AOT on a
+physical Apple TV 4K (tvOS 26.5) keeps platform identity intact
+(`operatingSystem=tvos`, `isTvOS=true`), and a JIT/debug run on a tvOS 17.5
+simulator is clean with zero `Target OS is incompatible` errors, so the
+metallib fix from 1.4.1 still holds on older runtimes.
+
+### Fixed
+
+- `Platform.isTvOS` now compiles in **debug** builds. It previously worked only
+  in profile/release: debug compiled against the stock Flutter SDK, which does
+  not declare the getter, so an app using the API the README recommends failed
+  to build with `Member not found: 'isTvOS'`. Present since the getter was
+  introduced — reproduced identically on 1.4.1 — and easy to miss because the
+  *values* (`operatingSystem`, `isIOS`) resolve at runtime from the device
+  engine in JIT and are correct in every mode; only the new member was missing
+  from the type checker's view.
+
+  Debug now compiles against the same patched `flutter_patched_sdk` as profile,
+  which the `host_debug_unopt` artifact already shipped. Verified on a tvOS 17.5
+  simulator (`isTvOS=true` in debug, `isAndroid`/`isMacOS` unaffected), AOT on a
+  physical Apple TV 4K is unchanged, and hot reload still works.
+
 <!-- Contributors: add entries for user-visible changes here (see CONTRIBUTING.md).
      Do not add a version heading or bump pubspec.yaml — maintainers assign
      versions at release time. -->
