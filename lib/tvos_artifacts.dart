@@ -53,24 +53,28 @@ class TvosArtifacts extends CachedArtifacts {
       }
     }
 
-    // For AOT (profile/release) builds, compile the app kernel against OUR
-    // patched `flutter_patched_sdk` (shipped inside the host engine artifact)
-    // rather than the stock Flutter checkout's. The patched dart:io
-    // `platform.dart` defines `isIOS = operatingSystem == "ios" || == "tvos"`
-    // and adds the `isTvOS` getter, so the un-folded platform-const getters
-    // evaluate correctly at runtime on tvOS. This is the companion to
-    // `TvosKernelSnapshot.build()`, which passes `targetOS: null` so those
-    // getters are not const-folded to "ios" at compile time.
+    // Compile the app kernel against OUR patched `flutter_patched_sdk`
+    // (shipped inside the host engine artifact) rather than the stock Flutter
+    // checkout's. The patched dart:io `platform.dart` defines
+    // `isIOS = operatingSystem == "ios" || == "tvos"` and adds the `isTvOS`
+    // getter, so the un-folded platform-const getters evaluate correctly at
+    // runtime on tvOS. This is the companion to `TvosKernelSnapshot.build()`,
+    // which passes `targetOS: null` so those getters are not const-folded to
+    // "ios" at compile time.
     //
-    // Debug (JIT) deliberately keeps the stock SDK: platform identity there is
-    // resolved by the device engine's own (patched) core libraries at runtime,
-    // so the compile SDK is irrelevant and we avoid disturbing the proven
-    // debug path. We only need our patched SDK where gen_snapshot bakes the
-    // SDK code into the app snapshot — i.e. precompiled builds.
-    if ((mode?.isPrecompiled ?? false) &&
-        (artifact == Artifact.flutterPatchedSdkPath ||
-            artifact == Artifact.platformKernelDill)) {
-      final String patchedSdkDir = _hostPatchedSdkDirectory(mode!);
+    // This applies to debug as well, not just AOT. Platform identity *values*
+    // do resolve at runtime in JIT — dart:io comes from the device engine's
+    // own patched core libraries — so for `operatingSystem` and `isIOS` the
+    // compile SDK genuinely is irrelevant there. But `isTvOS` is a member the
+    // stock SDK does not declare at all, and the frontend server type-checks
+    // against the compile SDK before anything runs: an app touching
+    // `Platform.isTvOS` failed to build in debug with
+    // `Member not found: 'isTvOS'` while compiling fine in profile/release.
+    // Pointing debug at the same patched SDK (which `host_debug_unopt` already
+    // ships) makes the getter exist in every mode.
+    if (artifact == Artifact.flutterPatchedSdkPath ||
+        artifact == Artifact.platformKernelDill) {
+      final String patchedSdkDir = _hostPatchedSdkDirectory(mode ?? BuildMode.debug);
       if (artifact == Artifact.platformKernelDill) {
         return _fileSystem.path.join(patchedSdkDir, 'platform_strong.dill');
       }
