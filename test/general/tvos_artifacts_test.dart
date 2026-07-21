@@ -68,23 +68,33 @@ void main() {
       );
     });
 
-    test('debug flutterPatchedSdkPath falls through to stock resolution', () {
-      // Debug resolves platform identity at runtime via the device engine, so
-      // the override is intentionally NOT applied — the path must come from
-      // the stock CachedArtifacts logic, not our engine_artifacts host SDK.
-      final String path = artifacts.getArtifactPath(
-        Artifact.flutterPatchedSdkPath,
-        mode: BuildMode.debug,
+    test('debug also uses the patched SDK (host_debug_unopt)', () {
+      // Debug resolves platform identity *values* at runtime via the device
+      // engine, so for `operatingSystem` and `isIOS` the compile SDK is
+      // irrelevant. But `isTvOS` is a member the stock SDK does not declare,
+      // and the frontend server type-checks against the compile SDK before
+      // anything runs — so with stock resolution an app touching
+      // `Platform.isTvOS` failed to build in debug with
+      // `Member not found: 'isTvOS'` while compiling fine in profile/release.
+      // Debug uses the same non-product SDK as profile.
+      expect(
+        artifacts.getArtifactPath(Artifact.flutterPatchedSdkPath, mode: BuildMode.debug),
+        '/engine_artifacts/host_debug_unopt/flutter_patched_sdk',
       );
-      expect(path, isNot(contains('engine_artifacts')));
+      expect(
+        artifacts.getArtifactPath(Artifact.platformKernelDill, mode: BuildMode.debug),
+        '/engine_artifacts/host_debug_unopt/flutter_patched_sdk/platform_strong.dill',
+      );
     });
 
-    test('debug platformKernelDill falls through to stock resolution', () {
-      final String path = artifacts.getArtifactPath(
-        Artifact.platformKernelDill,
-        mode: BuildMode.debug,
+    test('a null mode resolves to the debug (non-product) SDK', () {
+      // getArtifactPath is reachable without a mode; it must not throw and
+      // must not silently pick the product SDK, which would drop entry-point
+      // classes the JIT engine looks up natively.
+      expect(
+        artifacts.getArtifactPath(Artifact.flutterPatchedSdkPath),
+        '/engine_artifacts/host_debug_unopt/flutter_patched_sdk',
       );
-      expect(path, isNot(contains('engine_artifacts')));
     });
 
     test('handles the nested directory layout from zip extraction', () {

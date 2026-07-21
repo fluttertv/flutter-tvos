@@ -23,13 +23,21 @@ physical Apple TV 4K (tvOS 26.5) keeps platform identity intact
 simulator is clean with zero `Target OS is incompatible` errors, so the
 metallib fix from 1.4.1 still holds on older runtimes.
 
-### Known issue (pre-existing, not introduced here)
+### Fixed
 
-- `Platform.isTvOS` compiles only in **profile/release** builds. Debug builds
-  compile against the stock Flutter SDK, which has no such getter, so an app
-  using it fails to build in debug with `Member not found: 'isTvOS'`. Confirmed
-  identical on 1.4.1. Use `Platform.operatingSystem == 'tvos'` — it works in
-  every mode — or `FlutterTvosPlatform.isTvos` from `package:flutter_tvos`.
+- `Platform.isTvOS` now compiles in **debug** builds. It previously worked only
+  in profile/release: debug compiled against the stock Flutter SDK, which does
+  not declare the getter, so an app using the API the README recommends failed
+  to build with `Member not found: 'isTvOS'`. Present since the getter was
+  introduced — reproduced identically on 1.4.1 — and easy to miss because the
+  *values* (`operatingSystem`, `isIOS`) resolve at runtime from the device
+  engine in JIT and are correct in every mode; only the new member was missing
+  from the type checker's view.
+
+  Debug now compiles against the same patched `flutter_patched_sdk` as profile,
+  which the `host_debug_unopt` artifact already shipped. Verified on a tvOS 17.5
+  simulator (`isTvOS=true` in debug, `isAndroid`/`isMacOS` unaffected), AOT on a
+  physical Apple TV 4K is unchanged, and hot reload still works.
 
 <!-- Contributors: add entries for user-visible changes here (see CONTRIBUTING.md).
      Do not add a version heading or bump pubspec.yaml — maintainers assign
