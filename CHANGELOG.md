@@ -4,6 +4,33 @@ All notable changes to flutter-tvos will be documented here.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-07-21
+
+### Changed
+
+- Bumped the pinned Flutter SDK to **3.44.7** (`84fc5cbb223b`).
+- Engine artifacts are now `v1.0.1-flutter3.44.7`. These are **byte-identical**
+  to `v1.0.1-flutter3.44.6`, republished under the new name rather than
+  rebuilt: nothing in 3.44.7 reaches the tvOS engine. The only functional
+  change in the range is Android-side (`FlutterRenderer.java`), `DEPS` is
+  byte-identical, the Dart submodule is unchanged, and `darwin/`, `ios/` and
+  `impeller/` are untouched. The remaining commits are CI config and changelog
+  text.
+
+Verified with these artifacts against the 3.44.7 SDK before shipping: AOT on a
+physical Apple TV 4K (tvOS 26.5) keeps platform identity intact
+(`operatingSystem=tvos`, `isTvOS=true`), and a JIT/debug run on a tvOS 17.5
+simulator is clean with zero `Target OS is incompatible` errors, so the
+metallib fix from 1.4.1 still holds on older runtimes.
+
+### Known issue (pre-existing, not introduced here)
+
+- `Platform.isTvOS` compiles only in **profile/release** builds. Debug builds
+  compile against the stock Flutter SDK, which has no such getter, so an app
+  using it fails to build in debug with `Member not found: 'isTvOS'`. Confirmed
+  identical on 1.4.1. Use `Platform.operatingSystem == 'tvos'` — it works in
+  every mode — or `FlutterTvosPlatform.isTvos` from `package:flutter_tvos`.
+
 <!-- Contributors: add entries for user-visible changes here (see CONTRIBUTING.md).
      Do not add a version heading or bump pubspec.yaml — maintainers assign
      versions at release time. -->
