@@ -4,6 +4,48 @@ All notable changes to flutter-tvos will be documented here.
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-07-25
+
+### Changed
+
+- Bumped the pinned Flutter SDK to **3.44.8** (`058e0af2c2b5`).
+- Engine artifacts are now `v1.0.1-flutter3.44.8`, rebuilt from source against
+  the 3.44.8 tree rather than republished.
+
+Nothing in the 3.44.6..3.44.8 range reaches the tvOS engine. `DEPS` is
+unchanged, so the Dart submodule stays at `d684a576` and the SDK hash our AOT
+artifacts embed does not move. The engine-source changes in the range are
+Android-side (`AccessibilityBridge.java`, the Android toolchain GN file), a
+host-architecture fix for the clang path in `copy_info_plist.py`, and an
+ASan-only copy rule in `darwin/ios/BUILD.gn` — none of which are compiled into
+a shipped `Flutter.framework`. `impeller/` is untouched. The rebuilt zips land
+within ~500 bytes of the 3.44.7 artifacts, which is the expected result.
+
+On the tooling side, 3.44.8 changes `UnpackDarwin.thinFramework` to run
+`lipo -verify_arch` once per architecture (an Xcode 27 fix). flutter-tvos does
+not use `UnpackDarwin` — it copies the engine framework itself — so nothing
+needed mirroring. The four upstream build-graph classes this CLI subclasses
+(`KernelSnapshot`, `CopyFlutterBundle`, `DartPluginRegistrantTarget`,
+`AotElfRelease`) are byte-identical to 3.44.7, so the tvOS overrides are
+unchanged.
+
+Verified against the freshly built artifacts, extracted through `precache`
+after clearing `engine_artifacts/` so no stale extraction could be reused:
+
+    verify_artifacts.sh   all checks pass, including the designated-requirement
+                          origin signature, the on-device JIT RWX fix, and the
+                          platform-identity patch in both host SDKs
+    dart analyze lib/     0 errors, 0 warnings (135 infos)
+    CLI suite             297 passed
+    JIT/debug, tvOS 17.5 simulator
+                          builds, installs, launches and renders; zero
+                          "Target OS is incompatible" errors; 10/10 FFI symbols
+                          exported from Runner.debug.dylib; operatingSystem=tvos,
+                          isIOS=true, isTvos=true, FFI isTvOS=true
+
+The 17.5 run is the one that matters for shaders: tvOS 26 tolerates a wrong
+metallib platform triple and older runtimes do not.
+
 ## [1.4.2] - 2026-07-21
 
 ### Changed
