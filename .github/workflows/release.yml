@@ -35,6 +35,12 @@ jobs:
           PUB_OFFLINE: "1"
         run: flutter/bin/dart test test/
 
+      # Path-scoped to the root suite, so the bundled package's 103 widget
+      # tests need their own step with the flutter runner. See test.yml.
+      - name: Run package tests
+        working-directory: packages/flutter_tvos
+        run: ../../flutter/bin/flutter test
+
       - name: Run dart analyze
         run: flutter/bin/dart analyze lib/
 

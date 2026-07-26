@@ -40,6 +40,17 @@ jobs:
           PUB_OFFLINE: "1"
         run: flutter/bin/dart test test/
 
+      # The step above is path-scoped to the root suite, so the bundled
+      # package's 103 tests never ran. They are widget tests and need the
+      # flutter runner rather than `dart test`. Among them is
+      # rcu/protocol_drift_test.dart, which pins the RCU wire protocol
+      # against FlutterTvRemoteProtocol.h — the test most likely to catch
+      # engine-side drift on a version bump, and precisely what CI should
+      # be checking on a PR that moves the engine.
+      - name: Run package tests
+        working-directory: packages/flutter_tvos
+        run: ../../flutter/bin/flutter test
+
   analyze:
     runs-on: macos-latest
     steps:
