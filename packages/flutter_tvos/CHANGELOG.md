@@ -1,3 +1,13 @@
+## 1.1.3
+
+- Documentation: the README no longer says this package wires the Siri Remote to
+  Flutter's focus system. The engine does that — an app using only `Focus`,
+  `FocusTraversal`, `Shortcuts` and standard focusable widgets responds to the
+  remote without depending on `flutter_tvos` at all. The README now says what the
+  package is actually for (tuning key synthesis, the analog touch stream, swipe
+  events) and calls out raw touch forwarding as the one feature that genuinely
+  requires it. No functional or API changes.
+
 ## 1.1.2
 
 - Documentation: list Siri Remote support in the README feature summary and
