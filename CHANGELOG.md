@@ -4,6 +4,17 @@ All notable changes to flutter-tvos will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- `flutter_tvos` README no longer claims the package provides Siri Remote
+  navigation. The engine does: an app using only `Focus`, `FocusTraversal`,
+  `Shortcuts` and standard focusable widgets responds to the remote without
+  depending on the package at all. The package adds tuning (key repeat,
+  touchpad dead zone, swipe thresholds), the analog touch stream and swipe
+  events. Raw touch forwarding is the one feature that genuinely requires it,
+  because the engine gates it behind the `configure` handshake that
+  `TvRemoteController.init()` performs.
+
 ## [1.4.3] - 2026-07-25
 
 ### Changed

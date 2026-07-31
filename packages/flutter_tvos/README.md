@@ -11,9 +11,10 @@ Part of the [flutter-tvos](https://fluttertv.dev) project — an open-source Flu
 - Check device capabilities: 4K, HDR, multi-user support
 - Get display resolution
 - **Synchronous API** — powered by dart:ffi, zero async overhead
-- **Siri Remote support** — swipes and buttons drive Flutter's standard
-  focus system, with raw-touch and high-level swipe listeners for custom
-  handling (see [Remote Control](#remote-control-siri-remote))
+- **Siri Remote extras** — tuning for how the remote maps to keys (repeat
+  speed, touchpad dead zone, swipe thresholds), plus raw-touch and
+  high-level swipe listeners. Basic focus navigation needs no package —
+  the engine provides it (see [Remote Control](#remote-control-siri-remote))
 
 ## Getting Started
 
@@ -66,15 +67,32 @@ Widget build(BuildContext context) {
 
 ## Remote Control (Siri Remote)
 
-`flutter_tvos` wires the Apple TV remote to Flutter's standard focus
+The **tvOS engine** wires the Apple TV remote to Flutter's standard focus
 system. Swipes and button presses become keyboard events
 (`arrowLeft/Right/Up/Down`, `select`, etc.) which flow through
 `Focus`/`Shortcuts`/`Actions` exactly like arrow keys on a physical
 keyboard would.
 
-Basic remote navigation works through Flutter's normal key/focus system. If
-your app only uses `Focus`, `Shortcuts`, `Actions`, buttons, lists, and other
-standard focusable widgets, no Dart listener setup is required.
+### Do you need this package for remote navigation?
+
+**No.** Remote navigation is delivered by the engine, not by this package. An
+app that only uses `Focus`, `FocusTraversal`, `Shortcuts`, `Actions`, buttons,
+lists and other standard focusable widgets responds to the Siri Remote with
+`flutter_tvos` not even in its `pubspec.yaml`. Everything under "What works out
+of the box" below is engine-side and needs no Dart dependency.
+
+Reach for this package when you want to:
+
+- **tune** how the remote is translated into keys — repeat speed, touchpad
+  dead zone, swipe thresholds (see [Tuning](#tuning));
+- consume the **analog touchpad** as coordinates rather than keys
+  (`addRawListener`);
+- consume **swipes** as direction + magnitude events (`addSwipeListener`).
+
+The raw touch stream is the one feature that genuinely requires the package:
+the engine holds touch forwarding back until Dart completes the `configure`
+handshake, which `TvRemoteController.init()` performs. Key events are not
+gated that way and flow regardless.
 
 Call `TvRemoteController.instance.init()` once in `main()` when you use
 `TvRemoteController` APIs such as `config`, `addRawListener`, or
@@ -92,6 +110,8 @@ void main() {
 ```
 
 ### What works out of the box
+
+All of the following is engine-side — it works with or without this package:
 
 - Swipes Up/Down/Left/Right on Siri Remote → arrow keys
 - Select button → `LogicalKeyboardKey.enter` — activates focused
