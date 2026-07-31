@@ -4,6 +4,16 @@ All notable changes to flutter-tvos will be documented here.
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-07-31
+
+- Engine artifacts updated to `v1.0.2-flutter3.44.8` (origin-signed for ITMS-91065
+  compliance, plus key-data support on the Siri Remote path). The engine now sends
+  key events on both `flutter/keyevent` and native key-data channels — apps using
+  standard `Focus`/`FocusTraversal`/`Shortcuts` still work unchanged (the framework
+  bridges either source), and the key-data channel adds future-proofing against
+  `RawKeyboard` deprecation plus correct physical codes for media keys. See
+  [engine PR #9](https://github.com/fluttertv/engine/pull/9) for details.
+
 ## [1.4.3] - 2026-07-25
 
 ### Changed
