@@ -6,7 +6,17 @@
   remote without depending on `flutter_tvos` at all. The README now says what the
   package is actually for (tuning key synthesis, the analog touch stream, swipe
   events) and calls out raw touch forwarding as the one feature that genuinely
-  requires it. No functional or API changes.
+  requires it.
+- Example app: the tvOS Xcode project now derives bundle paths from
+  `$(WRAPPER_NAME)` instead of `$(PRODUCT_NAME).app` (the latter is wrong
+  whenever the product name is overridden), and gained a build phase that
+  code-signs the `Flutter.framework` embedded through the Swift Package Manager
+  umbrella — Xcode embeds it but does not sign it, so device installs otherwise
+  carry nested code signed by a foreign team. These landed in the repository
+  earlier but had never been published, because the package version was not
+  bumped at the time.
+- No library, API, or native plugin changes — `lib/` and `tvos/Classes/` are
+  byte-identical to 1.1.2.
 
 ## 1.1.2
 
