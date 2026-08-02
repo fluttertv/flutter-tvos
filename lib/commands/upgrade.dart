@@ -13,6 +13,10 @@ import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:meta/meta.dart';
 
+import '../tvos_releases.dart';
+
+export '../tvos_releases.dart' show TvosVersion;
+
 /// `flutter-tvos upgrade` — upgrades the flutter-tvos toolchain itself to the
 /// latest released version.
 ///
@@ -48,24 +52,6 @@ class TvosUpgradeCommand extends UpgradeCommand {
       verifyOnly: boolArg('verify-only'),
     );
   }
-}
-
-/// A resolved point in the flutter-tvos git history.
-@immutable
-class TvosVersion {
-  const TvosVersion({required this.hash, required this.tag});
-
-  /// Full git commit hash.
-  final String hash;
-
-  /// The exact release tag at this commit, or null if the commit is not
-  /// tagged (e.g. a development checkout on a branch).
-  final String? tag;
-
-  String get hashShort => hash.length >= 10 ? hash.substring(0, 10) : hash;
-
-  /// Human label: the tag when present, otherwise the short hash.
-  String get label => tag ?? hashShort;
 }
 
 @visibleForTesting
