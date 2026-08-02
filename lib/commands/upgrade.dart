@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:convert';
-
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/process.dart';
@@ -35,8 +33,7 @@ class TvosUpgradeCommand extends UpgradeCommand {
   TvosUpgradeCommand({required super.verboseHelp});
 
   @override
-  String get description =>
-      'Upgrade the flutter-tvos toolchain to the latest released version.';
+  String get description => 'Upgrade the flutter-tvos toolchain to the latest released version.';
 
   @override
   Future<FlutterCommandResult> runCommand() {
@@ -140,48 +137,21 @@ class TvosUpgradeCommandRunner {
 
   /// Fetches tags from the remote and resolves the newest release tag.
   Future<TvosVersion> fetchLatestReleaseVersion() async {
-    String tag;
-    String hash;
-    try {
-      await _git.run(
-        <String>['git', 'fetch', '--tags'],
-        throwOnError: true,
-        workingDirectory: workingDirectory,
-      );
-      final RunResult result = await _git.run(
-        <String>['git', 'tag', '-l', '--sort=-v:refname'],
-        throwOnError: true,
-        workingDirectory: workingDirectory,
-      );
-      final List<String> tags = const LineSplitter().convert(result.stdout.trim());
-      final String? latest = latestReleaseTag(tags);
-      if (latest == null) {
-        throwToolExit(
-          'Unable to upgrade flutter-tvos: no release tags '
-          '(v<flutter>-tvos.<version>) were found.\n'
-          'Make sure your flutter-tvos checkout tracks the upstream repository.',
-        );
-      }
-      tag = latest;
-      // Peel to the underlying commit with `^{commit}`. Release tags may be
-      // annotated (e.g. v3.44.1-tvos.1.2.0), and `git rev-parse <annotated-tag>`
-      // returns the tag-object SHA, not the commit SHA. fetchCurrentVersion
-      // reads `git rev-parse HEAD` (a commit SHA), so without peeling the
-      // "already up to date" comparison would never match on a checkout sitting
-      // exactly on an annotated release. `^{commit}` is a no-op for lightweight
-      // tags.
-      final RunResult revParse = await _git.run(
-        <String>['git', 'rev-parse', '$tag^{commit}'],
-        throwOnError: true,
-        workingDirectory: workingDirectory,
-      );
-      hash = revParse.stdout.trim();
-    } on ProcessException catch (e) {
+    final releases = TvosReleases(workingDirectory: workingDirectory!, processUtils: _processUtils);
+    final List<TvosRelease> all = await releases.list();
+    if (all.isEmpty) {
       throwToolExit(
-        'Unable to upgrade flutter-tvos: could not query git tags.\n${e.message}',
+        'Unable to upgrade flutter-tvos: no release tags '
+        '(v<flutter>-tvos.<version>) were found.\n'
+        'Make sure your flutter-tvos checkout tracks the upstream repository.',
       );
     }
-    return TvosVersion(hash: hash, tag: tag);
+    // Peel here rather than calling resolve(): resolve() runs list() again,
+    // which would issue a second `git fetch --tags` and break the command
+    // sequence the existing test asserts.
+    final TvosRelease newest = all.first;
+    final TvosRelease resolved = newest.withHash(await releases.peelToCommit(newest.tag));
+    return TvosVersion(hash: resolved.hash!, tag: resolved.tag);
   }
 
   /// Resolves the commit the checkout is currently on, and its exact tag if any.
@@ -203,10 +173,13 @@ class TvosUpgradeCommandRunner {
     }
     // An exact tag is best-effort; a development checkout legitimately has none.
     try {
-      final RunResult describe = await _git.run(
-        <String>['git', 'describe', '--exact-match', '--tags', 'HEAD'],
-        workingDirectory: workingDirectory,
-      );
+      final RunResult describe = await _git.run(<String>[
+        'git',
+        'describe',
+        '--exact-match',
+        '--tags',
+        'HEAD',
+      ], workingDirectory: workingDirectory);
       if (describe.exitCode == 0) {
         tag = describe.stdout.trim();
       }
@@ -316,11 +289,7 @@ class TvosUpgradeCommandRunner {
     globals.printStatus('');
     globals.printStatus('Running flutter-tvos doctor...');
     await globals.processUtils.stream(
-      <String>[
-        globals.fs.path.join('bin', 'flutter-tvos'),
-        '--no-version-check',
-        'doctor',
-      ],
+      <String>[globals.fs.path.join('bin', 'flutter-tvos'), '--no-version-check', 'doctor'],
       workingDirectory: workingDirectory,
       allowReentrantFlutter: true,
     );
