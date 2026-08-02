@@ -59,12 +59,25 @@ class TvosVersionsCommand extends FlutterCommand {
         ? all
         : TvosRelease.collapseToNewestPerFlutterVersion(all);
 
+    // Collapsed rows show a Flutter version's *newest* tool release, so a
+    // checkout sitting on an older one must still match its row -- otherwise
+    // the list marks nothing at all and tells the user they are nowhere. Four
+    // of the nine tagged Flutter versions have two tool releases, so that is
+    // the ordinary state of anyone who has not upgraded within their line.
+    // When the two differ, name what they are actually on.
+    final TvosRelease? currentRelease =
+        current.tag == null ? null : TvosRelease.parse(current.tag!);
+
     for (final release in shown) {
-      final isCurrent = release.tag == current.tag;
+      final isCurrent = showAll
+          ? release.tag == current.tag
+          : currentRelease?.flutterVersion == release.flutterVersion;
+      final bool onOlderToolRelease = isCurrent && release.tag != current.tag;
       globals.printStatus(
         '  ${release.flutterVersion.padRight(9)}'
         '${release.tag.padRight(24)}'
-        '${isCurrent ? '(current)' : ''}'.trimRight(),
+        '${isCurrent ? (onOlderToolRelease ? '(current: ${current.tag})' : '(current)') : ''}'
+            .trimRight(),
       );
     }
 

@@ -137,10 +137,17 @@ class TvosReleases {
   Future<List<TvosRelease>> list({bool fetch = true, bool requireFetch = false}) async {
     if (fetch) {
       try {
+        // --force because a plain `git fetch --tags` refuses to move a tag that
+        // already exists locally ("would clobber existing tag") and exits 0
+        // while doing so, on stderr nobody reads. A user who fetched a release
+        // that was later re-pointed would silently stay on the withdrawn
+        // commit while being told they are on the tag. This checkout hits that
+        // rejection today, on v1.0.0.
         await _git.run(<String>[
           'git',
           'fetch',
           '--tags',
+          '--force',
         ], throwOnError: true, workingDirectory: workingDirectory);
       } on ProcessException catch (e) {
         if (requireFetch) {

@@ -30,7 +30,7 @@ void main() {
       // SHA, but `<tag>^{commit}` must resolve to the commit so the result is
       // comparable to `git rev-parse HEAD`.
       processManager.addCommands(<FakeCommand>[
-        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
           stdout: 'v3.44.1-tvos.1.2.0\nv3.44.0-tvos.1.1.1\n',
@@ -50,7 +50,7 @@ void main() {
 
     test('skips non-release tags when choosing the newest', () async {
       processManager.addCommands(<FakeCommand>[
-        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
           stdout: 'nightly\nlatest\nv3.44.0-tvos.1.1.1\nv3.41.4-tvos.1.0.0\n',
@@ -70,7 +70,7 @@ void main() {
 
     test('throws a tool exit when no release tags exist', () async {
       processManager.addCommands(<FakeCommand>[
-        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
           stdout: 'nightly\nlatest\n',
@@ -152,7 +152,7 @@ void main() {
       'reports already up to date when HEAD is the latest (annotated) release',
       () async {
         processManager.addCommands(<FakeCommand>[
-          const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+          const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
           const FakeCommand(
             command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
             stdout: 'v3.44.1-tvos.1.2.0\n',
@@ -187,7 +187,7 @@ void main() {
       'refuses to upgrade a dirty checkout without --force',
       () async {
         processManager.addCommands(<FakeCommand>[
-          const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+          const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
           const FakeCommand(
             command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
             stdout: 'v3.44.1-tvos.1.2.0\n',
@@ -224,13 +224,13 @@ void main() {
     );
 
     testUsingContext(
-      'fails closed when git status cannot be determined (no destructive reset)',
+      'fails closed when git status cannot be determined (no destructive checkout)',
       () async {
-        // The status check is the only guard before `git reset --hard`. If it
+        // The status check is the only guard before the checkout. If it
         // can't be evaluated, the upgrade must abort rather than treat the tree
         // as clean — otherwise uncommitted work would be silently destroyed.
         processManager.addCommands(<FakeCommand>[
-          const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+          const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
           const FakeCommand(
             command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
             stdout: 'v3.44.1-tvos.1.2.0\n',
@@ -260,7 +260,7 @@ void main() {
           runner.runCommandFirstHalf(force: false, testFlow: true, verifyOnly: false),
           contains('could not verify the status'),
         );
-        // Crucially, no `git reset --hard` was ever queued/run.
+        // Crucially, no destructive git command was ever queued/run.
         expect(processManager, hasNoRemainingExpectations);
       },
       overrides: <Type, Generator>{
@@ -287,4 +287,30 @@ void main() {
       expect(version.hashShort, 'abc123');
     });
   });
+
+  group('TvosUpgradeCommandRunner.attemptReset', () {
+    test('detaches instead of moving the current branch', () async {
+      // Nothing pinned this before, so upgrade could have gone on rewriting
+      // whatever branch was checked out indefinitely. `git status -s` -- the
+      // only guard in front of it -- reports the worktree and is silent about
+      // the branch pointer, so unpushed commits pass it and end up reachable
+      // only from the reflog.
+      final processManager = FakeProcessManager.empty();
+      final runner = TvosUpgradeCommandRunner(
+        processUtils: ProcessUtils(processManager: processManager, logger: BufferLogger.test()),
+      )..workingDirectory = '/repo';
+
+      processManager.addCommand(
+        const FakeCommand(
+          command: <String>['git', 'checkout', '--force', '--detach', 'cafebabe'],
+          workingDirectory: '/repo',
+        ),
+      );
+
+      await runner.attemptReset('cafebabe');
+
+      expect(processManager, hasNoRemainingExpectations);
+    });
+  });
+
 }

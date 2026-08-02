@@ -47,7 +47,7 @@ void main() {
     String headTag = 'v3.44.7-tvos.1.4.2',
   }) {
     processManager.addCommands(<FakeCommand>[
-      const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+      const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
       const FakeCommand(
         command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
         workingDirectory: '/repo',
@@ -185,7 +185,7 @@ void main() {
 
   testUsingContext('an unknown version exits without touching the checkout', () async {
     processManager.addCommands(<FakeCommand>[
-      const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+      const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
       const FakeCommand(
         command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
         workingDirectory: '/repo',

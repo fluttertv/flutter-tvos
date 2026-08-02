@@ -155,6 +155,51 @@ The following commands from the [Flutter CLI](https://flutter.dev/docs/reference
 
   For integration tests that must run on device, use the [`drive`](#drive) command instead.
 
+- ### `versions`
+
+  List the Flutter versions this checkout can be switched to, marking the one in
+  use. Each supported version is a release line of the flutter-tvos repository,
+  tagged `v<flutter>-tvos.<tool>`; the tag carries the CLI, the pinned Flutter
+  revision and the matching engine artifacts together.
+
+  ```sh
+  # One line per Flutter version, at its newest tool release.
+  flutter-tvos versions
+
+  # Every release tag, for when the tool version matters.
+  flutter-tvos versions --all
+  ```
+
+  The list comes from git tags, refreshed from the remote when it is reachable.
+  With no network you still see — and can switch to — everything this checkout
+  has fetched before.
+
+- ### `use`
+
+  Switch this checkout to another Flutter version.
+
+  ```sh
+  # Newest tool release for that Flutter version.
+  flutter-tvos use 3.44.5
+
+  # A specific tool release.
+  flutter-tvos use v3.44.5-tvos.1.3.3
+  ```
+
+  Switching refuses to run if your checkout has uncommitted changes; pass
+  `--force` to discard them and switch anyway. Committed work is safe either
+  way — the switch detaches rather than moving your branch.
+
+  The first command after a switch rebuilds the toolchain for the new version,
+  which takes a few minutes: it re-checks-out the pinned Flutter SDK, reruns
+  `pub get` and recompiles the tool, then downloads that version's engine.
+
+  > **Note:** `use` prints a `git checkout` command as it switches. Keep it if
+  > you are moving to a version you have not used before — if that release line
+  > fails to build, `flutter-tvos` itself stops working, and that command is how
+  > you get back.
+
+
 - ### `upgrade`
 
   Upgrade the flutter-tvos toolchain to the **latest released version**. Unlike
@@ -174,12 +219,11 @@ The following commands from the [Flutter CLI](https://flutter.dev/docs/reference
   Upgrading refuses to run if your checkout has uncommitted changes; pass
   `--force` to discard them and upgrade anyway.
 
-  > **Note:** the upgrade moves your checkout with `git reset --hard` to the
-  > release commit. Uncommitted changes are guarded by the check above, but any
-  > **committed-but-unpushed** work on your current branch is discarded. This
-  > matches the recommended setup (clone the repo and stay on `main`). After
-  > upgrading, `pubspec.lock` will show as modified — that is the expected
-  > `pub get` output.
+  > **Note:** the upgrade moves your checkout to the release commit with
+  > `git checkout --force --detach`, so branch pointers are left alone and
+  > committed work stays reachable. You end up on a detached HEAD, which is the
+  > normal state for a released version. After upgrading, `pubspec.lock` will
+  > show as modified — that is the expected `pub get` output.
 
 ## Not supported
 

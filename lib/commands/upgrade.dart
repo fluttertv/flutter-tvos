@@ -196,10 +196,19 @@ class TvosUpgradeCommandRunner {
     }
   }
 
+  /// Moves the worktree to [newRevision], leaving branch pointers alone.
+  ///
+  /// `checkout --force --detach`, not `reset --hard`, for the reason spelled
+  /// out on [TvosReleases.checkout]: the dirty-tree guard reads `git status
+  /// -s`, which reports the worktree and says nothing about the branch pointer,
+  /// so a contributor on `main` with unpushed commits passes it cleanly and has
+  /// them left reachable only from the reflog. Upgrading usually moves forward,
+  /// which hides the damage more often than `use` does — but not always, and
+  /// "usually harmless" is not a reason to keep it.
   Future<void> attemptReset(String newRevision) async {
     try {
       await _git.run(
-        <String>['git', 'reset', '--hard', newRevision],
+        <String>['git', 'checkout', '--force', '--detach', newRevision],
         throwOnError: true,
         workingDirectory: workingDirectory,
       );

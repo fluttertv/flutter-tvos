@@ -31,7 +31,7 @@ void main() {
 
   void stubTagsAndHead({String headTag = 'v3.44.7-tvos.1.4.2'}) {
     processManager.addCommands(<FakeCommand>[
-      const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+      const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
       const FakeCommand(
         command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
         workingDirectory: '/repo',
@@ -81,7 +81,7 @@ void main() {
 
   testUsingContext('marks nothing current when HEAD is untagged', () async {
     processManager.addCommands(<FakeCommand>[
-      const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+      const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
       const FakeCommand(
         command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
         workingDirectory: '/repo',
@@ -116,7 +116,7 @@ void main() {
 
   testUsingContext('says so when no releases are known', () async {
     processManager.addCommands(<FakeCommand>[
-      const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+      const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
       const FakeCommand(command: <String>['git', 'tag', '-l', '--sort=-v:refname']),
       const FakeCommand(
         command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
@@ -134,4 +134,25 @@ void main() {
 
     expect(logger.statusText, contains('No flutter-tvos releases'));
   }, overrides: <Type, Generator>{Logger: () => logger});
+
+  testUsingContext('marks the row when HEAD is on an older tool release', () async {
+    // The collapsed row shows v3.44.5-tvos.1.4.0 while HEAD is on
+    // v3.44.5-tvos.1.3.3. Comparing full tags marked nothing, so the list told
+    // a user on 3.44.5 that they were on no version at all -- the ordinary
+    // state for four of the nine tagged Flutter versions.
+    stubTagsAndHead(headTag: 'v3.44.5-tvos.1.3.3');
+    final command = TvosVersionsCommand(releases: releases);
+
+    await createTestCommandRunner(command).run(<String>['versions']);
+
+    final String row = logger.statusText
+        .split('\n')
+        .firstWhere((String l) => l.contains('3.44.5'));
+    expect(row, contains('current'));
+    // And it says which tool release they are actually on, since the row's own
+    // tag is a different one.
+    expect(row, contains('v3.44.5-tvos.1.3.3'));
+    expect('(current'.allMatches(logger.statusText).length, 1);
+  }, overrides: <Type, Generator>{Logger: () => logger});
+
 }

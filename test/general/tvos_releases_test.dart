@@ -105,7 +105,7 @@ void main() {
 
     test('fetches then lists, dropping non-release tags', () async {
       processManager.addCommands(<FakeCommand>[
-        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
           workingDirectory: '/repo',
@@ -140,7 +140,7 @@ void main() {
     testUsingContext('a failed fetch warns and falls back to local tags', () async {
       processManager.addCommands(<FakeCommand>[
         const FakeCommand(
-          command: <String>['git', 'fetch', '--tags'],
+          command: <String>['git', 'fetch', '--tags', '--force'],
           exitCode: 128,
           stderr: 'fatal: unable to access remote',
         ),
@@ -165,7 +165,7 @@ void main() {
       // the flag can be dropped and the whole suite stays green.
       processManager.addCommands(<FakeCommand>[
         const FakeCommand(
-          command: <String>['git', 'fetch', '--tags'],
+          command: <String>['git', 'fetch', '--tags', '--force'],
           workingDirectory: '/repo',
           exitCode: 128,
           stderr: 'fatal: unable to access remote',
@@ -184,7 +184,7 @@ void main() {
       // reaches flutter's runner and becomes "Oops; flutter has exited
       // unexpectedly" with a crash report and an invitation to file a bug.
       processManager.addCommands(<FakeCommand>[
-        const FakeCommand(command: <String>['git', 'fetch', '--tags'], workingDirectory: '/repo'),
+        const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force'], workingDirectory: '/repo'),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
           workingDirectory: '/repo',
@@ -198,7 +198,7 @@ void main() {
 
     test('returns an empty list when the repo has no release tags', () async {
       processManager.addCommands(<FakeCommand>[
-        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
           workingDirectory: '/repo',
@@ -227,7 +227,7 @@ void main() {
 
     void stubTagList() {
       processManager.addCommands(<FakeCommand>[
-        const FakeCommand(command: <String>['git', 'fetch', '--tags']),
+        const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force']),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
           workingDirectory: '/repo',

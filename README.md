@@ -47,6 +47,7 @@ flutter-tvos run -d <device_id> --release
 - See [Supported commands](doc/commands.md) for all available commands and usage examples.
 - See [Getting started](doc/get-started.md) to create your first app and try **hot reload**.
 - To **update** flutter-tvos to the latest released version, run `flutter-tvos upgrade` (use `flutter-tvos upgrade --verify-only` to just check).
+- To use a **different Flutter version**, run `flutter-tvos versions` to see what is supported and `flutter-tvos use <version>` to switch. Each version is its own release line, pinning the Flutter SDK and the matching tvOS engine together.
 
 ## Platform identity & limitations
 
