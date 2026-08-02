@@ -55,6 +55,7 @@ import 'commands/precache.dart';
 import 'commands/run.dart';
 import 'commands/test.dart';
 import 'commands/upgrade.dart';
+import 'commands/versions.dart';
 import 'tvos_application_package.dart';
 import 'tvos_artifacts.dart';
 import 'tvos_cache.dart';
@@ -187,6 +188,7 @@ Future<void> main(List<String> args) async {
       ),
       TvosRunCommand(verboseHelp: verboseHelp),
       TvosTestCommand(verboseHelp: verboseHelp),
+      TvosVersionsCommand(),
     ],
     verbose: verbose,
     verboseHelp: verboseHelp,
