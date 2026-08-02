@@ -48,7 +48,6 @@ import 'commands/build.dart';
 import 'commands/clean.dart';
 import 'commands/create.dart';
 import 'commands/devices.dart';
-import 'commands/downgrade.dart';
 import 'commands/drive.dart';
 import 'commands/plugin.dart';
 import 'commands/precache.dart';
@@ -144,10 +143,6 @@ List<FlutterCommand> tvosCommands({required bool verbose, required bool verboseH
       TvosCleanCommand(verbose: verbose),
       TvosCreateCommand(verboseHelp: verboseHelp),
       TvosDevicesCommand(verboseHelp: verboseHelp),
-      // downgrade is overridden for the same reason upgrade is: stock
-      // DowngradeCommand resets --hard inside Cache.flutterRoot (the vendored
-      // SDK), breaking the flutter.version <-> engine-artifact pin.
-      TvosDowngradeCommand(),
       TvosDriveCommand(
         verboseHelp: verboseHelp,
         fileSystem: globals.fs,

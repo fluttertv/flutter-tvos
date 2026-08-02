@@ -14,11 +14,11 @@ import '../src/context.dart';
 
 /// What `flutter-tvos` does and does not expose.
 ///
-/// The absence of `channel` is the load-bearing half. Stock `ChannelCommand`
-/// operates on `Cache.flutterRoot` — the vendored SDK — and moving it breaks
-/// the `flutter.version` to engine-artifact pin, the same hazard that made
-/// `upgrade` and `downgrade` need tvOS-specific overrides. If a merge ever
-/// re-adds it, every other test in this suite still passes.
+/// The absences are the load-bearing half. Stock `ChannelCommand` and
+/// `DowngradeCommand` both operate on `Cache.flutterRoot` — the vendored SDK —
+/// and moving it breaks the `flutter.version` to engine-artifact pin, the same
+/// hazard that made `upgrade` need a tvOS-specific override. If a merge ever
+/// re-adds either, every other test in this suite still passes.
 void main() {
   /// Several commands read `globals` in their constructors, so the list cannot
   /// be produced outside a context.
@@ -36,19 +36,17 @@ void main() {
   Set<String> buildNames() => build().map((FlutterCommand c) => c.name).toSet();
 
   testUsingContext('registers the version-selection commands', () {
-    expect(buildNames(), containsAll(<String>['versions', 'use', 'upgrade', 'downgrade']));
+    expect(buildNames(), containsAll(<String>['versions', 'use', 'upgrade']));
   }, overrides: overrides);
 
-  testUsingContext('does not register channel', () {
+  testUsingContext('does not register channel or downgrade', () {
+    // `use <version>` covers what downgrade offered, explicitly, and `versions`
+    // shows what to type — so the command was not worth the state file it
+    // needed, nor the class of bugs that came with it.
     expect(buildNames(), isNot(contains('channel')));
+    expect(buildNames(), isNot(contains('downgrade')));
   }, overrides: overrides);
 
-  testUsingContext('downgrade is the tvOS override, not the stock command', () {
-    final FlutterCommand downgrade = build().firstWhere(
-      (FlutterCommand c) => c.name == 'downgrade',
-    );
-    expect(downgrade.runtimeType.toString(), 'TvosDowngradeCommand');
-  }, overrides: overrides);
 
   testUsingContext('upgrade is the tvOS override, not the stock command', () {
     final FlutterCommand upgrade = build().firstWhere((FlutterCommand c) => c.name == 'upgrade');

@@ -9,7 +9,6 @@ import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tvos/commands/use.dart';
 import 'package:flutter_tvos/tvos_releases.dart';
-import 'package:flutter_tvos/tvos_tool_state.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -25,7 +24,6 @@ void main() {
   late BufferLogger logger;
   late FileSystem fileSystem;
   late TvosReleases releases;
-  late TvosToolState toolState;
 
   setUp(() {
     processManager = FakeProcessManager.empty();
@@ -36,7 +34,6 @@ void main() {
       workingDirectory: '/repo',
       processUtils: ProcessUtils(processManager: processManager, logger: logger),
     );
-    toolState = TvosToolState(repoRoot: '/repo', fileSystem: fileSystem);
   });
 
   const tagList = 'v3.44.7-tvos.1.4.2\n'
@@ -78,14 +75,13 @@ void main() {
       targetTag: 'v3.44.7-tvos.1.4.2',
       targetHash: 'aaaabbbbccccddddeeeeffff0000111122223333',
     );
-    final command = TvosUseCommand(releases: releases, toolState: toolState);
+    final command = TvosUseCommand(releases: releases);
 
     await createTestCommandRunner(command).run(<String>['use', '3.44.7']);
 
     expect(logger.statusText, contains('already on'));
     expect(processManager, hasNoRemainingExpectations);
     // No reset, and no breadcrumb written for a switch that did not happen.
-    expect(toolState.readPreviousTag(), isNull);
   }, overrides: <Type, Generator>{Logger: () => logger});
 
   testUsingContext('the already-on-target check runs before the dirty-tree guard', () async {
@@ -97,7 +93,7 @@ void main() {
       targetTag: 'v3.44.7-tvos.1.4.2',
       targetHash: 'aaaabbbbccccddddeeeeffff0000111122223333',
     );
-    final command = TvosUseCommand(releases: releases, toolState: toolState);
+    final command = TvosUseCommand(releases: releases);
 
     await createTestCommandRunner(command).run(<String>['use', '3.44.7']);
 
@@ -113,7 +109,7 @@ void main() {
     processManager.addCommand(
       const FakeCommand(command: <String>['git', 'status', '-s'], workingDirectory: '/repo', stdout: ' M lib/foo.dart\n'),
     );
-    final command = TvosUseCommand(releases: releases, toolState: toolState);
+    final command = TvosUseCommand(releases: releases);
 
     await expectToolExitLater(
       createTestCommandRunner(command).run(<String>['use', '3.32.8']),
@@ -141,13 +137,11 @@ void main() {
     ]);
     final command = TvosUseCommand(
       releases: releases,
-      toolState: toolState,
       runBootstrap: (_) async => 0,
     );
 
     await createTestCommandRunner(command).run(<String>['use', '3.32.8']);
 
-    expect(toolState.readPreviousTag(), 'v3.44.7-tvos.1.4.2');
     expect(processManager, hasNoRemainingExpectations);
   }, overrides: <Type, Generator>{Logger: () => logger});
 
@@ -171,7 +165,6 @@ void main() {
     ]);
     final command = TvosUseCommand(
       releases: releases,
-      toolState: toolState,
       runBootstrap: (_) async => 1, // the target toolchain fails to build
     );
 
@@ -199,7 +192,7 @@ void main() {
         stdout: tagList,
       ),
     ]);
-    final command = TvosUseCommand(releases: releases, toolState: toolState);
+    final command = TvosUseCommand(releases: releases);
 
     await expectToolExitLater(
       createTestCommandRunner(command).run(<String>['use', '3.99.0']),
@@ -231,7 +224,6 @@ void main() {
     ]);
     final command = TvosUseCommand(
       releases: releases,
-      toolState: toolState,
       runBootstrap: (_) async => 0,
     );
 
@@ -265,7 +257,6 @@ void main() {
     final invocations = <List<String>>[];
     final command = TvosUseCommand(
       releases: releases,
-      toolState: toolState,
       runBootstrap: (List<String> args) async {
         invocations.add(args);
         return 0;
@@ -301,7 +292,6 @@ void main() {
     ]);
     final command = TvosUseCommand(
       releases: releases,
-      toolState: toolState,
       // The probe succeeds, so the toolchain builds; only precache fails.
       runBootstrap: (List<String> args) async => args.first == 'precache' ? 1 : 0,
     );

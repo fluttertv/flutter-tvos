@@ -7,10 +7,8 @@ import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
-import 'package:meta/meta.dart';
 
 import '../tvos_releases.dart';
-import '../tvos_tool_state.dart';
 
 /// Runs one bootstrap step in the switched-to checkout, returning its exit
 /// code. Injectable so tests do not shell out.
@@ -25,9 +23,8 @@ typedef BootstrapRunner = Future<int> Function(List<String> args);
 /// the vendored SDK and recompiles the tool snapshot on the next invocation,
 /// with no extra work here.
 class TvosUseCommand extends FlutterCommand {
-  TvosUseCommand({TvosReleases? releases, TvosToolState? toolState, BootstrapRunner? runBootstrap})
+  TvosUseCommand({TvosReleases? releases, BootstrapRunner? runBootstrap})
     : _releases = releases,
-      _toolState = toolState,
       _runBootstrap = runBootstrap {
     argParser.addFlag(
       'force',
@@ -38,7 +35,6 @@ class TvosUseCommand extends FlutterCommand {
   }
 
   final TvosReleases? _releases;
-  final TvosToolState? _toolState;
   final BootstrapRunner? _runBootstrap;
 
   /// Cache.flutterRoot points at the vendored `flutter/` SDK; its parent is the
@@ -52,8 +48,6 @@ class TvosUseCommand extends FlutterCommand {
 
   TvosReleases get releases => _releases ?? TvosReleases(workingDirectory: _repoRoot);
 
-  TvosToolState get toolState =>
-      _toolState ?? TvosToolState(repoRoot: _repoRoot, fileSystem: globals.fs);
 
   @override
   String get name => 'use';
@@ -81,14 +75,8 @@ class TvosUseCommand extends FlutterCommand {
         'Run "flutter-tvos versions" to see what is available.',
       );
     }
-    return switchTo(argResults!.rest.single);
-  }
 
-  /// Everything after argument parsing. `downgrade` reuses this with the tag it
-  /// read from the tool state instead of a command-line argument.
-  @protected
-  Future<FlutterCommandResult> switchTo(String selector) async {
-    final TvosRelease target = await releases.resolve(selector);
+    final TvosRelease target = await releases.resolve(argResults!.rest.single);
     final TvosVersion current = await releases.current();
 
     // Before the dirty-tree guard on purpose: someone with local edits who
@@ -111,11 +99,6 @@ class TvosUseCommand extends FlutterCommand {
       'Switching flutter-tvos ${current.label} -> ${target.flutterVersion} (${target.tag})...',
     );
 
-    // Recorded before the reset so the value is still readable if anything
-    // below goes wrong. `current.hash` when HEAD is untagged: a development
-    // checkout is exactly where losing the way back hurts most, and a bare
-    // commit is as resettable as a tag.
-    toolState.writePreviousTag(current.tag ?? current.hash);
     await releases.checkout(target.hash!);
 
     _printRecovery(current);
