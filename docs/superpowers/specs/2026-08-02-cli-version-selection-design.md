@@ -48,9 +48,16 @@ of truth is a claim *about* tags that can drift from them. Comparable tools bear
 | Releases API | some asdf plugins | 60 req/hr unauthenticated; asdf documents a `GITHUB_API_TOKEN` workaround. |
 | git tags | flutter `upgrade`/`channel` | Needs network to see *new* tags; raw namespace needs filtering. Both already handled here. |
 
-git tags also degrade best offline: previously fetched tags stay listable *and* checkout-able,
-which no manifest or API gives. And git's tag store is the on-disk cache — no TTL file to
-invalidate. Not subject to REST rate limits, since git smart-HTTP is a different path.
+git tags also degrade best offline: previously fetched tags stay listable and the checkout itself
+succeeds, which no manifest or API gives. And git's tag store is the on-disk cache — no TTL file
+to invalidate. Not subject to REST rate limits, since git smart-HTTP is a different path.
+
+That offline claim has a limit worth stating plainly, because it is easy to over-promise: the
+`git reset` works offline, but the re-bootstrap that follows runs `pub get` for the target
+version's dependency set. `shared.sh` tries `pub get --offline` before the online one, so
+switching *back* to a version whose dependencies are already in the pub cache generally works
+offline; switching to one never used on that machine does not. Offline switching is a
+best-effort property of previously-used versions, not a guarantee.
 
 **The strongest counter-argument** is that tags carry no metadata and cannot be retracted. If a
 release later needs to be marked broken, a tag name cannot say so, and deleting a published tag
@@ -75,6 +82,7 @@ flutter-tvos downgrade           return to the previous version
 $ flutter-tvos versions
   3.44.7   v3.44.7-tvos.1.4.2   (current)
   3.44.6   v3.44.6-tvos.1.4.1
+  3.44.5   v3.44.5-tvos.1.4.0
   3.32.8   v3.32.8-tvos.1.0.0
 
 $ flutter-tvos use 3.32.8
@@ -82,6 +90,12 @@ Switching flutter-tvos 3.44.7 -> 3.32.8 ...
   Flutter SDK  edada7c (3.32.8)
   Engine       v1.0.1-flutter3.32.8
 ```
+
+**One line per Flutter version, showing its newest tool release.** This is not a corner case to
+leave unspecified: four of the nine Flutter versions currently tagged (`3.41.9`, `3.44.0`,
+`3.44.1`, `3.44.5`) have two tool releases each. Collapsing to the newest matches how `use 3.44.5`
+resolves, so the list shows exactly what a bare selector would pick. `versions --all` lists every
+release tag ungrouped, for when the tool version matters.
 
 `use` is not a stock Flutter verb, but it is the honest one: the name matches the action in every
 case, which `upgrade --to 3.32.8` (a downgrade named upgrade) and `version` (which users read as
@@ -131,10 +145,19 @@ interaction is testable without a repository.
 
 ### State for `downgrade`
 
-A small `TvosToolState` over `Config('flutter_tvos_state')`, storing the tag we switched away
-from. `Config` resolves to `~/.config/flutter/`, **outside** `bin/cache` — which matters, because
-`shared.sh` deletes `bin/cache` on every version change. Stock `PersistentToolState` is keyed by
-`Channel`, which we do not have, so it is the wrong container.
+The previous tag is written to **`.git/flutter-tvos-previous`** inside the checkout being
+switched.
+
+Three constraints pick that location, and only it satisfies all three. The file must survive
+`git reset --hard` (so not a tracked path), must survive `shared.sh` deleting `bin/cache` on every
+version change (so not there), and must be **per-checkout**. The third is what rules out
+`~/.config/flutter/`, the obvious choice: this design tells users who want concurrent versions to
+clone twice, and a single global state file would have `downgrade` in one clone jump to wherever
+the other clone last came from. `.git/` is outside the worktree, is never committed, and exists
+once per clone.
+
+Stock `PersistentToolState` is both global and keyed by `Channel`, which we do not have, so it is
+the wrong container on two counts.
 
 ## Data flow
 
@@ -161,10 +184,12 @@ already does — `git rev-parse` on an annotated tag yields the tag object's SHA
 ### Switching
 
 1. Resolve the selector to a tag and commit.
-2. Refuse if the checkout has uncommitted changes, unless `--force`. Fail closed if git cannot be
+2. If already on the target, say so and exit 0. **Before** the dirty-tree check, not after — a
+   user with local edits who names the version they are already on should not be refused an
+   operation that would do nothing.
+3. Refuse if the checkout has uncommitted changes, unless `--force`. Fail closed if git cannot be
    queried.
-3. If already on the target, say so and exit 0.
-4. Record the current tag in `TvosToolState`.
+4. Record the current tag in `.git/flutter-tvos-previous`.
 5. `git reset --hard <hash>`.
 6. Shell out to `bin/flutter-tvos precache --force`, then `bin/flutter-tvos doctor`.
 
@@ -178,6 +203,41 @@ Re-bootstrapping needs no new code. On the next invocation `bin/internal/shared.
 `flutter.version` changed and re-checks-out the vendored SDK (wiping `bin/cache`), then sees
 `tool_revision()` changed and runs `pub get` plus a snapshot recompile. That machinery already
 exists and is exercised by `upgrade`.
+
+### Stranding, and how the switch stays escapable
+
+Step 5 is the point of no return, and the design has to be honest about what lies past it. The
+re-bootstrap in step 6 compiles the *target* line's source. If that source does not compile — a
+defect in a freshly ported line, a `pub get` that cannot resolve, a Dart SDK mismatch — there is
+no working snapshot afterwards, so `flutter-tvos use <previous>` cannot run. The user is stranded
+on a version they cannot leave with the tool, which is precisely the situation this feature
+exists to remove.
+
+This is not a remote edge case. It is likeliest exactly when someone first switches to a
+newly-ported old line, because that is the least-exercised source in the repo.
+
+Two requirements follow.
+
+**The failure must name its own undo.** When the step-6 bootstrap fails, print the literal
+recovery command with the previous tag already substituted:
+
+```
+Switched to 3.32.8, but the toolchain failed to build for it.
+Your checkout is on v3.32.8-tvos.1.0.0; the flutter-tvos command will not work
+until this is resolved.
+
+To return to the version you came from:
+  git -C /path/to/flutter-tvos reset --hard v3.44.7-tvos.1.4.2
+```
+
+The previous tag comes from `.git/flutter-tvos-previous`, which survives precisely because it
+lives outside the worktree — the reason for that location, not an incidental benefit.
+
+**The message must come from the outer process.** The stranded tool cannot print it, so `use`
+runs step 6 as a subprocess and reports the failure itself rather than delegating to a
+`--continue` round-trip. This is a second, independent reason for the `precache`/`doctor`
+shell-out described above; even if every line understood `use --continue`, the round-trip would
+put the error message in the mouth of the process that just failed to exist.
 
 ## Cleanup of existing commands
 
@@ -205,8 +265,9 @@ gets a silent revert plus a multi-minute re-bootstrap for nothing.
 | `git status` fails | Fail closed — never treat an unknown tree as clean |
 | Fetch fails during `versions` | Warn, list locally known tags |
 | Fetch fails, target unknown locally | Hard error — cannot check out what we do not have |
-| Already on target | Report and exit 0 |
+| Already on target | Report and exit 0, checked before the dirty-tree guard |
 | Switch succeeded, `precache` failed | State plainly that the checkout is already on the new version; give the command to finish by hand |
+| Switch succeeded, target toolchain will not build | Print the literal `git reset --hard <previous-tag>` recovery line — see "Stranding" above |
 
 ## Testing
 
@@ -216,13 +277,21 @@ Unit tests follow `test/general/tvos_upgrade_test.dart`, driving git through a f
 - `releaseTagPattern` — capture groups; rejects non-release tags.
 - `resolve` — bare version picks the newest match; exact tag; unknown selector throws listing
   candidates; a version with no tvOS release is distinguished from a malformed selector.
-- `list` — sorted newest-first; fetch failure yields a warning plus local tags; non-release tags
-  filtered out.
-- `use` — already-on-target is a no-op; dirty tree refused and `--force` overrides; previous tag
-  recorded; `git reset --hard` invoked with the peeled commit.
+- `list` — fetch failure yields a warning plus local tags; non-release tags filtered out;
+  collapses to one entry per Flutter version at its newest tool release, with `--all` ungrouped.
+- `use` — already-on-target is a no-op **even with a dirty tree**, pinning the step ordering;
+  dirty tree otherwise refused and `--force` overrides; previous tag recorded before the reset;
+  `git reset --hard` invoked with the peeled commit.
 - `downgrade` — no recorded state gives a helpful error; recorded state resolves to the right
   target.
 - `versions` output marks exactly one line current, and none when HEAD is untagged.
+- Bootstrap failure after a switch prints the recovery command containing the previous tag.
+
+One ordering test does not use a fake: `git tag -l --sort=-v:refname` must place
+`v3.44.5-tvos.1.4.0` above `v3.44.5-tvos.1.3.3` and `v3.44.7-*` above `v3.44.6-*`. Both `upgrade`
+(already shipped) and `resolve` assume this ordering and neither pins it, while git's
+`versionsort.suffix` configuration can change how a `-tvos.N` suffix is ranked. Run it against a
+temporary repository with the tags created, so the assumption is verified rather than trusted.
 
 `executable.dart` registration is asserted: `versions` and `use` present, `channel` absent.
 
