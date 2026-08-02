@@ -6,6 +6,7 @@ import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:meta/meta.dart';
 
 import '../tvos_releases.dart';
 import '../tvos_tool_state.dart';
@@ -75,8 +76,13 @@ class TvosUseCommand extends FlutterCommand {
         'Run "flutter-tvos versions" to see what is available.',
       );
     }
-    final String selector = argResults!.rest.single;
+    return switchTo(argResults!.rest.single);
+  }
 
+  /// Everything after argument parsing. `downgrade` reuses this with the tag it
+  /// read from the tool state instead of a command-line argument.
+  @protected
+  Future<FlutterCommandResult> switchTo(String selector) async {
     final TvosRelease target = await releases.resolve(selector);
     final TvosVersion current = await releases.current();
 

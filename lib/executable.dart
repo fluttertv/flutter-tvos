@@ -17,12 +17,10 @@ import 'package:flutter_tools/src/base/template.dart';
 import 'package:flutter_tools/src/build_system/build_targets.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/assemble.dart';
-import 'package:flutter_tools/src/commands/channel.dart';
 import 'package:flutter_tools/src/commands/config.dart';
 import 'package:flutter_tools/src/commands/daemon.dart';
 import 'package:flutter_tools/src/commands/debug_adapter.dart';
 import 'package:flutter_tools/src/commands/doctor.dart';
-import 'package:flutter_tools/src/commands/downgrade.dart';
 import 'package:flutter_tools/src/commands/emulators.dart';
 import 'package:flutter_tools/src/commands/generate.dart';
 import 'package:flutter_tools/src/commands/generate_localizations.dart';
@@ -49,6 +47,7 @@ import 'commands/build.dart';
 import 'commands/clean.dart';
 import 'commands/create.dart';
 import 'commands/devices.dart';
+import 'commands/downgrade.dart';
 import 'commands/drive.dart';
 import 'commands/plugin.dart';
 import 'commands/precache.dart';
@@ -104,12 +103,10 @@ Future<void> main(List<String> args) async {
       // do NOT register here would print "Could not find a command named
       // X" on `flutter-tvos X`, even though plain `flutter X` works.
       AssembleCommand(verboseHelp: verboseHelp, buildSystem: globals.buildSystem),
-      ChannelCommand(verboseHelp: verboseHelp),
       ConfigCommand(verboseHelp: verboseHelp),
       DaemonCommand(hidden: !verboseHelp),
       DebugAdapterCommand(verboseHelp: verboseHelp),
       DoctorCommand(verbose: verbose),
-      DowngradeCommand(verboseHelp: verboseHelp, logger: globals.logger),
       EmulatorsCommand(),
       GenerateCommand(),
       GenerateLocalizationsCommand(
@@ -170,6 +167,10 @@ Future<void> main(List<String> args) async {
       TvosCleanCommand(verbose: verbose),
       TvosCreateCommand(verboseHelp: verboseHelp),
       TvosDevicesCommand(verboseHelp: verboseHelp),
+      // downgrade is overridden for the same reason upgrade is: stock
+      // DowngradeCommand resets --hard inside Cache.flutterRoot (the vendored
+      // SDK), breaking the flutter.version <-> engine-artifact pin.
+      TvosDowngradeCommand(),
       TvosDriveCommand(
         verboseHelp: verboseHelp,
         fileSystem: globals.fs,
