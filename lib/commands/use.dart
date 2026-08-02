@@ -55,15 +55,19 @@ class TvosUseCommand extends FlutterCommand {
       _toolState ?? TvosToolState(repoRoot: _repoRoot, fileSystem: globals.fs);
 
   @override
-  final String name = 'use';
+  String get name => 'use';
 
   @override
-  final String description =
+  String get description =>
       'Switch this flutter-tvos checkout to another Flutter version. '
       'Run "flutter-tvos versions" to see what is available.';
 
+  // Same category as `upgrade`, so the four version-management commands sit
+  // together in `--help` instead of splitting across two sections. 'Tools' is
+  // not a FlutterCommandCategory constant at all — the real one is
+  // 'Tools & Devices' — so the literal was quietly making its own group.
   @override
-  final String category = 'Tools';
+  String get category => FlutterCommandCategory.sdk;
 
   @override
   String get invocation => 'flutter-tvos use <version>';
@@ -117,9 +121,26 @@ class TvosUseCommand extends FlutterCommand {
     // it. This is also why the switch does not finish through a `--continue`
     // round-trip the way `upgrade` does — that would put the message in the
     // mouth of the process that just failed to exist.
+    // Probe the toolchain before asking it to do anything real. This first
+    // invocation is what makes shared.sh re-checkout the SDK, re-run pub get
+    // and recompile the snapshot, so it fails exactly when the target line
+    // does not build — which is the case the user cannot recover from with
+    // this tool. Telling the two apart matters: a precache that fails on a
+    // flaky download is not a broken toolchain, and advising someone to reset
+    // their checkout over it would be wrong as well as alarming.
+    final int bootstrapCode = await _bootstrap(<String>['--version']);
+    if (bootstrapCode != 0) {
+      _throwStranded(target, current);
+    }
+
     final int code = await _bootstrap(<String>['precache', '--force']);
     if (code != 0) {
-      _throwStranded(target, current);
+      throwToolExit(
+        'Switched to ${target.flutterVersion} (${target.tag}) and the toolchain '
+        'builds, but downloading the engine artifacts failed.\n'
+        'Your checkout is on the new version; finish with:\n'
+        '  flutter-tvos precache --force',
+      );
     }
 
     final int doctorCode = await _bootstrap(<String>['doctor']);

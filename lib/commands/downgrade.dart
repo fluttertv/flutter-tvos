@@ -22,11 +22,14 @@ import 'use.dart';
 class TvosDowngradeCommand extends TvosUseCommand {
   TvosDowngradeCommand({super.releases, super.toolState, super.runBootstrap});
 
+  // Getters, not fields: overriding an inherited *field* shadows rather than
+  // replaces it, which the analyzer flags and which reads as a bug waiting to
+  // happen if TvosUseCommand ever reads its own `name`.
   @override
-  final String name = 'downgrade';
+  String get name => 'downgrade';
 
   @override
-  final String description =
+  String get description =>
       'Return to the Flutter version this checkout was switched away from.';
 
   @override

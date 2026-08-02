@@ -40,6 +40,7 @@ import 'package:flutter_tools/src/isolated/mustache_template.dart';
 import 'package:flutter_tools/src/macos/macos_workflow.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 import 'package:flutter_tools/src/windows/windows_workflow.dart';
+import 'package:meta/meta.dart';
 import 'package:path/path.dart';
 
 import 'commands/attach.dart';
@@ -64,40 +65,16 @@ import 'tvos_doctor.dart';
 import 'tvos_logger.dart';
 import 'tvos_platform_args.dart';
 
-/// Main entry point for commands.
+/// The command set `flutter-tvos` exposes.
 ///
-/// Source: `flutter.main` in `executable.dart` (some commands and options were omitted)
-Future<void> main(List<String> args) async {
-  final bool veryVerbose = args.contains('-vv');
-  final bool verbose = args.contains('-v') || args.contains('--verbose') || veryVerbose;
-
-  final bool doctor =
-      (args.isNotEmpty && args.first == 'doctor') ||
-      (args.length == 2 && verbose && args.last == 'doctor');
-  final bool help =
-      args.contains('-h') ||
-      args.contains('--help') ||
-      (args.isNotEmpty && args.first == 'help') ||
-      (args.length == 1 && verbose);
-  final bool muteCommandLogging = (help || doctor) && !veryVerbose;
-  final bool verboseHelp = help && verbose;
-
-  args = <String>[
-    '--suppress-analytics', // Suppress flutter analytics by default.
-    '--no-version-check',
-    ...args,
-  ];
-
-  // Make `flutter-tvos create --platforms=tvos` first-class. Upstream
-  // Flutter's `--platforms` rejects `tvos` at parse time; rewrite it here
-  // (the one argv seam we own) before the runner parses.
-  args = expandTvosPlatformArgs(args);
-
-  Cache.flutterRoot = join(rootPath, 'flutter');
-
-  await runner.run(
-    args,
-    () => <FlutterCommand>[
+/// Named rather than inlined into [main] so a test can assert what is and is
+/// not registered. `channel` being absent is load-bearing — stock
+/// ChannelCommand resets --hard inside the vendored SDK and breaks the
+/// flutter.version to engine-artifact pin — and nothing else in the suite
+/// would notice it coming back.
+@visibleForTesting
+List<FlutterCommand> tvosCommands({required bool verbose, required bool verboseHelp}) {
+  return <FlutterCommand>[
       // Commands forwarded directly from flutter_tools — these have no
       // tvOS-specific behaviour, so we register them as-is. Anything we
       // do NOT register here would print "Could not find a command named
@@ -192,7 +169,43 @@ Future<void> main(List<String> args) async {
       TvosTestCommand(verboseHelp: verboseHelp),
       TvosUseCommand(),
       TvosVersionsCommand(),
-    ],
+  ];
+}
+
+/// Main entry point for commands.
+///
+/// Source: `flutter.main` in `executable.dart` (some commands and options were omitted)
+Future<void> main(List<String> args) async {
+  final bool veryVerbose = args.contains('-vv');
+  final bool verbose = args.contains('-v') || args.contains('--verbose') || veryVerbose;
+
+  final bool doctor =
+      (args.isNotEmpty && args.first == 'doctor') ||
+      (args.length == 2 && verbose && args.last == 'doctor');
+  final bool help =
+      args.contains('-h') ||
+      args.contains('--help') ||
+      (args.isNotEmpty && args.first == 'help') ||
+      (args.length == 1 && verbose);
+  final bool muteCommandLogging = (help || doctor) && !veryVerbose;
+  final bool verboseHelp = help && verbose;
+
+  args = <String>[
+    '--suppress-analytics', // Suppress flutter analytics by default.
+    '--no-version-check',
+    ...args,
+  ];
+
+  // Make `flutter-tvos create --platforms=tvos` first-class. Upstream
+  // Flutter's `--platforms` rejects `tvos` at parse time; rewrite it here
+  // (the one argv seam we own) before the runner parses.
+  args = expandTvosPlatformArgs(args);
+
+  Cache.flutterRoot = join(rootPath, 'flutter');
+
+  await runner.run(
+    args,
+      () => tvosCommands(verbose: verbose, verboseHelp: verboseHelp),
     verbose: verbose,
     verboseHelp: verboseHelp,
     muteCommandLogging: muteCommandLogging,

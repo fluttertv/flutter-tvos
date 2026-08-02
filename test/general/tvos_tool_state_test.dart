@@ -55,9 +55,9 @@ void main() {
     // A checkout whose .git is a file, not a directory — git worktrees and
     // submodules do this. Losing the downgrade breadcrumb is a degraded
     // experience; aborting the switch over it would be worse.
-    final FileSystem fs = MemoryFileSystem.test();
+    final fs = MemoryFileSystem.test();
     fs.file('/wt/.git').createSync(recursive: true);
-    final TvosToolState worktreeState = TvosToolState(repoRoot: '/wt', fileSystem: fs);
+    final worktreeState = TvosToolState(repoRoot: '/wt', fileSystem: fs);
 
     expect(() => worktreeState.writePreviousTag('v3.44.7-tvos.1.4.2'), returnsNormally);
     expect(worktreeState.readPreviousTag(), isNull);

@@ -8,9 +8,7 @@ import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tvos/commands/versions.dart';
 import 'package:flutter_tvos/tvos_releases.dart';
 
-import '../src/common.dart';
 import '../src/context.dart';
-import '../src/fake_process_manager.dart';
 import '../src/test_flutter_command_runner.dart';
 
 void main() {
@@ -115,7 +113,7 @@ void main() {
   testUsingContext('says so when no releases are known', () async {
     processManager.addCommands(<FakeCommand>[
       const FakeCommand(command: <String>['git', 'fetch', '--tags']),
-      const FakeCommand(command: <String>['git', 'tag', '-l', '--sort=-v:refname'], stdout: ''),
+      const FakeCommand(command: <String>['git', 'tag', '-l', '--sort=-v:refname']),
       const FakeCommand(
         command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
         stdout: 'aaaabbbbccccddddeeeeffff0000111122223333\n',

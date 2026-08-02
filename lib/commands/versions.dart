@@ -34,8 +34,12 @@ class TvosVersionsCommand extends FlutterCommand {
   final String description =
       'List the Flutter versions this flutter-tvos checkout can be switched to.';
 
+  // Same category as `upgrade`, so the four version-management commands sit
+  // together in `--help` instead of splitting across two sections. 'Tools' is
+  // not a FlutterCommandCategory constant at all — the real one is
+  // 'Tools & Devices' — so the literal was quietly making its own group.
   @override
-  final String category = 'Tools';
+  String get category => FlutterCommandCategory.sdk;
 
   @override
   Future<FlutterCommandResult> runCommand() async {
@@ -55,8 +59,8 @@ class TvosVersionsCommand extends FlutterCommand {
         ? all
         : TvosRelease.collapseToNewestPerFlutterVersion(all);
 
-    for (final TvosRelease release in shown) {
-      final bool isCurrent = release.tag == current.tag;
+    for (final release in shown) {
+      final isCurrent = release.tag == current.tag;
       globals.printStatus(
         '  ${release.flutterVersion.padRight(9)}'
         '${release.tag.padRight(24)}'

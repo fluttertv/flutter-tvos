@@ -138,7 +138,10 @@ class TvosUpgradeCommandRunner {
   /// Fetches tags from the remote and resolves the newest release tag.
   Future<TvosVersion> fetchLatestReleaseVersion() async {
     final releases = TvosReleases(workingDirectory: workingDirectory!, processUtils: _processUtils);
-    final List<TvosRelease> all = await releases.list();
+    // requireFetch: this command's whole output is a claim about what exists
+    // upstream. Falling back to stale local tags would let it report "already
+    // up to date" to someone offline on an old release.
+    final List<TvosRelease> all = await releases.list(requireFetch: true);
     if (all.isEmpty) {
       throwToolExit(
         'Unable to upgrade flutter-tvos: no release tags '

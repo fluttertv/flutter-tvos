@@ -39,7 +39,7 @@ void main() {
     toolState = TvosToolState(repoRoot: '/repo', fileSystem: fileSystem);
   });
 
-  const String tagList = 'v3.44.7-tvos.1.4.2\n'
+  const tagList = 'v3.44.7-tvos.1.4.2\n'
       'v3.44.5-tvos.1.4.0\n'
       'v3.32.8-tvos.1.0.0\n';
 
@@ -124,7 +124,7 @@ void main() {
       targetHash: 'cafebabecafebabecafebabecafebabecafebabe',
     );
     processManager.addCommands(<FakeCommand>[
-      const FakeCommand(command: <String>['git', 'status', '-s'], stdout: ''),
+      const FakeCommand(command: <String>['git', 'status', '-s']),
       const FakeCommand(
         command: <String>[
           'git',
@@ -152,7 +152,7 @@ void main() {
       targetHash: 'cafebabecafebabecafebabecafebabecafebabe',
     );
     processManager.addCommands(<FakeCommand>[
-      const FakeCommand(command: <String>['git', 'status', '-s'], stdout: ''),
+      const FakeCommand(command: <String>['git', 'status', '-s']),
       const FakeCommand(
         command: <String>[
           'git',

@@ -62,7 +62,7 @@ class TvosRelease {
   static List<TvosRelease> collapseToNewestPerFlutterVersion(List<TvosRelease> releases) {
     final seen = <String>{};
     final result = <TvosRelease>[];
-    for (final TvosRelease release in releases) {
+    for (final release in releases) {
       if (seen.add(release.flutterVersion)) {
         result.add(release);
       }
@@ -124,10 +124,17 @@ class TvosReleases {
 
   /// All release tags, newest first.
   ///
-  /// The fetch is best-effort: with no network we still list what git already
-  /// has, which is also still checkout-able. Failing the whole command because
-  /// the remote is unreachable would make the tool useless offline for no gain.
-  Future<List<TvosRelease>> list({bool fetch = true}) async {
+  /// The fetch is best-effort by default: with no network we still list what
+  /// git already has, which is also still checkout-able. Failing the whole
+  /// command because the remote is unreachable would make the tool useless
+  /// offline for no gain.
+  ///
+  /// [requireFetch] inverts that for callers whose answer is only meaningful
+  /// against the remote. `upgrade` is the one: "you are already up to date" is
+  /// a claim about what exists upstream, and stale local tags cannot support
+  /// it — a user offline on an old release would be told they are current.
+  /// Listing versions has no such problem, so it keeps the default.
+  Future<List<TvosRelease>> list({bool fetch = true, bool requireFetch = false}) async {
     if (fetch) {
       try {
         await _git.run(<String>[
@@ -136,6 +143,12 @@ class TvosReleases {
           '--tags',
         ], throwOnError: true, workingDirectory: workingDirectory);
       } on ProcessException catch (e) {
+        if (requireFetch) {
+          throwToolExit(
+            'Could not reach the flutter-tvos remote, so the list of available '
+            'releases cannot be trusted.\n${e.message}',
+          );
+        }
         globals.printWarning(
           'Could not reach the flutter-tvos remote; showing the releases '
           'already known locally.\n${e.message}',
@@ -166,11 +179,11 @@ class TvosReleases {
   Future<TvosRelease> resolve(String selector) async {
     final String wanted = selector.trim();
     final List<TvosRelease> releases = await list();
-    final bool selectorIsTag = TvosRelease.parse(wanted) != null;
+    final selectorIsTag = TvosRelease.parse(wanted) != null;
 
     TvosRelease? match;
-    for (final TvosRelease release in releases) {
-      final bool hit = selectorIsTag
+    for (final release in releases) {
+      final hit = selectorIsTag
           ? release.tag == wanted
           : release.flutterVersion == wanted;
       if (hit) {

@@ -69,7 +69,7 @@ void main() {
         command: <String>['git', 'describe', '--tags', '--exact-match', 'HEAD'],
         stdout: 'v3.32.8-tvos.1.0.0\n',
       ),
-      const FakeCommand(command: <String>['git', 'status', '-s'], stdout: ''),
+      const FakeCommand(command: <String>['git', 'status', '-s']),
       const FakeCommand(
         command: <String>[
           'git',

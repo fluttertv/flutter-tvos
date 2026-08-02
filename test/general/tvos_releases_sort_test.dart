@@ -35,7 +35,7 @@ void main() {
     await git(<String>['commit', '--allow-empty', '-m', 'base', '--quiet']);
 
     // Deliberately created out of order, so a no-op sort would fail this test.
-    for (final String tag in <String>[
+    for (final tag in <String>[
       'v3.44.5-tvos.1.3.3',
       'v3.32.8-tvos.1.0.0',
       'v3.44.7-tvos.1.4.2',

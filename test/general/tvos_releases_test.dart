@@ -305,7 +305,7 @@ void main() {
 
     test('hasUncommittedChanges is false for a clean tree', () async {
       processManager.addCommand(
-        const FakeCommand(command: <String>['git', 'status', '-s'], stdout: ''),
+        const FakeCommand(command: <String>['git', 'status', '-s']),
       );
       expect(await releases.hasUncommittedChanges(), isFalse);
     });
