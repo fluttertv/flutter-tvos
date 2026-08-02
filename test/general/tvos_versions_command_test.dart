@@ -34,6 +34,7 @@ void main() {
       const FakeCommand(command: <String>['git', 'fetch', '--tags']),
       const FakeCommand(
         command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+        workingDirectory: '/repo',
         stdout: 'v3.44.7-tvos.1.4.2\n'
             'v3.44.5-tvos.1.4.0\n'
             'v3.44.5-tvos.1.3.3\n'
@@ -41,6 +42,7 @@ void main() {
       ),
       const FakeCommand(
         command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+        workingDirectory: '/repo',
         stdout: 'aaaabbbbccccddddeeeeffff0000111122223333\n',
       ),
       FakeCommand(
@@ -82,10 +84,12 @@ void main() {
       const FakeCommand(command: <String>['git', 'fetch', '--tags']),
       const FakeCommand(
         command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+        workingDirectory: '/repo',
         stdout: 'v3.44.7-tvos.1.4.2\n',
       ),
       const FakeCommand(
         command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+        workingDirectory: '/repo',
         stdout: 'aaaabbbbccccddddeeeeffff0000111122223333\n',
       ),
       const FakeCommand(
@@ -116,6 +120,7 @@ void main() {
       const FakeCommand(command: <String>['git', 'tag', '-l', '--sort=-v:refname']),
       const FakeCommand(
         command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+        workingDirectory: '/repo',
         stdout: 'aaaabbbbccccddddeeeeffff0000111122223333\n',
       ),
       const FakeCommand(

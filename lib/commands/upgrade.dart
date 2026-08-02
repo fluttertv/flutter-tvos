@@ -64,23 +64,6 @@ class TvosUpgradeCommandRunner {
 
   String? workingDirectory;
 
-  /// Matches flutter-tvos release tags: `v<flutter>-tvos.<tool>`, e.g.
-  /// `v3.44.1-tvos.1.2.0`.
-  static final RegExp releaseTagPattern = RegExp(r'^v\d+\.\d+\.\d+-tvos\.\d+\.\d+\.\d+$');
-
-  /// Selects the newest release tag from [tags], which are expected to be
-  /// pre-sorted newest-first (`git tag -l --sort=-v:refname`). Non-release
-  /// tags are ignored. Returns null when no release tag is present.
-  @visibleForTesting
-  static String? latestReleaseTag(List<String> tags) {
-    for (final tag in tags) {
-      if (releaseTagPattern.hasMatch(tag.trim())) {
-        return tag.trim();
-      }
-    }
-    return null;
-  }
-
   Future<FlutterCommandResult> runCommand({
     required bool force,
     required bool continueFlow,

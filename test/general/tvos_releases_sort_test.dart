@@ -40,6 +40,14 @@ void main() {
       'v3.32.8-tvos.1.0.0',
       'v3.44.7-tvos.1.4.2',
       'v3.44.5-tvos.1.4.0',
+      // Two-digit components are what make this a *version* sort rather than a
+      // string sort. Without them the fixture passes under plain --sort=-refname
+      // too, and proves nothing. Neither is hypothetical: upstream Flutter has
+      // shipped 3.7.10 through 3.7.12, and the tool version is already at 1.4.2.
+      'v3.44.10-tvos.1.0.0',
+      'v3.44.9-tvos.1.0.0',
+      'v3.44.5-tvos.1.10.0',
+      'v3.44.5-tvos.1.9.0',
       'nightly',
     ]) {
       await git(<String>['tag', tag]);
@@ -55,8 +63,12 @@ void main() {
         tags.map(TvosRelease.parse).whereType<TvosRelease>().toList();
 
     expect(releases.map((TvosRelease r) => r.tag), <String>[
+      'v3.44.10-tvos.1.0.0', // 10 > 9 numerically; a string sort puts 9 first
+      'v3.44.9-tvos.1.0.0',
       'v3.44.7-tvos.1.4.2',
-      'v3.44.5-tvos.1.4.0', // newer tool version of the same Flutter version
+      'v3.44.5-tvos.1.10.0', // likewise within one Flutter version
+      'v3.44.5-tvos.1.9.0',
+      'v3.44.5-tvos.1.4.0',
       'v3.44.5-tvos.1.3.3',
       'v3.32.8-tvos.1.0.0',
     ]);

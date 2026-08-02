@@ -108,6 +108,7 @@ void main() {
         const FakeCommand(command: <String>['git', 'fetch', '--tags']),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          workingDirectory: '/repo',
           stdout: 'nightly\nv3.44.7-tvos.1.4.2\nv3.44.1\nv3.32.8-tvos.1.0.0\n',
         ),
       ]);
@@ -125,6 +126,7 @@ void main() {
       processManager.addCommands(<FakeCommand>[
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          workingDirectory: '/repo',
           stdout: 'v3.44.7-tvos.1.4.2\n',
         ),
       ]);
@@ -144,6 +146,7 @@ void main() {
         ),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          workingDirectory: '/repo',
           stdout: 'v3.44.7-tvos.1.4.2\n',
         ),
       ]);
@@ -155,11 +158,50 @@ void main() {
       expect(processManager, hasNoRemainingExpectations);
     });
 
+    testUsingContext('requireFetch turns a failed fetch into a hard error', () async {
+      // `upgrade` passes this because "you are already up to date" is a claim
+      // about the remote; stale local tags cannot support it, and an offline
+      // user on an old release would be told they are current. Without a test
+      // the flag can be dropped and the whole suite stays green.
+      processManager.addCommands(<FakeCommand>[
+        const FakeCommand(
+          command: <String>['git', 'fetch', '--tags'],
+          workingDirectory: '/repo',
+          exitCode: 128,
+          stderr: 'fatal: unable to access remote',
+        ),
+      ]);
+
+      await expectToolExitLater(
+        releases.list(requireFetch: true),
+        contains('cannot be trusted'),
+      );
+    });
+
+    testUsingContext('a failing "git tag -l" is a tool exit, not a crash', () async {
+      // git refusing the repo (dubious ownership under another uid, or no .git
+      // at all) is ordinary and user-fixable. Uncaught, the ProcessException
+      // reaches flutter's runner and becomes "Oops; flutter has exited
+      // unexpectedly" with a crash report and an invitation to file a bug.
+      processManager.addCommands(<FakeCommand>[
+        const FakeCommand(command: <String>['git', 'fetch', '--tags'], workingDirectory: '/repo'),
+        const FakeCommand(
+          command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          workingDirectory: '/repo',
+          exitCode: 128,
+          stderr: 'fatal: not a git repository',
+        ),
+      ]);
+
+      await expectToolExitLater(releases.list(), contains('must be a git clone'));
+    });
+
     test('returns an empty list when the repo has no release tags', () async {
       processManager.addCommands(<FakeCommand>[
         const FakeCommand(command: <String>['git', 'fetch', '--tags']),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          workingDirectory: '/repo',
           stdout: 'nightly\n',
         ),
       ]);
@@ -188,6 +230,7 @@ void main() {
         const FakeCommand(command: <String>['git', 'fetch', '--tags']),
         const FakeCommand(
           command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+          workingDirectory: '/repo',
           stdout: 'v3.44.7-tvos.1.4.2\n'
               'v3.44.5-tvos.1.4.0\n'
               'v3.44.5-tvos.1.3.3\n'
@@ -201,6 +244,7 @@ void main() {
       processManager.addCommand(
         const FakeCommand(
           command: <String>['git', 'rev-parse', 'v3.44.5-tvos.1.4.0^{commit}'],
+          workingDirectory: '/repo',
           stdout: 'cafebabecafebabecafebabecafebabecafebabe\n',
         ),
       );
@@ -216,6 +260,7 @@ void main() {
       processManager.addCommand(
         const FakeCommand(
           command: <String>['git', 'rev-parse', 'v3.44.5-tvos.1.3.3^{commit}'],
+          workingDirectory: '/repo',
           stdout: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n',
         ),
       );
@@ -264,10 +309,12 @@ void main() {
       processManager.addCommands(<FakeCommand>[
         const FakeCommand(
           command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+          workingDirectory: '/repo',
           stdout: 'aaaabbbbccccddddeeeeffff0000111122223333\n',
         ),
         const FakeCommand(
           command: <String>['git', 'describe', '--tags', '--exact-match', 'HEAD'],
+          workingDirectory: '/repo',
           stdout: 'v3.44.7-tvos.1.4.2\n',
         ),
       ]);
@@ -282,6 +329,7 @@ void main() {
       processManager.addCommands(<FakeCommand>[
         const FakeCommand(
           command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+          workingDirectory: '/repo',
           stdout: 'aaaabbbbccccddddeeeeffff0000111122223333\n',
         ),
         const FakeCommand(
@@ -298,7 +346,7 @@ void main() {
 
     test('hasUncommittedChanges is true for a dirty tree', () async {
       processManager.addCommand(
-        const FakeCommand(command: <String>['git', 'status', '-s'], stdout: ' M lib/foo.dart\n'),
+        const FakeCommand(command: <String>['git', 'status', '-s'], workingDirectory: '/repo', stdout: ' M lib/foo.dart\n'),
       );
       expect(await releases.hasUncommittedChanges(), isTrue);
     });
@@ -322,9 +370,17 @@ void main() {
       );
     });
 
-    test('checkout resets hard to the given commit', () async {
+    test('checkout detaches instead of moving the current branch', () async {
+      // `reset --hard` would rewrite whatever branch is checked out, and the
+      // dirty-tree guard cannot see that: `git status -s` reports the worktree,
+      // not the branch pointer. A contributor on `main` with unpushed commits
+      // passes the guard and loses them to the reflog. `checkout --force
+      // --detach` gives the identical worktree and leaves every ref alone.
       processManager.addCommand(
-        const FakeCommand(command: <String>['git', 'reset', '--hard', 'cafebabe']),
+        const FakeCommand(
+          command: <String>['git', 'checkout', '--force', '--detach', 'cafebabe'],
+          workingDirectory: '/repo',
+        ),
       );
       await releases.checkout('cafebabe');
       expect(processManager, hasNoRemainingExpectations);

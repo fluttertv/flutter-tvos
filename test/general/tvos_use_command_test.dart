@@ -53,14 +53,17 @@ void main() {
       const FakeCommand(command: <String>['git', 'fetch', '--tags']),
       const FakeCommand(
         command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+        workingDirectory: '/repo',
         stdout: tagList,
       ),
       FakeCommand(
         command: <String>['git', 'rev-parse', '$targetTag^{commit}'],
+        workingDirectory: '/repo',
         stdout: '$targetHash\n',
       ),
       const FakeCommand(
         command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+        workingDirectory: '/repo',
         stdout: 'aaaabbbbccccddddeeeeffff0000111122223333\n',
       ),
       FakeCommand(
@@ -108,7 +111,7 @@ void main() {
       targetHash: 'cafebabecafebabecafebabecafebabecafebabe',
     );
     processManager.addCommand(
-      const FakeCommand(command: <String>['git', 'status', '-s'], stdout: ' M lib/foo.dart\n'),
+      const FakeCommand(command: <String>['git', 'status', '-s'], workingDirectory: '/repo', stdout: ' M lib/foo.dart\n'),
     );
     final command = TvosUseCommand(releases: releases, toolState: toolState);
 
@@ -128,10 +131,12 @@ void main() {
       const FakeCommand(
         command: <String>[
           'git',
-          'reset',
-          '--hard',
+          'checkout',
+          '--force',
+          '--detach',
           'cafebabecafebabecafebabecafebabecafebabe',
         ],
+        workingDirectory: '/repo',
       ),
     ]);
     final command = TvosUseCommand(
@@ -156,10 +161,12 @@ void main() {
       const FakeCommand(
         command: <String>[
           'git',
-          'reset',
-          '--hard',
+          'checkout',
+          '--force',
+          '--detach',
           'cafebabecafebabecafebabecafebabecafebabe',
         ],
+        workingDirectory: '/repo',
       ),
     ]);
     final command = TvosUseCommand(
@@ -168,14 +175,18 @@ void main() {
       runBootstrap: (_) async => 1, // the target toolchain fails to build
     );
 
-    // Past the reset the user cannot run `flutter-tvos` at all, so the message
-    // must carry the literal git command that undoes it.
     await expectToolExitLater(
       createTestCommandRunner(command).run(<String>['use', '3.32.8']),
-      allOf(
-        contains('git -C /repo reset --hard v3.44.7-tvos.1.4.2'),
-        contains('3.32.8'),
-      ),
+      contains('3.32.8'),
+    );
+
+    // Past the checkout the user cannot run `flutter-tvos` at all, so the way
+    // back has to already be on screen. It is printed when the checkout moves
+    // rather than from the failure path, so a Ctrl-C or a process that cannot
+    // be spawned cannot take it with them.
+    expect(
+      logger.statusText,
+      contains('git -C /repo checkout --force --detach v3.44.7-tvos.1.4.2'),
     );
   }, overrides: <Type, Generator>{Logger: () => logger});
 
@@ -184,6 +195,7 @@ void main() {
       const FakeCommand(command: <String>['git', 'fetch', '--tags']),
       const FakeCommand(
         command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+        workingDirectory: '/repo',
         stdout: tagList,
       ),
     ]);
@@ -195,4 +207,109 @@ void main() {
     );
     expect(processManager, hasNoRemainingExpectations);
   }, overrides: <Type, Generator>{Logger: () => logger});
+
+  testUsingContext('--force switches past a dirty tree', () async {
+    // The refusal message advertises --force; nothing was checking the flag
+    // actually does anything. Deleting `!boolArg('force') &&` from the guard
+    // passed the whole suite.
+    stubResolveThenCurrent(
+      targetTag: 'v3.32.8-tvos.1.0.0',
+      targetHash: 'cafebabecafebabecafebabecafebabecafebabe',
+    );
+    processManager.addCommands(<FakeCommand>[
+      // No `git status -s` stub: with --force the guard must not run at all.
+      const FakeCommand(
+        command: <String>[
+          'git',
+          'checkout',
+          '--force',
+          '--detach',
+          'cafebabecafebabecafebabecafebabecafebabe',
+        ],
+        workingDirectory: '/repo',
+      ),
+    ]);
+    final command = TvosUseCommand(
+      releases: releases,
+      toolState: toolState,
+      runBootstrap: (_) async => 0,
+    );
+
+    await createTestCommandRunner(command).run(<String>['use', '3.32.8', '--force']);
+
+    expect(processManager, hasNoRemainingExpectations);
+  }, overrides: <Type, Generator>{Logger: () => logger});
+
+  testUsingContext('bootstraps in the order the design depends on', () async {
+    // The probe must come FIRST -- it is what distinguishes "this release line
+    // does not build" from "an artifact download failed", and reordering it
+    // after precache silently destroys that distinction. precache must carry
+    // --force, or the previous version's engine artifacts survive the switch.
+    stubResolveThenCurrent(
+      targetTag: 'v3.32.8-tvos.1.0.0',
+      targetHash: 'cafebabecafebabecafebabecafebabecafebabe',
+    );
+    processManager.addCommands(<FakeCommand>[
+      const FakeCommand(command: <String>['git', 'status', '-s'], workingDirectory: '/repo'),
+      const FakeCommand(
+        command: <String>[
+          'git',
+          'checkout',
+          '--force',
+          '--detach',
+          'cafebabecafebabecafebabecafebabecafebabe',
+        ],
+        workingDirectory: '/repo',
+      ),
+    ]);
+    final invocations = <List<String>>[];
+    final command = TvosUseCommand(
+      releases: releases,
+      toolState: toolState,
+      runBootstrap: (List<String> args) async {
+        invocations.add(args);
+        return 0;
+      },
+    );
+
+    await createTestCommandRunner(command).run(<String>['use', '3.32.8']);
+
+    expect(invocations, <List<String>>[
+      <String>['--version'],
+      <String>['precache', '--force'],
+      <String>['doctor'],
+    ]);
+  }, overrides: <Type, Generator>{Logger: () => logger});
+
+  testUsingContext('a precache failure is reported as itself, not as a broken toolchain', () async {
+    stubResolveThenCurrent(
+      targetTag: 'v3.32.8-tvos.1.0.0',
+      targetHash: 'cafebabecafebabecafebabecafebabecafebabe',
+    );
+    processManager.addCommands(<FakeCommand>[
+      const FakeCommand(command: <String>['git', 'status', '-s'], workingDirectory: '/repo'),
+      const FakeCommand(
+        command: <String>[
+          'git',
+          'checkout',
+          '--force',
+          '--detach',
+          'cafebabecafebabecafebabecafebabecafebabe',
+        ],
+        workingDirectory: '/repo',
+      ),
+    ]);
+    final command = TvosUseCommand(
+      releases: releases,
+      toolState: toolState,
+      // The probe succeeds, so the toolchain builds; only precache fails.
+      runBootstrap: (List<String> args) async => args.first == 'precache' ? 1 : 0,
+    );
+
+    await expectToolExitLater(
+      createTestCommandRunner(command).run(<String>['use', '3.32.8']),
+      allOf(contains('engine artifacts'), contains('precache --force')),
+    );
+  }, overrides: <Type, Generator>{Logger: () => logger});
+
 }

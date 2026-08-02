@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/runner/flutter_command.dart';
@@ -20,7 +21,7 @@ typedef BootstrapRunner = Future<int> Function(List<String> args);
 /// Each supported Flutter version is a release line of this repo: the tag
 /// carries the CLI source ported to that version's `flutter_tools` API *and*
 /// the pinned SDK revision and engine-artifact tag. So switching is a
-/// `git reset --hard` to the tag; `bin/internal/shared.sh` then re-checks-out
+/// `git checkout --force --detach` to the tag; `bin/internal/shared.sh` then re-checks-out
 /// the vendored SDK and recompiles the tool snapshot on the next invocation,
 /// with no extra work here.
 class TvosUseCommand extends FlutterCommand {
@@ -110,40 +111,50 @@ class TvosUseCommand extends FlutterCommand {
       'Switching flutter-tvos ${current.label} -> ${target.flutterVersion} (${target.tag})...',
     );
 
-    if (current.tag != null) {
-      toolState.writePreviousTag(current.tag!);
-    }
+    // Recorded before the reset so the value is still readable if anything
+    // below goes wrong. `current.hash` when HEAD is untagged: a development
+    // checkout is exactly where losing the way back hurts most, and a bare
+    // commit is as resettable as a tag.
+    toolState.writePreviousTag(current.tag ?? current.hash);
     await releases.checkout(target.hash!);
+
+    _printRecovery(current);
 
     // Everything past here runs the *target* line's toolchain, which this
     // process cannot become. Shell out, and own the error message: if the
     // target fails to build there is no working `flutter-tvos` left to print
-    // it. This is also why the switch does not finish through a `--continue`
-    // round-trip the way `upgrade` does — that would put the message in the
+    // it. That is also why the switch does not finish through a `--continue`
+    // round-trip the way `upgrade` does — it would put the message in the
     // mouth of the process that just failed to exist.
-    // Probe the toolchain before asking it to do anything real. This first
-    // invocation is what makes shared.sh re-checkout the SDK, re-run pub get
-    // and recompile the snapshot, so it fails exactly when the target line
-    // does not build — which is the case the user cannot recover from with
-    // this tool. Telling the two apart matters: a precache that fails on a
-    // flaky download is not a broken toolchain, and advising someone to reset
-    // their checkout over it would be wrong as well as alarming.
-    final int bootstrapCode = await _bootstrap(<String>['--version']);
+    //
+    // The probe runs first because this invocation is what makes shared.sh
+    // re-checkout the SDK, re-run pub get and recompile the snapshot. It is
+    // also network-heavy, so a non-zero exit does NOT prove the source is
+    // broken — the message says what was observed and lets the user decide.
+    final int bootstrapCode = await _bootstrapOrStranded(<String>['--version'], target);
     if (bootstrapCode != 0) {
-      _throwStranded(target, current);
+      throwToolExit(
+        'Switched to ${target.flutterVersion} (${target.tag}), but setting up its '
+        'toolchain did not finish.\n'
+        'Its first run fetches the Flutter SDK and runs "pub get", so a network '
+        'failure and a release line that does not build look the same here.\n'
+        'Retry with "flutter-tvos --version". If that keeps failing, return to '
+        'where you were with the command above.',
+      );
     }
 
-    final int code = await _bootstrap(<String>['precache', '--force']);
+    final int code = await _bootstrapOrStranded(<String>['precache', '--force'], target);
     if (code != 0) {
       throwToolExit(
         'Switched to ${target.flutterVersion} (${target.tag}) and the toolchain '
         'builds, but downloading the engine artifacts failed.\n'
-        'Your checkout is on the new version; finish with:\n'
-        '  flutter-tvos precache --force',
+        'Your checkout is on the new version and "flutter-tvos" works, so you can '
+        'finish with "flutter-tvos precache --force", or go back with '
+        '"flutter-tvos downgrade".',
       );
     }
 
-    final int doctorCode = await _bootstrap(<String>['doctor']);
+    final int doctorCode = await _bootstrapOrStranded(<String>['doctor'], target);
     if (doctorCode != 0) {
       globals.printWarning(
         'Switched to ${target.flutterVersion}, but "flutter-tvos doctor" reported problems.',
@@ -159,7 +170,12 @@ class TvosUseCommand extends FlutterCommand {
     final BootstrapRunner runner =
         _runBootstrap ??
         (List<String> a) => globals.processUtils.stream(
-          <String>[globals.fs.path.join('bin', 'flutter-tvos'), '--no-version-check', ...a],
+          <String>[
+            globals.fs.path.join('bin', 'flutter-tvos'),
+            '--no-color',
+            '--no-version-check',
+            ...a,
+          ],
           workingDirectory: _repoRoot,
           allowReentrantFlutter: true,
           environment: Map<String, String>.of(globals.platform.environment),
@@ -167,17 +183,45 @@ class TvosUseCommand extends FlutterCommand {
     return runner(args);
   }
 
-  /// The checkout has moved but its toolchain will not build, so no
-  /// `flutter-tvos` command can run — including the one that would undo this.
-  /// The way back has to be a plain git command the user can paste.
-  Never _throwStranded(TvosRelease target, TvosVersion previous) {
+  /// [_bootstrap], but a process that cannot even be spawned is reported as the
+  /// stranding it is rather than as a raw exception dump.
+  ///
+  /// `processUtils.stream` throws instead of returning non-zero when the
+  /// executable is missing or not executable — which is precisely what an old
+  /// or half-written release line looks like. Without this the checkout has
+  /// already moved and the one message carrying the way back never prints.
+  Future<int> _bootstrapOrStranded(List<String> args, TvosRelease target) async {
+    try {
+      return await _bootstrap(args);
+    } on ProcessException catch (e) {
+      throwToolExit(
+        'Switched to ${target.flutterVersion} (${target.tag}), but '
+        '"bin/flutter-tvos" could not be run there.\n$e\n'
+        'Return to where you were with the command above.',
+      );
+    }
+  }
+
+  /// Prints the way back, as a single unwrapped line, the moment the checkout
+  /// moves.
+  ///
+  /// Unconditional and early by design. What follows takes minutes, and a
+  /// Ctrl-C or a dropped session would otherwise kill this process before it
+  /// could say anything — in the one state where the user has no working
+  /// `flutter-tvos` left to ask.
+  ///
+  /// `wrap: false` is not cosmetic. printStatus word-wraps to the terminal
+  /// width, and a wrapped `git … --hard <tag>` pastes as a `git checkout
+  /// --force --detach` with no revision: git fails, or worse succeeds against
+  /// a stray argument, and the user believes they recovered when they did not.
+  void _printRecovery(TvosVersion previous) {
     final String back = previous.tag ?? previous.hash;
-    throwToolExit(
-      'Switched to ${target.flutterVersion}, but the toolchain failed to build for it.\n'
-      'Your checkout is on ${target.tag}; the flutter-tvos command will not work '
-      'until this is resolved.\n\n'
-      'To return to the version you came from:\n'
-      '  git -C $_repoRoot reset --hard $back',
+    globals.printStatus('');
+    globals.printStatus('If anything goes wrong, return to where you were with:');
+    globals.printStatus(
+      '  git -C $_repoRoot checkout --force --detach $back',
+      wrap: false,
     );
+    globals.printStatus('');
   }
 }

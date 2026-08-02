@@ -37,6 +37,22 @@ class TvosDowngradeCommand extends TvosUseCommand {
 
   @override
   Future<FlutterCommandResult> runCommand() async {
+    // Refuse a version argument, as stock `flutter downgrade` does. Silently
+    // ignoring it is the dangerous shape: this command inherits `--force` from
+    // TvosUseCommand, so `downgrade 3.32.8 --force` would discard the user's
+    // uncommitted work and reset to the *recorded* tag rather than the one they
+    // typed. `use` trains people that a version goes on the command line, which
+    // makes the mistake likely rather than exotic.
+    if (argResults!.rest.isNotEmpty) {
+      throwToolExit(
+        '"flutter-tvos downgrade" does not take a version; it returns to the '
+        'one this checkout was switched away from.\n'
+        'To go to a specific version, use:\n'
+        '  flutter-tvos use ${argResults!.rest.first}',
+        exitCode: 2,
+      );
+    }
+
     final String? previous = toolState.readPreviousTag();
     if (previous == null) {
       throwToolExit(

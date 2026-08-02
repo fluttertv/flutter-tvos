@@ -145,23 +145,41 @@ class TvosReleases {
       } on ProcessException catch (e) {
         if (requireFetch) {
           throwToolExit(
-            'Could not reach the flutter-tvos remote, so the list of available '
-            'releases cannot be trusted.\n${e.message}',
+            '"git fetch --tags" failed in $workingDirectory, so the list of '
+            'available releases cannot be trusted.\n${e.message}',
           );
         }
+        // Deliberately does not say "the remote is unreachable": a non-zero
+        // exit here means git failed for *some* reason, and asserting the
+        // network is at fault turns a dubious-ownership or bad-config error
+        // into a confidently wrong diagnosis.
         globals.printWarning(
-          'Could not reach the flutter-tvos remote; showing the releases '
+          '"git fetch --tags" failed in $workingDirectory; showing the releases '
           'already known locally.\n${e.message}',
         );
       }
     }
 
-    final RunResult result = await _git.run(<String>[
-      'git',
-      'tag',
-      '-l',
-      '--sort=-v:refname',
-    ], throwOnError: true, workingDirectory: workingDirectory);
+    RunResult result;
+    try {
+      result = await _git.run(<String>[
+        'git',
+        'tag',
+        '-l',
+        '--sort=-v:refname',
+      ], throwOnError: true, workingDirectory: workingDirectory);
+    } on ProcessException catch (e) {
+      // Without this the exception escapes as an "Oops; flutter has exited
+      // unexpectedly" crash report inviting a bug against flutter/flutter,
+      // for something as ordinary as a checkout git refuses to read
+      // (dubious ownership under a different uid, or no .git at all — which
+      // shared.sh explicitly supports via its shasum fallback).
+      throwToolExit(
+        'Could not list the flutter-tvos releases: "git tag" failed in '
+        '$workingDirectory.\n'
+        'This must be a git clone of the flutter-tvos repository.\n${e.message}',
+      );
+    }
 
     return const LineSplitter()
         .convert(result.stdout.trim())
@@ -244,7 +262,8 @@ class TvosReleases {
   }
 
   Future<bool> hasUncommittedChanges() async {
-    // Fail *closed*: this is the only guard before `git reset --hard`, so if we
+    // Fail *closed*: this is the only guard before [checkout] moves the tree,
+    // so if we
     // cannot determine the tree's status we must not report it clean.
     try {
       final RunResult result = await _git.run(<String>[
@@ -262,16 +281,30 @@ class TvosReleases {
     }
   }
 
+  /// Moves the worktree to [hash], leaving every branch pointer alone.
+  ///
+  /// `checkout --force --detach`, not `reset --hard`. The worktree result is
+  /// identical, but `reset --hard` rewrites whatever branch is checked out —
+  /// and the dirty-tree guard cannot protect against that, because
+  /// `git status -s` reports worktree state and says nothing about the branch
+  /// pointer. A contributor sitting on `main` with unpushed commits passes the
+  /// guard cleanly and has those commits left reachable only from the reflog.
+  /// Going *backwards* is what makes this bite, which is why `use` and
+  /// `downgrade` need it even though `upgrade` has always used `reset --hard`.
   Future<void> checkout(String hash) async {
     try {
       await _git.run(<String>[
         'git',
-        'reset',
-        '--hard',
+        'checkout',
+        '--force',
+        '--detach',
         hash,
       ], throwOnError: true, workingDirectory: workingDirectory);
     } on ProcessException catch (e) {
-      throwToolExit(e.message, exitCode: e.errorCode);
+      throwToolExit(
+        'Could not switch the flutter-tvos checkout in $workingDirectory to '
+        '$hash.\n${e.message}',
+      );
     }
   }
 
@@ -279,8 +312,8 @@ class TvosReleases {
   /// returns the tag-object SHA, which would never equal a `rev-parse HEAD`
   /// result; `^{commit}` is a no-op for lightweight tags.
   ///
-  /// Public because Task 8's `upgrade` needs to peel a tag it already has,
-  /// without paying for a second `list()` and its `git fetch`.
+  /// Public so `upgrade` can peel a tag it already holds without paying for a
+  /// second `list()` and its `git fetch`.
   Future<String> peelToCommit(String tag) async {
     try {
       final RunResult result = await _git.run(<String>[
