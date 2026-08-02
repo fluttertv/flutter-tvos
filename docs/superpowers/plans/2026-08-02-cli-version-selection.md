@@ -19,7 +19,7 @@
 - `ProcessUtils` is injectable on every type that shells out to git, so tests drive git through `FakeProcessManager` with no repository present. Production callers omit it and fall back to `globals.processUtils`.
 - Tag lists are always **newest-first**, produced by `git tag -l --sort=-v:refname`. Code that collapses or picks "newest" relies on this ordering; Task 3 pins it.
 - Never treat an unverifiable git state as safe. If `git status` cannot be queried, fail closed rather than assuming the tree is clean.
-- Run tests with: `bin/flutter-tvos test test/general/<file>` from the repo root.
+- Run tests with: `flutter/bin/dart test test/general/<file>` from the repo root.
 - Do not restructure `TvosUpgradeCommand`'s two-phase `--continue` flow. Task 8 changes only where it gets tags from.
 
 ---
@@ -131,7 +131,7 @@ void main() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bin/flutter-tvos test test/general/tvos_releases_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_releases_test.dart`
 Expected: FAIL — `Target of URI doesn't exist: 'package:flutter_tvos/tvos_releases.dart'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -226,7 +226,7 @@ class TvosRelease {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `bin/flutter-tvos test test/general/tvos_releases_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_releases_test.dart`
 Expected: PASS, 8 tests
 
 - [ ] **Step 5: Commit**
@@ -518,7 +518,7 @@ and these groups inside `main()`:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bin/flutter-tvos test test/general/tvos_releases_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_releases_test.dart`
 Expected: FAIL — `Undefined name 'TvosReleases'` and `Undefined class 'TvosVersion'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -742,7 +742,7 @@ The re-export keeps `test/general/tvos_upgrade_test.dart` compiling: it imports 
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `bin/flutter-tvos test test/general/tvos_releases_test.dart test/general/tvos_upgrade_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_releases_test.dart test/general/tvos_upgrade_test.dart`
 Expected: PASS — the new file's tests plus the existing upgrade tests, which must be unchanged.
 
 - [ ] **Step 5: Commit**
@@ -848,7 +848,7 @@ A `MemoryFileSystem` cannot stand in here — the whole point is to ask real git
 
 - [ ] **Step 2: Run test to verify it fails or passes for the right reason**
 
-Run: `bin/flutter-tvos test test/general/tvos_releases_sort_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_releases_sort_test.dart`
 Expected: PASS. This test documents an existing external behaviour rather than driving new code, so it should pass on first run — that is the point. If it FAILS, git is ordering our tags differently than assumed and both `resolve` and the shipped `upgrade` have a latent bug: stop and report before continuing the plan.
 
 - [ ] **Step 3: Commit**
@@ -944,7 +944,7 @@ void main() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bin/flutter-tvos test test/general/tvos_tool_state_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_tool_state_test.dart`
 Expected: FAIL — `Target of URI doesn't exist: 'package:flutter_tvos/tvos_tool_state.dart'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1014,7 +1014,7 @@ class TvosToolState {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `bin/flutter-tvos test test/general/tvos_tool_state_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_tool_state_test.dart`
 Expected: PASS, 6 tests
 
 - [ ] **Step 5: Commit**
@@ -1182,7 +1182,7 @@ void main() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bin/flutter-tvos test test/general/tvos_versions_command_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_versions_command_test.dart`
 Expected: FAIL — `Target of URI doesn't exist: 'package:flutter_tvos/commands/versions.dart'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1279,7 +1279,7 @@ import 'package:flutter_tvos/commands/versions.dart';
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `bin/flutter-tvos test test/general/tvos_versions_command_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_versions_command_test.dart`
 Expected: PASS, 5 tests
 
 - [ ] **Step 5: Commit**
@@ -1509,7 +1509,7 @@ void main() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bin/flutter-tvos test test/general/tvos_use_command_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_use_command_test.dart`
 Expected: FAIL — `Target of URI doesn't exist: 'package:flutter_tvos/commands/use.dart'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1683,7 +1683,7 @@ import 'package:flutter_tvos/commands/use.dart';
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `bin/flutter-tvos test test/general/tvos_use_command_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_use_command_test.dart`
 Expected: PASS, 6 tests
 
 - [ ] **Step 5: Commit**
@@ -1817,7 +1817,7 @@ void main() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `bin/flutter-tvos test test/general/tvos_downgrade_command_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_downgrade_command_test.dart`
 Expected: FAIL — `Target of URI doesn't exist: 'package:flutter_tvos/commands/downgrade.dart'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1952,7 +1952,7 @@ Then in `lib/executable.dart`:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `bin/flutter-tvos test test/general/tvos_downgrade_command_test.dart test/general/tvos_use_command_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_downgrade_command_test.dart test/general/tvos_use_command_test.dart`
 Expected: PASS — downgrade's 2 tests plus use's 6, unbroken by the refactor.
 
 - [ ] **Step 5: Verify the command surface by hand**
@@ -1997,7 +1997,7 @@ Narrow delegation. `TvosUpgradeCommand`'s two-phase `--continue` flow is unchang
 
 - [ ] **Step 1: Run the existing tests to establish the baseline**
 
-Run: `bin/flutter-tvos test test/general/tvos_upgrade_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_upgrade_test.dart`
 Expected: PASS. Record the count; it must not change.
 
 - [ ] **Step 2: Delegate tag discovery**
@@ -2036,12 +2036,12 @@ In `lib/commands/upgrade.dart`, replace the body of `fetchLatestReleaseVersion` 
 
 - [ ] **Step 3: Run the existing tests to verify they still pass**
 
-Run: `bin/flutter-tvos test test/general/tvos_upgrade_test.dart`
+Run: `flutter/bin/dart test test/general/tvos_upgrade_test.dart`
 Expected: PASS, same count as Step 1, with no edits to the test file.
 
 - [ ] **Step 4: Run the whole suite**
 
-Run: `bin/flutter-tvos test test/general`
+Run: `flutter/bin/dart test test/general`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -2060,7 +2060,7 @@ change wearing a refactor's clothes."
 
 ## Definition of done
 
-- [ ] `bin/flutter-tvos test test/general` passes.
+- [ ] `flutter/bin/dart test test/general` passes.
 - [ ] `bin/flutter-tvos versions` lists the real tags with exactly one marked current.
 - [ ] `bin/flutter-tvos use <a version already checked out>` reports "already on" and exits 0.
 - [ ] `bin/flutter-tvos --help` shows `versions`, `use`, `downgrade`, and no `channel`.
