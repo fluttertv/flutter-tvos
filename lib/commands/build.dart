@@ -20,9 +20,10 @@ import '../tvos_plugins.dart';
 /// a category and a failing `runCommand` -- and cost seventeen constructor
 /// parameters forwarded straight through, none of which this class reads. They
 /// exist to build the Android, iOS, macOS, web, Linux and Windows subcommands,
-/// so we were paying upstream's dependency-injection churn to register twelve
+/// so we were paying upstream's dependency-injection churn to register eleven
 /// commands a tvOS tool should not offer: `flutter-tvos build ios` would have
-/// built an iOS app against an engine compiled for tvOS.
+/// built an iOS app against an engine compiled for tvOS. (`linux` and `windows`
+/// are in that constructor too but never reach the help on macOS.)
 ///
 /// `build bundle` goes with them, despite being nominally platform-neutral.
 /// BundleBuilder resolves `globals.buildTargets.copyFlutterBundle`, and
@@ -47,7 +48,7 @@ class TvosBuildCommand extends FlutterCommand {
   final String name = 'build';
 
   @override
-  final String description = 'Build a tvOS app or install bundle.';
+  final String description = 'Build a tvOS app.';
 
   @override
   String get category => FlutterCommandCategory.project;

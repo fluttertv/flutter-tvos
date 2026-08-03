@@ -10,11 +10,11 @@ import '../src/common.dart';
 /// What `flutter-tvos build` offers, and — the load-bearing half — what it does
 /// not.
 ///
-/// `TvosBuildCommand` used to extend upstream's `BuildCommand`, which registers
-/// twelve platform subcommands of its own: apk, appbundle, aar, ios,
-/// ios-framework, ipa, macos, macos-framework, swift-package, web, linux,
-/// windows. On a tvOS toolchain several are actively wrong — `build ios` would
-/// build an iOS app against an engine compiled for tvOS.
+/// `TvosBuildCommand` used to extend upstream's `BuildCommand`, which put eleven
+/// platform subcommands of its own into the help: aar, apk, appbundle, bundle,
+/// ios, ios-framework, ipa, macos, macos-framework, swift-package and web. On a
+/// tvOS toolchain several are actively wrong — `build ios` would build an iOS
+/// app against an engine compiled for tvOS.
 ///
 /// Nothing else in the suite notices if that inheritance comes back. A Flutter
 /// upgrade that reinstates `extends BuildCommand` leaves every other test
@@ -44,8 +44,6 @@ void main() {
             'macos-framework',
             'swift-package',
             'web',
-            'linux',
-            'windows',
           ]),
         ),
       ),
