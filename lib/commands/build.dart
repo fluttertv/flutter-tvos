@@ -4,6 +4,7 @@
 
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/commands/build.dart';
+import 'package:flutter_tools/src/commands/build_bundle.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 
@@ -12,29 +13,41 @@ import '../tvos_builder.dart';
 import '../tvos_cache.dart';
 import '../tvos_plugins.dart';
 
-class TvosBuildCommand extends BuildCommand {
-  TvosBuildCommand({
-    required super.artifacts,
-    required super.cache,
-    required super.fileSystem,
-    required super.flutterVersion,
-    required super.buildSystem,
-    required super.osUtils,
-    required Logger logger,
-    required super.androidSdk,
-    required super.config,
-    required super.platform,
-    required super.processUtils,
-    required super.processManager,
-    required super.fileSystemUtils,
-    required super.templateRenderer,
-    required super.terminal,
-    required super.plistParser,
-    required super.xcode,
-    required bool verboseHelp,
-  }) : super(logger: logger, verboseHelp: verboseHelp) {
+/// `flutter-tvos build` — registers only the subcommands this toolchain
+/// actually supports.
+///
+/// Deliberately extends [FlutterCommand] rather than upstream's [BuildCommand].
+/// Inheriting the latter bought four trivial members -- a name, a description,
+/// a category and a failing `runCommand` -- and cost seventeen constructor
+/// parameters forwarded straight through, none of which this class reads. They
+/// exist to build the Android, iOS, macOS, web, Linux and Windows subcommands,
+/// so we were paying upstream's dependency-injection churn to register ten
+/// commands a tvOS tool should not offer: `flutter-tvos build ios` would have
+/// built an iOS app against an engine compiled for tvOS.
+///
+/// That forwarding was also, on its own, half the work of porting this CLI to
+/// another Flutter version -- twelve of the twenty-five analyzer errors against
+/// 3.32.8 came from this constructor. Composing instead of inheriting removes
+/// them permanently: upstream can reshape BuildCommand's injection freely now.
+class TvosBuildCommand extends FlutterCommand {
+  TvosBuildCommand({required Logger logger, required bool verboseHelp}) {
     addSubcommand(BuildTvosCommand(logger: logger, verboseHelp: verboseHelp));
+    // Platform-neutral and used from CI to produce flutter_assets; keeping it
+    // costs nothing version-specific.
+    addSubcommand(BuildBundleCommand(logger: logger, verboseHelp: verboseHelp));
   }
+
+  @override
+  final String name = 'build';
+
+  @override
+  final String description = 'Build a tvOS app or install bundle.';
+
+  @override
+  String get category => FlutterCommandCategory.project;
+
+  @override
+  Future<FlutterCommandResult> runCommand() async => FlutterCommandResult.fail();
 }
 
 class BuildTvosCommand extends BuildSubCommand with TvosRequiredArtifacts {
