@@ -67,6 +67,16 @@ class TvosUseCommand extends FlutterCommand {
   @override
   String get invocation => 'flutter-tvos use <version>';
 
+
+  // Listing tags and moving the checkout both need nothing from the artifact
+  // cache, and updating it first is actively wrong here: on a fresh clone it
+  // downloads hundreds of megabytes to print a list, and `use` would update the
+  // cache for the version it is about to leave -- which shared.sh then deletes
+  // along with bin/cache on the switch. Stock UpgradeCommand sets this for the
+  // same reason.
+  @override
+  bool get shouldUpdateCache => false;
+
   @override
   Future<FlutterCommandResult> runCommand() async {
     if (argResults!.rest.length != 1) {
@@ -132,8 +142,8 @@ class TvosUseCommand extends FlutterCommand {
         'Switched to ${target.flutterVersion} (${target.tag}) and the toolchain '
         'builds, but downloading the engine artifacts failed.\n'
         'Your checkout is on the new version and "flutter-tvos" works, so you can '
-        'finish with "flutter-tvos precache --force", or go back with '
-        '"flutter-tvos downgrade".',
+        'finish with "flutter-tvos precache --force", or go back with the command '
+        'printed above.',
       );
     }
 
@@ -198,13 +208,16 @@ class TvosUseCommand extends FlutterCommand {
   /// --force --detach` with no revision: git fails, or worse succeeds against
   /// a stray argument, and the user believes they recovered when they did not.
   void _printRecovery(TvosVersion previous) {
-    final String back = previous.tag ?? previous.hash;
+    // Prefer the branch. Switching detaches, so restoring by tag or hash puts
+    // someone back at the right commit but not back on the branch they were
+    // working on — and for a contributor that branch, not the commit, is where
+    // they were. `--force` without `--detach` re-attaches.
+    final command = previous.branch != null
+        ? 'git -C $_repoRoot checkout --force ${previous.branch}'
+        : 'git -C $_repoRoot checkout --force --detach ${previous.tag ?? previous.hash}';
     globals.printStatus('');
     globals.printStatus('If anything goes wrong, return to where you were with:');
-    globals.printStatus(
-      '  git -C $_repoRoot checkout --force --detach $back',
-      wrap: false,
-    );
+    globals.printStatus('  $command', wrap: false);
     globals.printStatus('');
   }
 }

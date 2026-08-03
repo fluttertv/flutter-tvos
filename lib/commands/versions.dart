@@ -41,6 +41,16 @@ class TvosVersionsCommand extends FlutterCommand {
   @override
   String get category => FlutterCommandCategory.sdk;
 
+
+  // Listing tags and moving the checkout both need nothing from the artifact
+  // cache, and updating it first is actively wrong here: on a fresh clone it
+  // downloads hundreds of megabytes to print a list, and `use` would update the
+  // cache for the version it is about to leave -- which shared.sh then deletes
+  // along with bin/cache on the switch. Stock UpgradeCommand sets this for the
+  // same reason.
+  @override
+  bool get shouldUpdateCache => false;
+
   @override
   Future<FlutterCommandResult> runCommand() async {
     final List<TvosRelease> all = await releases.list();

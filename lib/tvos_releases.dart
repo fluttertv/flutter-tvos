@@ -91,7 +91,7 @@ class TvosRelease {
 /// A resolved point in the flutter-tvos git history.
 @immutable
 class TvosVersion {
-  const TvosVersion({required this.hash, required this.tag});
+  const TvosVersion({required this.hash, required this.tag, this.branch});
 
   /// Full git commit hash.
   final String hash;
@@ -99,6 +99,13 @@ class TvosVersion {
   /// The exact release tag at this commit, or null if the commit is not
   /// tagged (e.g. a development checkout on a branch).
   final String? tag;
+
+  /// The branch HEAD was on, or null when it was already detached.
+  ///
+  /// Kept because the commit alone is not enough to put someone back where they
+  /// were: switching detaches, so restoring by hash leaves them on a detached
+  /// HEAD at the right commit rather than on their branch.
+  final String? branch;
 
   String get hashShort => hash.length >= 10 ? hash.substring(0, 10) : hash;
 
@@ -265,7 +272,26 @@ class TvosReleases {
       tag = null;
     }
 
-    return TvosVersion(hash: hash, tag: tag);
+    String? branch;
+    try {
+      final RunResult symbolic = await _git.run(<String>[
+        'git',
+        'symbolic-ref',
+        '-q',
+        '--short',
+        'HEAD',
+      ], throwOnError: true, workingDirectory: workingDirectory);
+      branch = symbolic.stdout.trim();
+      if (branch.isEmpty) {
+        branch = null;
+      }
+    } on ProcessException {
+      // Already detached. `-q` makes that a quiet non-zero rather than an
+      // error, and it is a perfectly ordinary state to switch away from.
+      branch = null;
+    }
+
+    return TvosVersion(hash: hash, tag: tag, branch: branch);
   }
 
   Future<bool> hasUncommittedChanges() async {

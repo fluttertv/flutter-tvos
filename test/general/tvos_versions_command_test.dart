@@ -49,6 +49,11 @@ void main() {
         command: const <String>['git', 'describe', '--tags', '--exact-match', 'HEAD'],
         stdout: '$headTag\n',
       ),
+      const FakeCommand(
+        command: <String>['git', 'symbolic-ref', '-q', '--short', 'HEAD'],
+        workingDirectory: '/repo',
+        exitCode: 1,
+      ),
     ]);
   }
 
@@ -96,6 +101,11 @@ void main() {
         command: <String>['git', 'describe', '--tags', '--exact-match', 'HEAD'],
         exitCode: 128,
       ),
+      const FakeCommand(
+        command: <String>['git', 'symbolic-ref', '-q', '--short', 'HEAD'],
+        workingDirectory: '/repo',
+        exitCode: 1,
+      ),
     ]);
     final command = TvosVersionsCommand(releases: releases);
 
@@ -126,6 +136,11 @@ void main() {
       const FakeCommand(
         command: <String>['git', 'describe', '--tags', '--exact-match', 'HEAD'],
         exitCode: 128,
+      ),
+      const FakeCommand(
+        command: <String>['git', 'symbolic-ref', '-q', '--short', 'HEAD'],
+        workingDirectory: '/repo',
+        exitCode: 1,
       ),
     ]);
     final command = TvosVersionsCommand(releases: releases);

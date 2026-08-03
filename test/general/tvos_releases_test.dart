@@ -317,6 +317,11 @@ void main() {
           workingDirectory: '/repo',
           stdout: 'v3.44.7-tvos.1.4.2\n',
         ),
+      const FakeCommand(
+        command: <String>['git', 'symbolic-ref', '-q', '--short', 'HEAD'],
+        workingDirectory: '/repo',
+        exitCode: 1,
+      ),
       ]);
 
       final TvosVersion v = await releases.current();
@@ -336,6 +341,11 @@ void main() {
           command: <String>['git', 'describe', '--tags', '--exact-match', 'HEAD'],
           exitCode: 128,
         ),
+      const FakeCommand(
+        command: <String>['git', 'symbolic-ref', '-q', '--short', 'HEAD'],
+        workingDirectory: '/repo',
+        exitCode: 1,
+      ),
       ]);
 
       final TvosVersion v = await releases.current();

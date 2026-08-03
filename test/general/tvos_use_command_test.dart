@@ -67,6 +67,11 @@ void main() {
         command: const <String>['git', 'describe', '--tags', '--exact-match', 'HEAD'],
         stdout: '$headTag\n',
       ),
+      const FakeCommand(
+        command: <String>['git', 'symbolic-ref', '-q', '--short', 'HEAD'],
+        workingDirectory: '/repo',
+        exitCode: 1,
+      ),
     ]);
   }
 
@@ -300,6 +305,62 @@ void main() {
       createTestCommandRunner(command).run(<String>['use', '3.32.8']),
       allOf(contains('engine artifacts'), contains('precache --force')),
     );
+  }, overrides: <Type, Generator>{Logger: () => logger});
+
+
+  testUsingContext('the recovery command puts you back on your branch', () async {
+    // Switching detaches, so a recovery that names the tag or hash leaves a
+    // contributor at the right commit but not on the branch they were working
+    // on -- and the branch is where they were.
+    processManager.addCommands(<FakeCommand>[
+      const FakeCommand(command: <String>['git', 'fetch', '--tags', '--force'], workingDirectory: '/repo'),
+      const FakeCommand(
+        command: <String>['git', 'tag', '-l', '--sort=-v:refname'],
+        workingDirectory: '/repo',
+        stdout: tagList,
+      ),
+      const FakeCommand(
+        command: <String>['git', 'rev-parse', 'v3.32.8-tvos.1.0.0^{commit}'],
+        workingDirectory: '/repo',
+        stdout: 'cafebabecafebabecafebabecafebabecafebabe\n',
+      ),
+      const FakeCommand(
+        command: <String>['git', 'rev-parse', '--verify', 'HEAD'],
+        workingDirectory: '/repo',
+        stdout: 'aaaabbbbccccddddeeeeffff0000111122223333\n',
+      ),
+      // Untagged: a development checkout, which is exactly the case that used
+      // to lose the branch.
+      const FakeCommand(
+        command: <String>['git', 'describe', '--tags', '--exact-match', 'HEAD'],
+        workingDirectory: '/repo',
+        exitCode: 128,
+      ),
+      const FakeCommand(
+        command: <String>['git', 'symbolic-ref', '-q', '--short', 'HEAD'],
+        workingDirectory: '/repo',
+        stdout: 'main\n',
+      ),
+      const FakeCommand(command: <String>['git', 'status', '-s'], workingDirectory: '/repo'),
+      const FakeCommand(
+        command: <String>[
+          'git',
+          'checkout',
+          '--force',
+          '--detach',
+          'cafebabecafebabecafebabecafebabecafebabe',
+        ],
+        workingDirectory: '/repo',
+      ),
+    ]);
+    final command = TvosUseCommand(releases: releases, runBootstrap: (_) async => 0);
+
+    await createTestCommandRunner(command).run(<String>['use', '3.32.8']);
+
+    expect(logger.statusText, contains('git -C /repo checkout --force main'));
+    // Not the detaching form, which would land them at the commit but off the
+    // branch.
+    expect(logger.statusText, isNot(contains('--detach aaaabbbb')));
   }, overrides: <Type, Generator>{Logger: () => logger});
 
 }
