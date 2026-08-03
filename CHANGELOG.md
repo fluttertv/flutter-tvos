@@ -4,6 +4,18 @@ All notable changes to flutter-tvos will be documented here.
 
 ## [Unreleased]
 
+### Removed
+
+- `flutter-tvos build` no longer offers upstream's platform subcommands: `aar`,
+  `apk`, `appbundle`, `bundle`, `ios`, `ios-framework`, `ipa`, `macos`,
+  `macos-framework`, `swift-package` and `web`. They were inherited by accident
+  from upstream's `BuildCommand` and were never supported or tested here;
+  `build ios` in particular would have built an iOS app against an engine
+  compiled for tvOS. `build tvos` is unaffected.
+- `flutter-tvos channel` and `flutter-tvos downgrade`. Both operated on the
+  vendored SDK and broke the `flutter.version` to engine-artifact pin. Use
+  `flutter-tvos versions` and `flutter-tvos use <version>` instead.
+
 ### Fixed
 
 - `flutter-tvos create --platforms=tvos .` no longer names the project `.`.

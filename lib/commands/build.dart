@@ -4,7 +4,6 @@
 
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/commands/build.dart';
-import 'package:flutter_tools/src/commands/build_bundle.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 
@@ -21,9 +20,19 @@ import '../tvos_plugins.dart';
 /// a category and a failing `runCommand` -- and cost seventeen constructor
 /// parameters forwarded straight through, none of which this class reads. They
 /// exist to build the Android, iOS, macOS, web, Linux and Windows subcommands,
-/// so we were paying upstream's dependency-injection churn to register ten
+/// so we were paying upstream's dependency-injection churn to register twelve
 /// commands a tvOS tool should not offer: `flutter-tvos build ios` would have
 /// built an iOS app against an engine compiled for tvOS.
+///
+/// `build bundle` goes with them, despite being nominally platform-neutral.
+/// BundleBuilder resolves `globals.buildTargets.copyFlutterBundle`, and
+/// executable.dart registers upstream's BuildTargetsImpl — so it runs
+/// upstream's CopyFlutterBundle / KernelSnapshot / DartPluginRegistrantTarget,
+/// which are precisely what TvosCopyFlutterBundle, TvosKernelSnapshot and
+/// TvosDartPluginRegistrantTarget exist to replace. The bundle it produces has
+/// no `*_tvos` plugin registration, and `--target-platform` has no tvos value
+/// and defaults to android-arm. A command that silently returns the wrong
+/// answer is worse than one that is absent.
 ///
 /// That forwarding was also, on its own, half the work of porting this CLI to
 /// another Flutter version -- twelve of the twenty-five analyzer errors against
@@ -32,9 +41,6 @@ import '../tvos_plugins.dart';
 class TvosBuildCommand extends FlutterCommand {
   TvosBuildCommand({required Logger logger, required bool verboseHelp}) {
     addSubcommand(BuildTvosCommand(logger: logger, verboseHelp: verboseHelp));
-    // Platform-neutral and used from CI to produce flutter_assets; keeping it
-    // costs nothing version-specific.
-    addSubcommand(BuildBundleCommand(logger: logger, verboseHelp: verboseHelp));
   }
 
   @override

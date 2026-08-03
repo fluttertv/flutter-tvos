@@ -88,7 +88,7 @@ flutter-tvos/
 
 What happens when you run `flutter-tvos build tvos --simulator --debug`:
 
-1. `TvosBuildCommand.runCommand()` creates a `TvosBuildInfo` capturing architecture, build mode, and the simulator flag.
+1. `BuildTvosCommand.runCommand()` creates a `TvosBuildInfo` capturing architecture, build mode, and the simulator flag. (`TvosBuildCommand` is only the `build` umbrella; it registers `build tvos` and does no work itself.)
 2. `TvosBuilder.buildBundle()` sets up the Flutter build environment.
 3. The `DebugTvosApplication` build target runs the kernel snapshot (Dart-to-bytecode compilation).
 4. `NativeTvosBundle.build()` orchestrates the native side:
