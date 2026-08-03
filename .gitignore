@@ -47,3 +47,6 @@ packages/flutter_tvos/build/
 # (CocoaPods expands local-path pods into the lock). Regenerated per
 # developer by `pod install`.
 packages/flutter_tvos/example/tvos/Podfile.lock
+
+# Licensing package — commercial negotiating position, never publish (repo is PUBLIC)
+docs/licensing/
