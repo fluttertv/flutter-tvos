@@ -30,9 +30,15 @@ class TvosCreateCommand extends CreateCommand {
     // below reads `rest.first` before delegating to `super.runCommand()`, so
     // validate up front.
     validateOutputDirectoryArg();
-    final String projectDirPath = argResults!.rest.first;
-    final String name =
-        stringArg('project-name') ?? globals.fs.path.basename(projectDirPath);
+    // Use the inherited `CreateBase` getters rather than reading
+    // `argResults!.rest.first` raw: `projectDirPath` is normalized and
+    // absolute (so `flutter-tvos create .` resolves to the current directory
+    // instead of yielding the literal "."), and `projectName` mirrors stock
+    // `flutter create` — explicit `--project-name`, else the `name` of an
+    // existing pubspec.yaml, else the directory basename — and validates the
+    // result is a legal Dart package name.
+    final String projectPath = projectDirPath;
+    final String name = projectName;
     final String templateType = stringArg('template') ?? 'app';
 
     // tvOS-only app: build the shared scaffold + tvos/ ourselves. We do
@@ -41,8 +47,8 @@ class TvosCreateCommand extends CreateCommand {
     // then stripped — the project is tvOS-only by construction.
     if (boolArg('tvos-only') && templateType != 'plugin') {
       globals.logger.printStatus('Generating tvOS-only project...');
-      TvosAppScaffold(globals.fs).write(projectDirPath, name);
-      await _renderTvosRunner(projectDirPath, name);
+      TvosAppScaffold(globals.fs).write(projectPath, name);
+      await _renderTvosRunner(projectPath, name);
       globals.logger.printStatus(
         'Created tvOS-only project (shared app + tvos/, no other platforms).',
       );
@@ -56,9 +62,9 @@ class TvosCreateCommand extends CreateCommand {
       return exitCode;
     }
     if (templateType == 'plugin') {
-      return _createPlugin(projectDirPath, name);
+      return _createPlugin(projectPath, name);
     }
-    return _createApp(projectDirPath, name);
+    return _createApp(projectPath, name);
   }
 
   Future<FlutterCommandResult> _createApp(String projectDirPath, String name) async {
