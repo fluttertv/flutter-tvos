@@ -108,4 +108,4 @@ To distribute a beta version before release:
 
 - [Apple: Submitting apps to the App Store](https://developer.apple.com/app-store/submitting/)
 - [Apple: tvOS Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/tvos)
-- [Apple: Top Shelf](https://developer.apple.com/documentation/tvservices/creating_a_top_shelf_extension)
+- [Apple: Top Shelf](https://developer.apple.com/documentation/tvservices/building-a-full-screen-top-shelf-extension)([Design](https://developer.apple.com/design/human-interface-guidelines/top-shelf))
