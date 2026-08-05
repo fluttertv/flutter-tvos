@@ -4,9 +4,13 @@
 
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/signals.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/dart/package_map.dart';
+import 'package:flutter_tools/src/template.dart';
 import 'package:flutter_tvos/commands/create.dart';
+import 'package:package_config/package_config.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -133,8 +137,17 @@ void main() {
   // It needs the real template tree (`renderMerged` reads
   // `templates/template_manifest.json` from the Flutter root), which a
   // MemoryFileSystem does not have — hence the local file system and a temp
-  // directory. It runs against the vendored `flutter/` checkout, the same one
-  // `flutter/bin/dart test` is invoked from, so no extra setup is required.
+  // directory, running against the vendored `flutter/` checkout.
+  //
+  // The one piece of the SDK it must NOT depend on is
+  // `flutter/packages/flutter_tools/.dart_tool/package_config.json`, which
+  // upstream's `TemplatePathProvider.imageDirectory` reads to locate
+  // `flutter_template_images`. That file only exists once the Flutter tool has
+  // bootstrapped itself, which a developer checkout has done and a fresh CI
+  // clone has not — so depending on it makes the test pass locally and fail in
+  // CI. `_LocalPackageConfigTemplatePathProvider` below resolves the same
+  // package from *our* `.dart_tool/package_config.json` instead, which
+  // `dart pub get` always produces (the suite cannot run without it).
   group('TvosCreateCommand standard path', () {
     late LocalFileSystem localFileSystem;
     late Directory tempDir;
@@ -184,7 +197,38 @@ void main() {
       overrides: <Type, Generator>{
         FileSystem: () => localFileSystem,
         ProcessManager: () => processManager,
+        TemplatePathProvider: () =>
+            _LocalPackageConfigTemplatePathProvider(originalCwd),
       },
     );
   });
+}
+
+/// A [TemplatePathProvider] that resolves `flutter_template_images` from this
+/// package's own `.dart_tool/package_config.json` rather than the Flutter
+/// tool's, which is only present in a bootstrapped SDK checkout.
+///
+/// Everything else — including the template directories themselves — comes
+/// from the real provider.
+class _LocalPackageConfigTemplatePathProvider extends TemplatePathProvider {
+  const _LocalPackageConfigTemplatePathProvider(this.packageRoot);
+
+  /// Root of this package, i.e. the directory holding `.dart_tool/`.
+  final String packageRoot;
+
+  @override
+  Future<Directory> imageDirectory(String? name, FileSystem fileSystem, Logger logger) async {
+    final PackageConfig packageConfig = await loadPackageConfigWithLogging(
+      fileSystem.file(
+        fileSystem.path.join(packageRoot, '.dart_tool', 'package_config.json'),
+      ),
+      logger: logger,
+    );
+    final Uri? imagePackageLibDir = packageConfig['flutter_template_images']?.packageUriRoot;
+    final Directory templateDirectory = fileSystem
+        .directory(imagePackageLibDir)
+        .parent
+        .childDirectory('templates');
+    return name == null ? templateDirectory : templateDirectory.childDirectory(name);
+  }
 }
