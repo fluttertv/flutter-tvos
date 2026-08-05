@@ -15,6 +15,14 @@ All notable changes to flutter-tvos will be documented here.
   result is validated, so a directory like `my-tv-app` fails with
   "not a valid Dart package name" instead of scaffolding a broken project.
 
+  Without `--platforms=tvos` the damage was quieter but still there: upstream
+  `flutter create` resolved the Dart package name correctly, while the `tvos/`
+  runner we add on top got `CFBundleName = .` and a bundle identifier that
+  collapsed to a bare `com.example` — shared by every project created that way.
+  If you generated a project with `create .`, check
+  `tvos/Runner/Info.plist` and `PRODUCT_BUNDLE_IDENTIFIER` in
+  `tvos/Runner.xcodeproj/project.pbxproj`.
+
 ## [1.4.4] - 2026-07-31
 
 - Engine artifacts updated to `v1.0.2-flutter3.44.8` (origin-signed for ITMS-91065
