@@ -75,7 +75,9 @@ flutter:
   shaders:
     - shaders/ripple.frag
 ''');
-      writePackageConfigFiles(directory: fileSystem.currentDirectory, mainLibName: 'example');
+      // 3.32.8 spells this helper `writePackageConfigFile`; it was renamed to
+      // the plural `writePackageConfigFiles` in a later Flutter.
+      writePackageConfigFile(directory: fileSystem.currentDirectory, mainLibName: 'example');
       fileSystem.file('shaders/ripple.frag')
         ..createSync(recursive: true)
         ..writeAsStringSync('void main() {}');

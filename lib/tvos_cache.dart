@@ -111,11 +111,11 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     'host_release.zip',
   ];
 
-  // The artifact-group header printed by `Cache.updateAll` — defaults to the
-  // (stamp) `name`, which reads as a bare "engine". Label it "tvOS Engine" so
-  // the precache output names the toolchain it belongs to.
-  @override
-  String get displayName => 'tvOS Engine';
+  // NOTE: no `displayName` override here. Flutter 3.44.x added a per-artifact
+  // group header to `Cache.updateAll` and an `ArtifactSet.displayName` hook to
+  // label it; 3.32.8 has neither — it prints no group header at all, so a
+  // `displayName` getter on this line would be dead code that also fails
+  // analysis as a non-overriding `@override`.
 
   @override
   Directory get location => tvosArtifactDirectory(globals.fs);

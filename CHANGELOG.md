@@ -2,7 +2,61 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+> **This branch is the Flutter 3.32.8 release line** (`release/flutter-3.32.8`,
+> tagged `v3.32.8-tvos.1.5.0`). It is not the mainline: `main` tracks Flutter
+> 3.44.8. Switch between lines with `flutter-tvos versions` and
+> `flutter-tvos use <version>`. `flutter-tvos upgrade` always resolves to the
+> newest Flutter line and will never move you onto this one.
+
 ## [Unreleased]
+
+## [1.5.0] — Flutter 3.32.8 - 2026-08-06
+
+The `1.5.0` feature set back-ported to Flutter 3.32.8, pinned to engine
+artifacts `v1.0.1-flutter3.32.8` (origin-signed). The Dart sources under `lib/`
+are byte-identical to the 3.44.8 `1.5.0` release apart from the changes listed
+here, which exist only because 3.32.8's `flutter_tools` API differs.
+
+### Added
+
+- `flutter-tvos versions` — lists the Flutter versions this checkout can be
+  switched to, read from the repository's release tags.
+- `flutter-tvos use <version>` — switches the checkout to another Flutter
+  version, then re-bootstraps so the vendored SDK and the pinned engine
+  artifact move together. Refuses to run over uncommitted changes unless
+  `--force` is passed, and the switch is a detached checkout rather than a
+  reset, so no branch pointer is moved.
+
+### Changed
+
+- Pinned to Flutter `3.32.8` (`edada7c56edf4a183c1735310e123c7f923584f1`) and
+  engine artifacts `v1.0.1-flutter3.32.8`. The Dart SDK floor drops to `3.8.0`
+  accordingly (3.32.8 ships Dart 3.8.1).
+- The engine artifacts are origin-signed for ITMS-91065 compliance and carry
+  key-data support on the Siri Remote path: key events are sent on both
+  `flutter/keyevent` and the native key-data channel. Apps using standard
+  `Focus`/`FocusTraversal`/`Shortcuts` work unchanged (the framework bridges
+  either source), and the key-data channel adds future-proofing against
+  `RawKeyboard` deprecation plus correct physical codes for media keys. This
+  is the same `FlutterTvRemotePlugin` the 3.44.8 engine ships.
+- **On-device debug (JIT) attaches through Xcode, not lldb directly.** Flutter
+  3.32.8's `flutter_tools` has no `ios/lldb.dart` — the direct lldb attach the
+  3.44.8 line uses as its fast path does not exist to call. This line drives
+  Xcode's own debug action over OSA scripting instead, which is the same
+  mechanism stock Flutter 3.32.8 uses for iOS Core Devices, and the mechanism
+  the 3.44.8 line already falls back to when lldb does not attach. Practical
+  differences: the first run may prompt for permission to control Xcode
+  (System Settings ▸ Privacy & Security ▸ Automation), Xcode must be selected
+  (`xcode-select -p`), and the VM Service is resolved over mDNS rather than
+  from the console stream. Hot reload, hot restart, and DevTools work the same
+  once attached. `FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS` has no effect on
+  this line — there is no lldb attach to time out. Release and profile builds
+  on device are AOT and need no debugger, and the tvOS **simulator** remains
+  the fast debug path either way.
+- `flutter-tvos precache` fetches only the `universal` artifact set on top of
+  the tvOS engine. The 3.44.8 line also fetches `informative` (the engine
+  stamp); 3.32.8 defines no such artifact, so there is nothing to fetch. The
+  always-on set is declared by name, so this needed no code change.
 
 ### Removed
 
@@ -17,6 +71,22 @@ All notable changes to flutter-tvos will be documented here.
   `flutter-tvos versions` and `flutter-tvos use <version>` instead.
 
 ### Fixed
+
+- **tvOS simulator apps no longer crash at launch.** The `tvos_debug_sim_arm64`
+  engine in the first upload of `v1.0.1-flutter3.32.8` aborted inside the Dart
+  VM's `VirtualMemory::Init()` before any Dart code ran, so every simulator app
+  died immediately. The device-only RWX JIT flag had been guarded on a macro
+  this Dart revision does not define, which compiled it into the simulator
+  engine. Re-run `flutter-tvos precache --force` if you fetched the engine
+  before 2026-08-06; the device, profile, and release engines were never
+  affected.
+
+- `flutter-tvos upgrade` no longer moves the checkout with `git reset --hard`.
+  It now uses `git checkout --force --detach`, which produces an identical
+  working tree without rewriting whatever branch happened to be checked out —
+  `reset --hard` silently discarded commits that had not been pushed, and
+  `git status` said nothing about it afterwards. The existing
+  uncommitted-changes guard and `--force` are unchanged.
 
 - `flutter-tvos create --platforms=tvos .` no longer names the project `.`.
   The command derived the package name from the raw output-directory argument,
@@ -34,16 +104,6 @@ All notable changes to flutter-tvos will be documented here.
   If you generated a project with `create .`, check
   `tvos/Runner/Info.plist` and `PRODUCT_BUNDLE_IDENTIFIER` in
   `tvos/Runner.xcodeproj/project.pbxproj`.
-
-## [1.4.4] - 2026-07-31
-
-- Engine artifacts updated to `v1.0.2-flutter3.44.8` (origin-signed for ITMS-91065
-  compliance, plus key-data support on the Siri Remote path). The engine now sends
-  key events on both `flutter/keyevent` and native key-data channels — apps using
-  standard `Focus`/`FocusTraversal`/`Shortcuts` still work unchanged (the framework
-  bridges either source), and the key-data channel adds future-proofing against
-  `RawKeyboard` deprecation plus correct physical codes for media keys. See
-  [engine PR #9](https://github.com/fluttertv/engine/pull/9) for details.
 
 ## [1.4.3] - 2026-07-25
 
@@ -554,8 +614,7 @@ lldb→Xcode-debugger launch flow.
 - Updated `bin/internal/engine.version` to `v1.0.0-flutter3.44.1`.
 - Matching tvOS engine artifacts published at
   [`fluttertv/engine-artifacts@v1.0.0-flutter3.44.1`](https://github.com/fluttertv/engine-artifacts/releases/tag/v1.0.0-flutter3.44.1).
-  Engine-side changes live in
-  [`fluttertv/engine#1`](https://github.com/fluttertv/engine/pull/1):
+  Engine-side changes in that release:
   tvOS-native Impeller metallibs, and an Impeller `StrokedCircle` fix
   that no longer aborts (a debug-build `DCHECK`) when the stroke
   half-width ≥ radius — e.g. the widget inspector outlining a small
