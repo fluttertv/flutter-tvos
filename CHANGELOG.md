@@ -4,6 +4,13 @@ All notable changes to flutter-tvos will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- The generated tvOS `dart_plugin_registrant.dart` no longer hardcodes its
+  `// @dart = 3.9` language-version marker; it is now derived from the Flutter
+  SDK in use. The hardcoded value made the kernel compile fail ("The specified
+  language version 3.9 is too high") on any Flutter shipping an older Dart.
+
 ## [1.5.1] - 2026-08-12
 
 ### Changed

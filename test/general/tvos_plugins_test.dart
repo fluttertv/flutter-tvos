@@ -7,6 +7,9 @@ import 'dart:convert';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/dart/language_version.dart';
+import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tvos/tvos_plugins.dart'
     show
@@ -1185,6 +1188,60 @@ flutter:
       overrides: <Type, Generator>{
         FileSystem: () => fileSystem,
         ProcessManager: () => processManager,
+      },
+    );
+  });
+
+  // Regression test for the hardcoded `// @dart = 3.9` marker that used to be
+  // baked into the generated registrant. It was latent on a Flutter whose Dart
+  // is >= 3.9, but on an older SDK (e.g. Flutter 3.32.8 / Dart 3.8.1) the
+  // kernel compile died with "The specified language version 3.9 is too high.
+  // The highest supported language version is 3.8."
+  group('dart_plugin_registrant language version', () {
+    late BufferLogger logger;
+    setUp(() => logger = BufferLogger.test());
+
+    testUsingContext(
+      'derives the @dart marker from the SDK rather than hardcoding it',
+      () async {
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        projectDir.childDirectory('tvos').createSync();
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+        fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+        projectDir
+            .childFile('.flutter-plugins-dependencies')
+            .writeAsStringSync(json.encode(<String, dynamic>{'dependencyGraph': <dynamic>[]}));
+
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+        await ensureReadyForTvosTooling(project);
+
+        final String registrant = projectDir
+            .childDirectory('.dart_tool')
+            .childDirectory('flutter_build')
+            .childFile('dart_plugin_registrant.dart')
+            .readAsStringSync();
+
+        // Whatever the SDK in use reports — the marker must track it.
+        final expected = currentLanguageVersion(globals.fs, Cache.flutterRoot!);
+        expect(
+          registrant,
+          contains('// @dart = $expected\n'),
+          reason: 'the marker must come from currentLanguageVersion(), so it '
+              'stays valid on any Flutter this CLI is pinned to',
+        );
+        expect(
+          registrant,
+          isNot(contains('// @dart = 3.9')),
+          reason: 'the old hardcoded literal must not come back — it breaks '
+              'the kernel compile on any Flutter whose Dart is older',
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Logger: () => logger,
       },
     );
   });
