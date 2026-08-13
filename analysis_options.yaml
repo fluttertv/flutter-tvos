@@ -17,6 +17,13 @@ analyzer:
     # globs above don't match through symlinks, so analyse-resolved paths still
     # land in the SDK trees. Exclude the proxy tree explicitly.
     - "proxy_root/**"
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
 
 linter:
   rules:
