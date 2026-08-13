@@ -679,7 +679,13 @@ class TvosDevice extends Device {
         lldbForwarder.logLines.listen((String line) {
           logger.printTrace('[lldb] $line');
         });
-        final LLDB lldb = _lldb ??= LLDB(logger: logger, processUtils: globals.processUtils);
+        final LLDB lldb = _lldb ??= LLDB(
+          logger: logger,
+          processUtils: globals.processUtils,
+          // 3.47.0 made this required — LLDB now reads the Xcode version to
+          // decide whether it needs the `process interrupt` stop-hook dance.
+          xcodeProjectInterpreter: globals.xcodeProjectInterpreter!,
+        );
         // lldb.attachAndStart only prints a "taking longer than expected"
         // *warning* after 60s — it never gives up on its own. Over the wireless
         // CoreDevice tunnel the attach can otherwise hang forever, so cap it
