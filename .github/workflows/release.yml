@@ -36,9 +36,13 @@ jobs:
         # client`) that `dart test` can otherwise trigger via its
         # implicit `Entrypoint.ensureUpToDate`. Deps are already cached
         # from the previous step.
+        #
+        # TMPDIR is resolved through its symlinks for the FS guard in Flutter's
+        # test harness — see the matching step in test.yml and test/README.md.
         env:
           PUB_OFFLINE: "1"
-        run: flutter/bin/dart test test/
+        run: |
+          TMPDIR="$(cd "$TMPDIR" && pwd -P)" flutter/bin/dart test test/
 
       # Path-scoped to the root suite, so the bundled package's 103 widget
       # tests need their own step with the flutter runner. See test.yml.
