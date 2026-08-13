@@ -9,10 +9,13 @@ import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/compile.dart';
+import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tvos/build_targets/application.dart';
 
 import '../src/common.dart';
+import '../src/context.dart';
 import '../src/fake_process_manager.dart';
+import '../src/fakes.dart';
 
 const String kBoundaryKey = '4d2d9609-c662-4571-afde-31410f96caa6';
 
@@ -55,7 +58,11 @@ void main() {
   }
 
   group('TvosKernelSnapshot.build (AOT platform identity)', () {
-    test('does NOT pass --target-os for a profile (AOT) build', () async {
+    // build() reads `featureFlags` for the record-use experiment, which is a
+    // context lookup — so these run under a context even where they don't
+    // otherwise need one. TestFeatureFlags leaves record-use off, matching
+    // upstream's own KernelSnapshot tests; the two tests below turn it on.
+    testUsingContext('does NOT pass --target-os for a profile (AOT) build', () async {
       environment = buildEnv(BuildMode.profile);
       final String build = environment.buildDir.path;
       final String sdkPath = artifacts.getArtifactPath(
@@ -102,9 +109,9 @@ void main() {
       expect(captured, isNotNull);
       expect(captured, isNot(contains('--target-os')));
       expect(processManager, hasNoRemainingExpectations);
-    });
+    }, overrides: <Type, Generator>{FeatureFlags: () => TestFeatureFlags()});
 
-    test('still produces a valid kernel command for release (AOT)', () async {
+    testUsingContext('still produces a valid kernel command for release (AOT)', () async {
       environment = buildEnv(BuildMode.release);
       final String build = environment.buildDir.path;
       final String sdkPath = artifacts.getArtifactPath(
@@ -141,7 +148,7 @@ void main() {
 
       await const TvosKernelSnapshot().build(environment);
       expect(processManager, hasNoRemainingExpectations);
-    });
+    }, overrides: <Type, Generator>{FeatureFlags: () => TestFeatureFlags()});
 
     test('throws MissingDefineException when build mode is absent', () async {
       environment = buildEnv(BuildMode.profile);
@@ -150,6 +157,106 @@ void main() {
         () => const TvosKernelSnapshot().build(environment),
         throwsException,
       );
+    });
+  });
+
+  // KernelSnapshot.outputs — which TvosKernelSnapshot inherits — declares
+  // recorded_uses.json whenever the record-use experiment is on, and it is on
+  // by default on every channel. A declared output that nothing writes fails
+  // the build, so build() has to produce it in both compilation modes.
+  group('TvosKernelSnapshot.build (record-use output)', () {
+    testUsingContext('asks the frontend server for recorded uses in AOT', () async {
+      environment = buildEnv(BuildMode.profile);
+      final String build = environment.buildDir.path;
+      final String sdkPath = artifacts.getArtifactPath(
+        Artifact.flutterPatchedSdkPath,
+        platform: TargetPlatform.ios,
+        mode: BuildMode.profile,
+      );
+
+      processManager.addCommands(<FakeCommand>[
+        FakeCommand(
+          command: <String>[
+            artifacts.getArtifactPath(Artifact.engineDartAotRuntime),
+            artifacts.getArtifactPath(Artifact.frontendServerSnapshotForEngineDartSdk),
+            '--sdk-root',
+            '$sdkPath/',
+            '--target=flutter',
+            '--no-print-incremental-dependencies',
+            ...buildModeOptions(BuildMode.profile, <String>[]),
+            '--track-widget-creation',
+            '--aot',
+            '--tfa',
+            '--packages',
+            '/.dart_tool/package_config.json',
+            '--output-dill',
+            '$build/app.dill',
+            '--depfile',
+            '$build/kernel_snapshot_program.d',
+            '--verbosity=error',
+            // Carried in as an extra front-end option, so it lands after
+            // --verbosity=error and before the main URI.
+            '--recorded-uses=$build/recorded_uses.json',
+            'file:///lib/main.dart',
+          ],
+          stdout: 'result $kBoundaryKey\n$kBoundaryKey\n$kBoundaryKey $build/app.dill 0\n',
+        ),
+      ]);
+
+      await const TvosKernelSnapshot().build(environment);
+      expect(processManager, hasNoRemainingExpectations);
+    }, overrides: <Type, Generator>{
+      FeatureFlags: () => TestFeatureFlags(isRecordUseEnabled: true),
+    });
+
+    testUsingContext('writes an empty recorded-uses file in JIT', () async {
+      environment = buildEnv(BuildMode.debug);
+      final String build = environment.buildDir.path;
+      final String sdkPath = artifacts.getArtifactPath(
+        Artifact.flutterPatchedSdkPath,
+        platform: TargetPlatform.ios,
+        mode: BuildMode.debug,
+      );
+
+      processManager.addCommands(<FakeCommand>[
+        FakeCommand(
+          command: <String>[
+            artifacts.getArtifactPath(Artifact.engineDartAotRuntime),
+            artifacts.getArtifactPath(Artifact.frontendServerSnapshotForEngineDartSdk),
+            '--sdk-root',
+            '$sdkPath/',
+            '--target=flutter',
+            '--no-print-incremental-dependencies',
+            ...buildModeOptions(BuildMode.debug, <String>[]),
+            '--track-widget-creation',
+            '--no-link-platform',
+            '--packages',
+            '/.dart_tool/package_config.json',
+            '--output-dill',
+            '$build/app.dill',
+            '--depfile',
+            '$build/kernel_snapshot_program.d',
+            '--incremental',
+            '--initialize-from-dill',
+            '$build/app.dill',
+            '--verbosity=error',
+            'file:///lib/main.dart',
+          ],
+          stdout: 'result $kBoundaryKey\n$kBoundaryKey\n$kBoundaryKey $build/app.dill 0\n',
+        ),
+      ]);
+
+      await const TvosKernelSnapshot().build(environment);
+
+      // JIT gets no --recorded-uses flag; the file is written directly so the
+      // declared output exists.
+      expect(
+        environment.buildDir.childFile('recorded_uses.json').readAsStringSync(),
+        '{}',
+      );
+      expect(processManager, hasNoRemainingExpectations);
+    }, overrides: <Type, Generator>{
+      FeatureFlags: () => TestFeatureFlags(isRecordUseEnabled: true),
     });
   });
 }
