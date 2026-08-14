@@ -2,14 +2,90 @@
 
 All notable changes to flutter-tvos will be documented here.
 
-## [Unreleased]
+## [1.6.0] - 2026-08-14
+
+### Changed
+
+- Bumped the pinned Flutter SDK to **3.47.0** (`4cf24164`) and the tvOS engine
+  artifacts to **`engine-495915c`**.
+
+  Three upstream API changes landed in the code that deliberately shadows
+  `flutter_tools`' build graph, and none of them surfaces until a real build:
+
+  - `DartBuild` became `LinkHooks`. `TvosCopyFlutterBundle` mirrors upstream's
+    `build()`, which loads the hook result. Rename only.
+  - `LLDB` now requires an `XcodeProjectInterpreter`.
+  - `KernelSnapshot` gained a `recorded_uses.json` output, declared whenever the
+    record-use experiment is on — which is by default, on every channel.
+    `TvosKernelSnapshot` inherits that output list, so its mirrored `build()`
+    has to produce the file (`--recorded-uses` in AOT, an empty file in JIT) or
+    the build fails on an output nothing wrote.
+
+  Platform identity holds on 3.47.0: `os=tvos isIOS=true isTvOS=true
+  target=TargetPlatform.iOS`, verified on a tvOS 17.5 simulator and a physical
+  Apple TV 4K in debug, profile and release. The `targetOS: null` plus
+  patched-compile-SDK path still keeps the platform getters runtime-resolved
+  rather than const-folded to `ios` under AOT.
+
+- Engine artifact releases are now tagged with the engine repository's commit
+  SHA (`engine-<sha>`) instead of `v1.0.x-flutter<version>`.
+
+  The old tag embedded a Flutter version in the artifact's identity, which went
+  stale the moment a patch set was reused across Flutter releases — 3.44.9
+  shipped on artifacts tagged 3.44.8 because the Dart revision was unchanged,
+  and the tag then actively misled. A SHA names what was built rather than what
+  it happened to be built for, matching how `flutter.version` pins the SDK. The
+  `engine-` prefix is required: GitHub rejects any ref that is exactly 40 or 64
+  hex characters as ambiguous with a commit id.
 
 ### Fixed
+
+- **On-device debug: hot reload, hot restart and DevTools were silently dead.**
+
+  `flutter-tvos run -d <appletv> --debug` launches with
+  `--vm-service-host=0.0.0.0`, so the URI the Dart VM prints carries a host the
+  Mac cannot dial and has to be rewritten to the device's LAN address. That
+  rewrite got a **single 10-second mDNS query**, and when it lost the race with
+  Bonjour propagation it returned the `0.0.0.0` URI anyway. The resident runner
+  accepts it and retries forever:
+
+  ```
+  SocketException: Connection refused, address = 0.0.0.0, port = 59104
+  ```
+
+  The session looks alive — the app on the TV is completely healthy — while hot
+  reload, hot restart and DevTools do nothing, and nothing says why.
+
+  mDNS is now polled in 5-second attempts up to 60 seconds (override with
+  `FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS`), the port match is kept so a stale copy
+  of the same bundle id still running on the TV cannot win the lookup, a
+  first-attempt missing-permission failure no longer aborts a run that later
+  attempts would rescue, and when nothing resolves the run reports **no** URI
+  plus a warning naming Local Network permission — rather than one already known
+  to be dead.
+
+  `devicectl` cannot substitute for Bonjour here: a LAN-paired Apple TV reports
+  `tunnelState: "disconnected"` with no `localHostnames` and no `ipAddress`.
 
 - The generated tvOS `dart_plugin_registrant.dart` no longer hardcodes its
   `// @dart = 3.9` language-version marker; it is now derived from the Flutter
   SDK in use. The hardcoded value made the kernel compile fail ("The specified
   language version 3.9 is too high") on any Flutter shipping an older Dart.
+
+### Tests
+
+- The unit suite now runs with `TMPDIR` resolved through its symlinks.
+
+  Flutter 3.47.0 added an FS guard to the test harness that rejects writes
+  outside the system temp directory, but it resolves symlinks only when
+  computing the allowed root — not on the path it checks. On macOS `$TMPDIR` is
+  `/var/folders/…` behind a `/var` → `/private/var` symlink, so the two never
+  compare equal and roughly 30 tests fail, including ones that reach temp only
+  through `flutter_tools`' own `LocalFileSystem`. Resolving `TMPDIR` removes the
+  mismatch at the source and leaves the guard armed;
+  `FLUTTER_TEST_DISABLE_FS_GUARD` would instead switch off the thing that stops
+  a stray test writing to `$HOME`. Applied in both workflows and documented in
+  `test/README.md`.
 
 ## [1.5.1] - 2026-08-12
 

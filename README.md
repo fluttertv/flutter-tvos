@@ -8,13 +8,13 @@ A Flutter toolchain for building and running Flutter apps on **Apple TV (tvOS)**
 
 ## Current version
 
-- flutter-tvos: `1.5.1`
-- Flutter SDK: `3.44.9` (`6b182d2c7585eba26d4edce0f97630effd256c33`)
-- tvOS engine artifacts: `v1.0.2-flutter3.44.8` (origin-signed)
+- flutter-tvos: `1.6.0`
+- Flutter SDK: `3.47.0` (`4cf24164269a5ebf0c16a028a00727d0e77bbb05`)
+- tvOS engine artifacts: `engine-495915c579071a4ef6a5014637166d5231cb4aac` (origin-signed)
 
-The engine artifact tag still names 3.44.8 because 3.44.9 ships the identical
-Dart revision (`d684a576`), so the artifacts built against the 3.44.8 tree are
-byte-for-byte valid for 3.44.9 — no rebuild, no re-signing.
+The engine artifact tag is the commit that produced those artifacts, rather than
+a Flutter version. A version-shaped tag went stale as soon as one patch set was
+reused across Flutter releases; a SHA names what was actually built.
 
 ## Installation
 
