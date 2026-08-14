@@ -11,6 +11,7 @@ import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/dart/language_version.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
+import 'package:package_config/package_config.dart' show LanguageVersion;
 import 'package:flutter_tvos/tvos_plugins.dart'
     show
         TvosPlugin,
@@ -1223,19 +1224,32 @@ flutter:
             .childFile('dart_plugin_registrant.dart')
             .readAsStringSync();
 
-        // Whatever the SDK in use reports — the marker must track it.
-        final expected = currentLanguageVersion(globals.fs, Cache.flutterRoot!);
+        // Assert the shape independently of the implementation. Comparing
+        // against another call to currentLanguageVersion() would move both
+        // sides together and pass for any value it returned, however malformed.
+        final RegExpMatch? marker = RegExp(
+          r'^// @dart = (\d+)\.(\d+)$',
+          multiLine: true,
+        ).firstMatch(registrant);
         expect(
-          registrant,
-          contains('// @dart = $expected\n'),
-          reason: 'the marker must come from currentLanguageVersion(), so it '
-              'stays valid on any Flutter this CLI is pinned to',
+          marker,
+          isNotNull,
+          reason: 'the registrant must carry a well-formed `// @dart = X.Y` '
+              'marker on its own line',
         );
+
+        // And that it tracks the SDK rather than any fixed literal. Pinning the
+        // expected number here would encode today's SDK; pinning "not 3.9"
+        // would be worse still, since 3.9 is only wrong by accident of which
+        // Flutter is checked out — it is the correct answer on an SDK whose
+        // Dart really is 3.9.
+        final LanguageVersion sdk = currentLanguageVersion(globals.fs, Cache.flutterRoot!);
         expect(
-          registrant,
-          isNot(contains('// @dart = 3.9')),
-          reason: 'the old hardcoded literal must not come back — it breaks '
-              'the kernel compile on any Flutter whose Dart is older',
+          <String>[marker!.group(1)!, marker.group(2)!],
+          <String>['${sdk.major}', '${sdk.minor}'],
+          reason: 'the marker must come from the SDK in use, not a literal — a '
+              'hardcoded value breaks the kernel compile on any Flutter whose '
+              'Dart is older ("language version X.Y is too high")',
         );
       },
       overrides: <Type, Generator>{

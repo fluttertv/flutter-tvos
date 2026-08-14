@@ -57,12 +57,23 @@ All notable changes to flutter-tvos will be documented here.
   reload, hot restart and DevTools do nothing, and nothing says why.
 
   mDNS is now polled in 5-second attempts up to 60 seconds (override with
-  `FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS`), the port match is kept so a stale copy
-  of the same bundle id still running on the TV cannot win the lookup, a
-  first-attempt missing-permission failure no longer aborts a run that later
-  attempts would rescue, and when nothing resolves the run reports **no** URI
-  plus a warning naming Local Network permission — rather than one already known
-  to be dead.
+  `FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS`, which warns rather than silently
+  defaulting if given something unusable). The port match is kept so a stale
+  copy of the same bundle id still running on the TV cannot win the lookup, and
+  a first-attempt missing-permission failure no longer aborts a run that later
+  attempts would rescue.
+
+  The loop paces itself against the attempt window rather than assuming each
+  query consumed it. When macOS denies Local Network access the query fails in
+  milliseconds, so an unpaced retry would spin for the whole budget — and since
+  that path prints the permission instructions on every call, it would bury the
+  explanation under thousands of copies of another message.
+
+  When nothing resolves, the run now **exits on the explanation** naming Local
+  Network permission. Returning the dead URI let the runner retry `0.0.0.0`
+  forever; returning success with no URI was no better, because the runner turns
+  an absent URI into "connection to device ended too early" — an unrelated error
+  blaming the device connection. The app is left running on the TV either way.
 
   `devicectl` cannot substitute for Bonjour here: a LAN-paired Apple TV reports
   `tunnelState: "disconnected"` with no `localHostnames` and no `ipAddress`.

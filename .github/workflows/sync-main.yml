@@ -42,38 +42,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: dev
+          # The commit whose tests just passed — NOT `dev`, which resolves at
+          # job time. Two merges landing close together would otherwise let the
+          # gate above approve commit A's Test run while the push carried
+          # commit B, whose tests may still be running or may have failed. main
+          # would then hold code nothing verified, while the log claimed only a
+          # green dev is ever mirrored. workflow_dispatch carries no
+          # workflow_run, so fall back to dev there.
+          ref: ${{ github.event.workflow_run.head_sha || 'dev' }}
           # A shallow clone cannot prove the push is a fast-forward, so the
           # push below would be rejected for reasons that read like a
           # permissions problem.
           fetch-depth: 0
 
-      - name: Fast-forward main to dev
+      - name: Fast-forward main to the tested commit
         run: |
           set -euo pipefail
-          DEV_SHA=$(git rev-parse HEAD)
+          # The commit this run validated, not necessarily dev's current tip.
+          TESTED_SHA=$(git rev-parse HEAD)
           git fetch --no-tags origin main
           MAIN_SHA=$(git rev-parse origin/main)
 
-          if [ "$DEV_SHA" = "$MAIN_SHA" ]; then
-            echo "main is already at $DEV_SHA — nothing to do."
+          if [ "$TESTED_SHA" = "$MAIN_SHA" ]; then
+            echo "main is already at $TESTED_SHA — nothing to do."
             exit 0
           fi
 
-          # Refuse to move main backwards. If dev does not contain main's tip,
-          # something landed on main directly and the mirror invariant is
-          # already broken; a push here would either fail or, with force, throw
-          # that commit away. Fail loudly and let a human look.
-          if ! git merge-base --is-ancestor "$MAIN_SHA" "$DEV_SHA"; then
-            echo "::error::main ($MAIN_SHA) is not an ancestor of dev ($DEV_SHA)."
+          # main already contains this commit. Normal when two merges land close
+          # together and their Test runs finish out of order: the newer commit's
+          # sync went first and carried this one along. Nothing to do, and
+          # nothing wrong — main is ahead, not diverged.
+          if git merge-base --is-ancestor "$TESTED_SHA" "$MAIN_SHA"; then
+            echo "main ($MAIN_SHA) already contains $TESTED_SHA — nothing to do."
+            exit 0
+          fi
+
+          # Refuse to move main backwards. If the tested commit does not contain
+          # main's tip, something landed on main outside this workflow and the
+          # mirror invariant is already broken; a push here would either fail
+          # or, with force, throw that commit away. Fail loudly.
+          if ! git merge-base --is-ancestor "$MAIN_SHA" "$TESTED_SHA"; then
+            echo "::error::main ($MAIN_SHA) is not an ancestor of $TESTED_SHA."
             echo "Something was committed to main outside this workflow, so the"
             echo "branches have diverged and this is no longer a fast-forward."
             echo "Reconcile them by hand before the mirror can resume."
             exit 1
           fi
 
-          echo "Fast-forwarding main: $MAIN_SHA -> $DEV_SHA"
+          echo "Fast-forwarding main: $MAIN_SHA -> $TESTED_SHA"
           # Deliberately not --force: a plain push is itself the guarantee that
-          # this is a fast-forward, so the check above can never be the only
+          # this is a fast-forward, so the checks above can never be the only
           # thing standing between a mistake and a rewritten main.
-          git push origin "$DEV_SHA:refs/heads/main"
+          git push origin "$TESTED_SHA:refs/heads/main"

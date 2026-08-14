@@ -55,7 +55,7 @@ jobs:
         env:
           PUB_OFFLINE: "1"
         run: |
-          TMPDIR="$(cd "$TMPDIR" && pwd -P)" flutter/bin/dart test test/
+          TMPDIR="$(cd "${TMPDIR:-/tmp}" && pwd -P)" flutter/bin/dart test test/
 
       # The step above is path-scoped to the root suite, so the bundled
       # package's 103 tests never ran. They are widget tests and need the

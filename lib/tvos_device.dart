@@ -8,6 +8,7 @@ import 'dart:io' show Process;
 
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/application_package.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
@@ -16,6 +17,7 @@ import 'package:flutter_tools/src/device_port_forwarder.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/ios/lldb.dart';
 import 'package:flutter_tools/src/ios/xcode_debug.dart';
+import 'package:flutter_tools/src/ios/xcodeproj.dart';
 import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/mdns_discovery.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -363,16 +365,54 @@ class TvosDevice extends Device {
   /// that race often enough to be the difference between "hot reload works on
   /// device" and a session that connects to nothing, so poll until this
   /// deadline instead. Override with `FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS`.
-  Duration get _mdnsResolveTimeout {
+  ///
+  /// Read exactly once per launch, into a local — the value is reported back to
+  /// the user in the give-up message, and a getter that re-parses the
+  /// environment on each access could quote a different number there than the
+  /// one it actually enforced.
+  Duration _resolveMdnsTimeout() {
     final String? raw = globals.platform.environment['FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS'];
-    final int? seconds = raw == null ? null : int.tryParse(raw);
-    return Duration(seconds: seconds != null && seconds > 0 ? seconds : 60);
+    if (raw == null) {
+      return _defaultMdnsResolveTimeout;
+    }
+    final int? seconds = int.tryParse(raw);
+    if (seconds == null || seconds <= 0) {
+      // Silently falling back makes a typo look like it took effect.
+      logger.printWarning(
+        'Ignoring FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS="$raw": expected a positive '
+        'whole number of seconds. Using '
+        '${_defaultMdnsResolveTimeout.inSeconds}s.',
+      );
+      return _defaultMdnsResolveTimeout;
+    }
+    return Duration(seconds: seconds);
   }
 
-  /// Per-attempt mDNS query window inside [_mdnsResolveTimeout]. Short, so a
-  /// query that starts before the record is published is retried rather than
-  /// consuming the whole budget.
+  static const Duration _defaultMdnsResolveTimeout = Duration(seconds: 60);
+
+  /// [_resolveMdnsTimeout], for tests. The retry loop itself drives the
+  /// `MDnsVmServiceDiscovery` singleton and cannot be covered without injecting
+  /// that global, but the override parsing is worth pinning: a wrong value here
+  /// silently changes how long a device run waits before giving up.
+  @visibleForTesting
+  Duration resolveMdnsTimeoutForTesting() => _resolveMdnsTimeout();
+
+  /// Per-attempt mDNS query window inside the resolve timeout, and also the
+  /// pacing of the retry loop.
+  ///
+  /// Short, so a query that starts before the record is published is retried
+  /// rather than consuming the whole budget. It is *not* a lower bound on how
+  /// long an attempt takes: `queryForLaunch` can return in milliseconds — most
+  /// importantly when macOS denies Local Network access, where the underlying
+  /// socket error is caught and turned into an empty result immediately. The
+  /// loop therefore paces itself against this window rather than assuming each
+  /// attempt consumed it.
   static const Duration _mdnsAttemptTimeout = Duration(seconds: 5);
+
+  /// How often the devicectl fallback may be consulted while polling. Keyed on
+  /// elapsed time, not attempt count: attempts are not reliably spaced (see
+  /// [_mdnsAttemptTimeout]), and this path spawns `xcrun devicectl`.
+  static const Duration _devicectlProbeInterval = Duration(seconds: 25);
 
   /// How long to wait for lldb to attach over the (wireless-only) CoreDevice
   /// tunnel before giving up. Apple TV has no USB data port, so the lldb attach
@@ -699,12 +739,26 @@ class TvosDevice extends Device {
         lldbForwarder.logLines.listen((String line) {
           logger.printTrace('[lldb] $line');
         });
+        // 3.47.0 made xcodeProjectInterpreter required — LLDB now reads the
+        // Xcode version to decide whether it needs the `process interrupt`
+        // stop-hook dance. Stock flutter_tools receives it as an injected
+        // non-null parameter; we only have the nullable context lookup, so
+        // name the problem rather than force-unwrapping into a bare
+        // "Null check operator used on a null value" mid-launch.
+        final XcodeProjectInterpreter? interpreter = globals.xcodeProjectInterpreter;
+        if (interpreter == null) {
+          throwToolExit(
+            'Cannot start a debug session on this Apple TV: Xcode project '
+            'tooling is unavailable (no XcodeProjectInterpreter in this '
+            'context).\n'
+            'Check `flutter-tvos doctor` — this usually means Xcode or its '
+            'command-line tools are not installed or not selected.',
+          );
+        }
         final LLDB lldb = _lldb ??= LLDB(
           logger: logger,
           processUtils: globals.processUtils,
-          // 3.47.0 made this required — LLDB now reads the Xcode version to
-          // decide whether it needs the `process interrupt` stop-hook dance.
-          xcodeProjectInterpreter: globals.xcodeProjectInterpreter!,
+          xcodeProjectInterpreter: interpreter,
         );
         // lldb.attachAndStart only prints a "taking longer than expected"
         // *warning* after 60s — it never gives up on its own. Over the wireless
@@ -836,30 +890,45 @@ class TvosDevice extends Device {
         (vmServiceUri.host == '127.0.0.1' || vmServiceUri.host == '0.0.0.0')) {
       // Console URL host is unreachable from the Mac. Resolve the device's LAN
       // address, then keep the port and auth path we already have.
+      final Duration budget = _resolveMdnsTimeout();
       final Uri? reachable = await _resolveReachableVmServiceUri(
         bundleId: bundleId,
         deviceId: id,
         deviceUri: vmServiceUri,
+        budget: budget,
       );
-      // Handing back the unreachable URI is worse than handing back none: the
-      // resident runner accepts it and then retries forever against 0.0.0.0
-      // ("Connection refused"), so the session looks alive while hot reload
-      // never works and nothing says why.
       if (reachable == null) {
-        logger.printWarning(
+        // Handing back the unreachable URI is not an option: the resident
+        // runner accepts it and then retries forever against 0.0.0.0
+        // ("Connection refused"), so the session looks alive while hot reload
+        // never works and nothing says why.
+        //
+        // Neither is returning LaunchResult.succeeded() with no URI. The runner
+        // turns an absent URI into an empty vmServiceUris stream, whose onDone
+        // completes with "connection to device ended too early" — so the
+        // message below would be immediately followed by an unrelated error
+        // blaming the device connection, which is the same confusion this whole
+        // path exists to remove. Exit on the explanation instead.
+        //
+        // The app is left running on the TV deliberately: it is healthy, and
+        // the user may want to keep looking at it while fixing permissions.
+        throwToolExit(
           'App launched on this Apple TV, but its Dart VM Service could not be '
-          'reached within ${_mdnsResolveTimeout.inSeconds}s — hot reload, hot '
-          'restart, and DevTools will be unavailable.\n'
+          'reached within ${budget.inSeconds}s — hot reload, hot restart, and '
+          'DevTools are unavailable.\n'
           '\n'
-          'The app advertises its VM Service over Bonjour, so this is almost '
-          'always a local-network problem on the Mac side:\n'
+          'The app itself is fine and is still running on the device. It '
+          'advertises its VM Service over Bonjour, so this is almost always a '
+          'local-network problem on the Mac side:\n'
           '  1. Grant this terminal Local Network permission (System Settings ▸ '
           'Privacy & Security ▸ Local Network), then run again.\n'
           '  2. Check the Apple TV is on the same Wi-Fi/LAN as this Mac.\n'
           '  3. Quit any older copy of this app still running on the Apple TV — '
-          'a stale instance advertises a second service for the same bundle id.',
+          'a stale instance advertises a second service for the same bundle id.\n'
+          '\n'
+          'Raise the wait with FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS if this device '
+          'is simply slow to publish.',
         );
-        return LaunchResult.succeeded();
       }
       vmServiceUri = reachable;
     }
@@ -1078,15 +1147,12 @@ class TvosDevice extends Device {
     return null;
   }
 
-  /// Asks devicectl for the device's network IP. Used as a fallback when
-  /// mDNS discovery fails — we still want to give DevTools a reachable URL
-  /// instead of the loopback one printed by the Dart VM.
   /// Resolves a Mac-reachable VM Service URI for an app whose advertised URI
   /// carries an unreachable host (`0.0.0.0` because we launch with
   /// `--vm-service-host=0.0.0.0`, or `127.0.0.1`).
   ///
   /// Keeps [deviceUri]'s port and auth path — only the host is wrong. Returns
-  /// null if nothing reachable turned up before [_mdnsResolveTimeout].
+  /// null if nothing reachable turned up within [budget].
   ///
   /// Two sources, in order of reliability on a wirelessly-paired Apple TV:
   ///
@@ -1100,20 +1166,23 @@ class TvosDevice extends Device {
   ///     tunnel is up — a LAN-paired Apple TV reports `tunnelState:
   ///     "disconnected"` with no `localHostnames` and no `ipAddress`, so this
   ///     is a bonus path, not a fallback to rely on. It shells out, so it is
-  ///     tried sparingly.
+  ///     tried sparingly — see [_devicectlProbeInterval].
   Future<Uri?> _resolveReachableVmServiceUri({
     required String bundleId,
     required String deviceId,
     required Uri deviceUri,
+    required Duration budget,
   }) async {
     final int devicePort = deviceUri.port;
     final String authPath = deviceUri.path;
-    final Duration budget = _mdnsResolveTimeout;
     final Stopwatch elapsed = Stopwatch()..start();
     var attempt = 0;
+    Duration lastDevicectlProbe = Duration.zero;
+    var probedDevicectl = false;
 
     while (elapsed.elapsed < budget) {
       attempt++;
+      final Duration attemptStarted = elapsed.elapsed;
       try {
         // `queryForLaunch` is annotated `@visibleForTesting` upstream, but it
         // is the only iOS-mDNS code path that handles paired-but-LAN-resolved
@@ -1144,16 +1213,39 @@ class TvosDevice extends Device {
             path: authPath,
           );
         }
+        // devicectl is a bonus path, not a fallback to rely on, and it spawns a
+        // subprocess — so probe it once up front and then only at
+        // [_devicectlProbeInterval]. Inside the same try as the mDNS query on
+        // purpose: it creates a temp directory and runs `xcrun`, either of
+        // which can throw (full or read-only temp, xcrun missing from PATH),
+        // and losing the VM Service host must not abort a run whose app is
+        // already installed and running on the TV.
+        if (!probedDevicectl ||
+            elapsed.elapsed - lastDevicectlProbe >= _devicectlProbeInterval) {
+          probedDevicectl = true;
+          lastDevicectlProbe = elapsed.elapsed;
+          final String? deviceHost = await _resolveDeviceIp(deviceId);
+          if (deviceHost != null) {
+            logger.printTrace('Resolved device host via devicectl: $deviceHost');
+            return deviceUri.replace(host: deviceHost);
+          }
+        }
       } on Object catch (e) {
         logger.printTrace('mDNS lookup attempt $attempt failed: $e');
       }
 
-      if (attempt == 1 || attempt % 5 == 0) {
-        final String? deviceHost = await _resolveDeviceIp(deviceId);
-        if (deviceHost != null) {
-          logger.printTrace('Resolved device host via devicectl: $deviceHost');
-          return deviceUri.replace(host: deviceHost);
-        }
+      // Pace the loop against the attempt window rather than assuming the query
+      // consumed it. `queryForLaunch` can return in milliseconds — most
+      // importantly when macOS denies Local Network access, where the socket
+      // error is caught and turned into an empty result at once. Without this
+      // the loop would spin for the whole budget, and since that same path
+      // prints the multi-line permission instructions on every call, it would
+      // bury the give-up message under thousands of copies of another one.
+      final Duration spent = elapsed.elapsed - attemptStarted;
+      final Duration remaining = budget - elapsed.elapsed;
+      if (spent < _mdnsAttemptTimeout && remaining > Duration.zero) {
+        final Duration pause = _mdnsAttemptTimeout - spent;
+        await Future<void>.delayed(pause < remaining ? pause : remaining);
       }
     }
 

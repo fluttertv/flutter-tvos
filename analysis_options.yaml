@@ -17,13 +17,11 @@ analyzer:
     # globs above don't match through symlinks, so analyse-resolved paths still
     # land in the SDK trees. Exclude the proxy tree explicitly.
     - "proxy_root/**"
-    - build/**
-    - android/**
-    - ios/**
-    - web/**
-    - windows/**
-    - macos/**
-    - linux/**
+    # Build output. The other per-platform directories a Flutter template would
+    # list here (android/, ios/, web/, …) are deliberately absent: none exists
+    # in this repository, and excluding paths that do not exist would silently
+    # drop them from analysis if one were ever added for a real purpose.
+    - "build/**"
 
 linter:
   rules:
