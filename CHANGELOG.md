@@ -106,8 +106,20 @@ All notable changes to flutter-tvos will be documented here.
   an absent URI into "connection to device ended too early" — an unrelated error
   blaming the device connection. The app is left running on the TV either way.
 
-  `devicectl` cannot substitute for Bonjour here: a LAN-paired Apple TV reports
-  `tunnelState: "disconnected"` with no `localHostnames` and no `ipAddress`.
+  `devicectl` cannot substitute for Bonjour here. A LAN-paired Apple TV reports
+  `tunnelState: "disconnected"` with no `networkAddresses` and no
+  `localHostnames` — but it *does* still list `potentialHostnames`, and those
+  `*.coredevice.local` names are registered locally by `remoted` only while a
+  tunnel to that device is up. With the tunnel down they resolve for no process
+  on the machine. Any host devicectl offers is therefore checked with a real
+  lookup before it is used, so this bonus path can never pre-empt the Bonjour
+  retries with a URI nothing can dial.
+
+  **Behaviour change for automated runs.** An mDNS miss used to degrade (the
+  session stayed up, hot reload was quietly dead); it is now a hard failure. For
+  anything running `flutter-tvos run` against a device unattended — CI without
+  Local Network permission, say — this turns a partially-working run into a
+  failing one. That is the intent, but it is a new way for such a job to go red.
 
 - The generated tvOS `dart_plugin_registrant.dart` no longer hardcodes its
   `// @dart = 3.9` language-version marker; it is now derived from the Flutter

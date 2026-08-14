@@ -153,4 +153,39 @@ void main() {
       expect(logger.warningText, contains('positive'));
     });
   });
+
+  // devicectl keeps reporting `potentialHostnames` for a paired Apple TV long
+  // after its CoreDevice tunnel drops, and those `*.coredevice.local` names are
+  // registered locally by `remoted` — once the tunnel is down they resolve for
+  // no process on the machine. Handing one back unchecked would satisfy the
+  // caller's non-null test and skip the entire mDNS retry budget, leaving the
+  // resident runner dialling a host that cannot be looked up. The gate below is
+  // what keeps that from happening, so pin both of its answers.
+  group('devicectl host gate', () {
+    late TvosDevice device;
+
+    setUp(() {
+      device = TvosDevice(
+        'tv',
+        name: 'Apple TV',
+        logger: BufferLogger.test(),
+        isSimulator: false,
+      );
+    });
+
+    testWithoutContext('accepts a numeric address', () async {
+      // Short-circuits inside lookup(), so this asserts the fast path is not
+      // accidentally gated behind a real resolver query.
+      expect(await device.hostResolvesForTesting('127.0.0.1'), isTrue);
+    });
+
+    testWithoutContext('rejects a coredevice name that does not resolve', () async {
+      expect(
+        await device.hostResolvesForTesting(
+          'flutter-tvos-no-such-device.coredevice.local',
+        ),
+        isFalse,
+      );
+    });
+  });
 }

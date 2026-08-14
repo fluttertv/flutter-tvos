@@ -28,10 +28,10 @@ test/
 
 ```bash
 # Run all tests
-TMPDIR="$(cd "$TMPDIR" && pwd -P)" flutter/bin/dart test test/
+TMPDIR="$(cd "${TMPDIR:-/tmp}" && pwd -P)" flutter/bin/dart test test/
 
 # Run a specific test file
-TMPDIR="$(cd "$TMPDIR" && pwd -P)" flutter/bin/dart test test/general/tvos_emulator_test.dart
+TMPDIR="$(cd "${TMPDIR:-/tmp}" && pwd -P)" flutter/bin/dart test test/general/tvos_emulator_test.dart
 ```
 
 ### Why the resolved `TMPDIR` (macOS)

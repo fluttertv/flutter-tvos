@@ -4,7 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Process;
+import 'dart:io' show InternetAddress, Process;
 
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/application_package.dart';
@@ -396,6 +396,12 @@ class TvosDevice extends Device {
   /// silently changes how long a device run waits before giving up.
   @visibleForTesting
   Duration resolveMdnsTimeoutForTesting() => _resolveMdnsTimeout();
+
+  /// Exposed so the devicectl-host gate can be pinned: a `*.coredevice.local`
+  /// name from a device whose tunnel is down must be rejected, or it
+  /// short-circuits the mDNS retry budget with a URI nothing can dial.
+  @visibleForTesting
+  Future<bool> hostResolvesForTesting(String host) => _hostResolves(host);
 
   /// Per-attempt mDNS query window inside the resolve timeout, and also the
   /// pacing of the retry loop.
@@ -1162,11 +1168,14 @@ class TvosDevice extends Device {
   ///     `Bedroom-C4F7C15554D7.local.`), which never equals [Device.name]. The
   ///     port match also keeps us off a *stale* instance of the same bundle id
   ///     still running on the TV, which advertises a second service.
-  ///  2. **devicectl's hostname**, which only exists while the CoreDevice
-  ///     tunnel is up — a LAN-paired Apple TV reports `tunnelState:
-  ///     "disconnected"` with no `localHostnames` and no `ipAddress`, so this
-  ///     is a bonus path, not a fallback to rely on. It shells out, so it is
-  ///     tried sparingly — see [_devicectlProbeInterval].
+  ///  2. **devicectl's hostname**, which is only *usable* while the CoreDevice
+  ///     tunnel is up. A LAN-paired Apple TV reports `tunnelState:
+  ///     "disconnected"` with no `networkAddresses` and no `localHostnames`,
+  ///     but it still lists `potentialHostnames` — names that resolve for
+  ///     nobody once the tunnel is down. Anything this path offers is
+  ///     therefore checked with [_hostResolves] before it is trusted, so a
+  ///     bonus path can never pre-empt the Bonjour retries below. It shells
+  ///     out, so it is tried sparingly — see [_devicectlProbeInterval].
   Future<Uri?> _resolveReachableVmServiceUri({
     required String bundleId,
     required String deviceId,
@@ -1225,9 +1234,26 @@ class TvosDevice extends Device {
           probedDevicectl = true;
           lastDevicectlProbe = elapsed.elapsed;
           final String? deviceHost = await _resolveDeviceIp(deviceId);
-          if (deviceHost != null) {
+          // devicectl yields either a numeric address from `networkAddresses`
+          // or a `*.coredevice.local` name from `potentialHostnames`. The
+          // latter is registered locally by `remoted` and only exists while a
+          // tunnel to that device is up — and `potentialHostnames` stays
+          // populated on a LAN-paired Apple TV whose `tunnelState` is
+          // `disconnected`, where those names resolve for nobody on the
+          // machine. Returning one unchecked would hand back a URI nothing can
+          // dial and short-circuit the whole retry budget below on the first
+          // failed mDNS attempt, which is the silent-dead-hot-reload this
+          // method exists to prevent. A numeric address costs nothing to
+          // confirm; a name that does not resolve is discarded so the loop can
+          // keep waiting for Bonjour.
+          if (deviceHost != null && await _hostResolves(deviceHost)) {
             logger.printTrace('Resolved device host via devicectl: $deviceHost');
             return deviceUri.replace(host: deviceHost);
+          } else if (deviceHost != null) {
+            logger.printTrace(
+              'devicectl offered host "$deviceHost", but it does not resolve '
+              '(the CoreDevice tunnel is likely down) — ignoring it.',
+            );
           }
         }
       } on Object catch (e) {
@@ -1254,6 +1280,23 @@ class TvosDevice extends Device {
       '${elapsed.elapsed.inSeconds}s.',
     );
     return null;
+  }
+
+  /// Whether [host] resolves on this machine.
+  ///
+  /// A numeric address short-circuits inside `lookup` without touching the
+  /// resolver, so this is only a real query for the `*.coredevice.local` names
+  /// devicectl reports — exactly the ones that go stale when the CoreDevice
+  /// tunnel drops.
+  Future<bool> _hostResolves(String host) async {
+    try {
+      final List<InternetAddress> addresses = await InternetAddress.lookup(
+        host,
+      ).timeout(const Duration(seconds: 2));
+      return addresses.isNotEmpty;
+    } on Object {
+      return false;
+    }
   }
 
   Future<String?> _resolveDeviceIp(String deviceId) async {
