@@ -1397,13 +1397,13 @@ class NativeTvosBundle extends Target {
   /// Minimum tvOS version the embedded App.framework declares. Must match the
   /// `TVOS_DEPLOYMENT_TARGET` baked into the Xcode project template, otherwise
   /// App Store validation rejects the binary for a deployment-target mismatch.
-  static const String _kTvosMinimumOSVersion = '13.0';
+  static const String _kTvosMinimumOSVersion = '15.0';
 
   /// Deployment-target flag for the AOT clang steps (assemble + link).
   ///
   /// Without it clang stamps LC_BUILD_VERSION `minos` with the SDK version
   /// (e.g. 26.0) and App Store validation rejects the archive with
-  /// ITMS-90208: App.framework's `MinimumOSVersion` (13.0) must match the
+  /// ITMS-90208: App.framework's `MinimumOSVersion` (15.0) must match the
   /// binary's `minos`.
   static String tvosVersionMinFlag(String sdkName) =>
       sdkName.contains('simulator')

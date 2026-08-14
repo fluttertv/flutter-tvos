@@ -146,12 +146,12 @@ flutter:
         const podspecContent = '''
 Pod::Spec.new do |s|
   s.name             = 'my_plugin'
-  s.platform = :tvos, '13.0'
+  s.platform = :tvos, '15.0'
   s.swift_version = '5.0'
 end
 ''';
 
-        expect(podspecContent, contains("s.platform = :tvos, '13.0'"));
+        expect(podspecContent, contains("s.platform = :tvos, '15.0'"));
         expect(podspecContent, contains("s.swift_version = '5.0'"));
       },
       overrides: <Type, Generator>{

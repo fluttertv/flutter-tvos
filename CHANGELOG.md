@@ -6,6 +6,37 @@ All notable changes to flutter-tvos will be documented here.
 
 ### Changed
 
+- **The minimum tvOS deployment target is now 15.0, up from 13.0.**
+
+  Not a choice — upstream Flutter raised `ios_deployment_target` from `13.0` to
+  `15.0` between 3.44.8 and 3.47.0, and the tvOS engine takes its deployment
+  target from that same variable. The shipped `Flutter.framework` declares
+  `minos 15.0` in all four variants (the previous engine declared `12.0`).
+
+  Everything that encodes the floor moves with it, because leaving them behind
+  produced an app that *claimed* tvOS 13 while embedding a framework that
+  refuses to load below 15 — it builds and runs on any current Apple TV, so
+  nothing catches it until a user on an old OS launches the app, or App Store
+  validation rejects the archive for the `MinimumOSVersion` / `minos` mismatch
+  (ITMS-90208):
+
+  - `_kTvosMinimumOSVersion` in `lib/build_targets/application.dart`, which is
+    what `-mtvos-version-min` / `-mtvos-simulator-version-min` stamp onto the
+    AOT `App.framework`
+  - `TvosSwiftPackageManager.kDefaultDeploymentTarget`, i.e. `.tvOS("15.0")` in
+    the generated SwiftPM manifest
+  - the app template's `Podfile` and all three `TVOS_DEPLOYMENT_TARGET`
+    configurations in `Runner.xcodeproj`
+  - the generated-plugin podspec and `Package.swift` templates
+  - the bundled `flutter_tvos` podspec, and its example app
+
+  **No Apple TV hardware is dropped.** Every model that can run tvOS 13 can run
+  tvOS 15 or later, so this affects only devices that have not been updated.
+
+  Existing projects keep whatever their `tvos/` directory already declares —
+  regenerate with `flutter-tvos create .` to pick up 15.0, or raise
+  `TVOS_DEPLOYMENT_TARGET` and the `Podfile` platform line by hand.
+
 - Bumped the pinned Flutter SDK to **3.47.0** (`4cf24164`) and the tvOS engine
   artifacts to **`engine-495915c`**.
 

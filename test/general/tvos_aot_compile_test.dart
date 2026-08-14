@@ -33,7 +33,7 @@ import '../src/fake_process_manager.dart';
 import '../src/fakes.dart';
 
 void main() {
-  const String kVersionMinFlag = '-mtvos-version-min=13.0';
+  const String kVersionMinFlag = '-mtvos-version-min=15.0';
   const String kSdkPath = '/sdks/AppleTVOS.sdk';
 
   late MemoryFileSystem fileSystem;

@@ -135,14 +135,14 @@ void main() {
     test('device SDK pins the tvOS deployment target', () {
       expect(
         NativeTvosBundle.tvosVersionMinFlag('appletvos'),
-        '-mtvos-version-min=13.0',
+        '-mtvos-version-min=15.0',
       );
     });
 
     test('simulator SDK uses the simulator flag', () {
       expect(
         NativeTvosBundle.tvosVersionMinFlag('appletvsimulator'),
-        '-mtvos-simulator-version-min=13.0',
+        '-mtvos-simulator-version-min=15.0',
       );
     });
   });
@@ -151,7 +151,7 @@ void main() {
   // LC_BUILD_VERSION minos is stamped with the SDK version (ITMS-90208). The
   // flag's value is covered above; here we assert it actually reaches the argv.
   group('AOT clang argv carry the min-version flag', () {
-    const String flag = '-mtvos-version-min=13.0';
+    const String flag = '-mtvos-version-min=15.0';
 
     test('aotAssembleArgs (cc) includes the flag and inputs', () {
       final List<String> args = NativeTvosBundle.aotAssembleArgs(

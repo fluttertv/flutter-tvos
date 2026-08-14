@@ -48,7 +48,7 @@ void main() {
         templateDir
             .childFile('Podfile')
             .writeAsStringSync(
-              "platform :tvos, '13.0'\n"
+              "platform :tvos, '15.0'\n"
               "target 'Runner' do\n"
               '  use_frameworks!\n'
               'end\n',
