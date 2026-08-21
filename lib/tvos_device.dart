@@ -15,9 +15,7 @@ import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/device_port_forwarder.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
-import 'package:flutter_tools/src/ios/lldb.dart';
 import 'package:flutter_tools/src/ios/xcode_debug.dart';
-import 'package:flutter_tools/src/ios/xcodeproj.dart';
 import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/mdns_discovery.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -352,8 +350,6 @@ class TvosDevice extends Device {
   final String? osVersion;
 
   DeviceLogReader? _logReader;
-  LLDB? _lldb;
-  LLDBLogForwarder? _lldbLogForwarder;
   XcodeDebug? _xcodeDebug;
 
   /// How long to keep looking for the app's `_dartVmService._tcp` Bonjour
@@ -420,20 +416,6 @@ class TvosDevice extends Device {
   /// [_mdnsAttemptTimeout]), and this path spawns `xcrun devicectl`.
   static const Duration _devicectlProbeInterval = Duration(seconds: 25);
 
-  /// How long to wait for lldb to attach over the (wireless-only) CoreDevice
-  /// tunnel before giving up. Apple TV has no USB data port, so the lldb attach
-  /// always goes through the network tunnel, which is slower and more variable
-  /// than a cabled iOS device — attaches that ultimately succeed can take well
-  /// over a minute on a busy/cold tunnel. This is deliberately generous so we
-  /// don't abandon an attach that would have worked (the lldb path is the only
-  /// one that sustains a debug session on tvOS). Override with
-  /// `FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS` for slow networks.
-  Duration get _lldbAttachTimeout {
-    final String? raw = globals.platform.environment['FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS'];
-    final int? seconds = raw == null ? null : int.tryParse(raw);
-    return Duration(seconds: seconds != null && seconds > 0 ? seconds : 180);
-  }
-
   @override
   Future<TargetPlatform> get targetPlatform async => TargetPlatform.ios;
 
@@ -445,7 +427,9 @@ class TvosDevice extends Device {
   Future<String> get targetPlatformDisplayName async => 'tvos';
 
   @override
-  Future<bool> isSupported() async => true;
+  // Not `Future<bool>`: `Device.isSupported` is synchronous in this Flutter
+  // version.
+  bool isSupported() => true;
 
   @override
   Future<bool> get isLocalEmulator async => isSimulator;
@@ -734,62 +718,12 @@ class TvosDevice extends Device {
     await logReader.startLogStreamForBundle(id, bundleId, startStopped: needsDebugger);
 
     if (needsDebugger) {
-      // Path 1: lldb (fast when it works). On a USB-attached Apple TV this is
-      // reliable; over a wireless tunnel the attach can stall or drop the
-      // CoreDevice connection.
-      var attached = false;
-      final int? pid = await _findAppPid(id, bundleId, installUrl: installUrl);
-      if (pid != null) {
-        logger.printTrace('Attaching lldb to pid $pid for JIT debugging...');
-        final LLDBLogForwarder lldbForwarder = _lldbLogForwarder ??= LLDBLogForwarder();
-        lldbForwarder.logLines.listen((String line) {
-          logger.printTrace('[lldb] $line');
-        });
-        // 3.47.0 made xcodeProjectInterpreter required — LLDB now reads the
-        // Xcode version to decide whether it needs the `process interrupt`
-        // stop-hook dance. Stock flutter_tools receives it as an injected
-        // non-null parameter; we only have the nullable context lookup, so
-        // name the problem rather than force-unwrapping into a bare
-        // "Null check operator used on a null value" mid-launch.
-        final XcodeProjectInterpreter? interpreter = globals.xcodeProjectInterpreter;
-        if (interpreter == null) {
-          throwToolExit(
-            'Cannot start a debug session on this Apple TV: Xcode project '
-            'tooling is unavailable (no XcodeProjectInterpreter in this '
-            'context).\n'
-            'Check `flutter-tvos doctor` — this usually means Xcode or its '
-            'command-line tools are not installed or not selected.',
-          );
-        }
-        final LLDB lldb = _lldb ??= LLDB(
-          logger: logger,
-          processUtils: globals.processUtils,
-          xcodeProjectInterpreter: interpreter,
-        );
-        // lldb.attachAndStart only prints a "taking longer than expected"
-        // *warning* after 60s — it never gives up on its own. Over the wireless
-        // CoreDevice tunnel the attach can otherwise hang forever, so cap it
-        // ourselves. The cap is generous (see [_lldbAttachTimeout]) because on
-        // tvOS the lldb path is the only one that sustains a debug session, and
-        // a too-short cap abandons attaches that would have succeeded.
-        final Duration timeout = _lldbAttachTimeout;
-        attached = await lldb
-            .attachAndStart(
-              deviceId: id,
-              appProcessId: pid,
-              lldbLogForwarder: lldbForwarder,
-              mode: debuggingOptions.buildInfo.mode,
-            )
-            .timeout(
-              timeout,
-              onTimeout: () {
-                logger.printTrace(
-                  'lldb attach timed out after ${timeout.inSeconds}s; falling back.',
-                );
-                return false;
-              },
-            );
-      }
+      // Path 1 (lldb) is unavailable in this Flutter version: flutter_tools
+      // gained `src/ios/lldb.dart` after 3.32.8, so there is no LLDB helper to
+      // drive. Go straight to the Xcode debugger below — the same mechanism
+      // stock Flutter uses for iOS Core Devices, and the one Xcode itself uses
+      // to debug a wirelessly-paired Apple TV.
+      const attached = false;
 
       if (!attached) {
         // Path 2: Xcode debugger fallback — the same path stock Flutter uses
@@ -798,7 +732,7 @@ class TvosDevice extends Device {
         // Apple TV. Tear down our devicectl launch + lldb first so Xcode can
         // take the device over cleanly, then let Xcode install/launch/attach.
         logger.printStatus(
-          'lldb debugging did not attach — falling back to the Xcode debugger. '
+          'Starting the Xcode debugger to hold the debug session. '
           'You may be prompted to allow controlling Xcode '
           '(Settings ▸ Privacy & Security ▸ Automation).',
         );
@@ -827,9 +761,8 @@ class TvosDevice extends Device {
             '  2. Make sure the Apple TV and this Mac are on the same Wi-Fi/LAN, '
             'and that the Mac has Local Network permission '
             '(System Settings ▸ Privacy & Security ▸ Local Network).\n'
-            '  3. Re-run — the lldb attach over the tunnel can be slow; it is '
-            'given ${_lldbAttachTimeout.inSeconds}s (override with '
-            'FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS).\n'
+            '  3. Re-run — the Xcode attach over the tunnel can be slow and a '
+            'second attempt often succeeds.\n'
             '  4. For fast debug iteration without the device, use the tvOS '
             'simulator (JIT works there without a debugger).',
           );
@@ -958,15 +891,11 @@ class TvosDevice extends Device {
     return LaunchResult.succeeded();
   }
 
-  /// Tears down the in-flight devicectl `--console` launch and lldb session so
-  /// the Xcode debugger can take the device over cleanly. Killing the
-  /// `--console` launch process (held by the log reader) terminates the
-  /// `--start-stopped` app instance on the device.
+  /// Tears down the in-flight devicectl `--console` launch so the Xcode
+  /// debugger can take the device over cleanly. Killing the `--console` launch
+  /// process (held by the log reader) terminates the `--start-stopped` app
+  /// instance on the device.
   Future<void> _teardownDeviceLaunch() async {
-    _lldb?.exit();
-    _lldb = null;
-    unawaited(_lldbLogForwarder?.exit());
-    _lldbLogForwarder = null;
     _logReader?.dispose();
     _logReader = null;
   }
@@ -1391,125 +1320,6 @@ class TvosDevice extends Device {
     }
   }
 
-  /// Polls `devicectl device info processes` until a process whose executable
-  /// lives inside a bundle matching [bundleId] appears, returning its pid.
-  /// Needed after `--start-stopped` so we can hand the pid to lldb.
-  ///
-  /// [installUrl] is the `file://...Runner.app` path returned by
-  /// [_waitForAppRegistration]. When supplied we skip the otherwise
-  /// redundant `devicectl info apps` round-trip and go straight to the
-  /// process listing — saves ~300–500 ms per debug launch.
-  Future<int?> _findAppPid(
-    String deviceId,
-    String bundleId, {
-    String? installUrl,
-    Duration timeout = const Duration(seconds: 15),
-    Duration pollInterval = const Duration(milliseconds: 200),
-  }) async {
-    if (installUrl == null) {
-      // Fallback path used when the caller doesn't already know the install
-      // URL. Look it up via `devicectl info apps`.
-      final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_url.');
-      try {
-        final File out = tmp.childFile('apps.json');
-        final RunResult r = await globals.processUtils.run(<String>[
-          'xcrun',
-          'devicectl',
-          'device',
-          'info',
-          'apps',
-          '--device',
-          deviceId,
-          '--json-output',
-          out.path,
-        ]);
-        if (r.exitCode == 0 && out.existsSync()) {
-          try {
-            final dynamic decoded = jsonDecode(out.readAsStringSync());
-            final dynamic apps = (decoded is Map && decoded['result'] is Map)
-                ? (decoded['result'] as Map)['apps']
-                : null;
-            if (apps is List) {
-              for (final Object? a in apps) {
-                if (a is Map && a['bundleIdentifier'] == bundleId) {
-                  final dynamic u = a['url'];
-                  if (u is String) {
-                    installUrl = u;
-                  }
-                  break;
-                }
-              }
-            }
-          } on FormatException {
-            /* ignore */
-          }
-        }
-      } finally {
-        try {
-          tmp.deleteSync(recursive: true);
-        } on FileSystemException {
-          /* ignore */
-        }
-      }
-    }
-    if (installUrl == null) {
-      return null;
-    }
-
-    final sw = Stopwatch()..start();
-    final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_ps.');
-    try {
-      while (sw.elapsed < timeout) {
-        final File out = tmp.childFile('ps.json');
-        if (out.existsSync()) {
-          out.deleteSync();
-        }
-        final RunResult r = await globals.processUtils.run(<String>[
-          'xcrun',
-          'devicectl',
-          'device',
-          'info',
-          'processes',
-          '--device',
-          deviceId,
-          '--json-output',
-          out.path,
-        ]);
-        if (r.exitCode == 0 && out.existsSync()) {
-          try {
-            final dynamic decoded = jsonDecode(out.readAsStringSync());
-            final dynamic procs = (decoded is Map && decoded['result'] is Map)
-                ? (decoded['result'] as Map)['runningProcesses']
-                : null;
-            if (procs is List) {
-              for (final Object? p in procs) {
-                if (p is Map) {
-                  final dynamic exe = p['executable'];
-                  final dynamic pid = p['processIdentifier'];
-                  if (exe is String &&
-                      pid is int &&
-                      exe.contains(installUrl.replaceFirst('file://', ''))) {
-                    return pid;
-                  }
-                }
-              }
-            }
-          } on FormatException {
-            /* ignore */
-          }
-        }
-        await Future<void>.delayed(pollInterval);
-      }
-      return null;
-    } finally {
-      try {
-        tmp.deleteSync(recursive: true);
-      } on FileSystemException {
-        /* ignore */
-      }
-    }
-  }
-
   /// Polls `devicectl device info apps` until the given bundle ID shows up
   /// or the timeout expires. After `devicectl device install app` returns
   /// successfully, the app is copied to the device but LaunchServices still
@@ -1631,10 +1441,6 @@ class TvosDevice extends Device {
 
     _logReader?.dispose();
     _logReader = null;
-    _lldb?.exit();
-    _lldb = null;
-    unawaited(_lldbLogForwarder?.exit());
-    _lldbLogForwarder = null;
     unawaited(_xcodeDebug?.exit());
     _xcodeDebug = null;
 

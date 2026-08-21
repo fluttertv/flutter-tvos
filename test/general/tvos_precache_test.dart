@@ -16,7 +16,7 @@ void main() {
       artifacts.map((DevelopmentArtifact a) => a.name).toSet();
 
   group('TvosPrecacheCommand.selectRequiredArtifacts', () {
-    testWithoutContext('with no platform flags fetches only the universal/informative set — '
+    testWithoutContext('with no platform flags fetches only the universal set — '
         'no Android, iOS, web, or macOS', () {
       final Set<String> names = namesOf(
         TvosPrecacheCommand.selectRequiredArtifacts(
@@ -25,7 +25,7 @@ void main() {
           isFlagOn: flagsOn(<String>{}),
         ),
       );
-      expect(names, containsAll(<String>['universal', 'informative']));
+      expect(names, containsAll(<String>['universal']));
       expect(names, isNot(contains('ios')));
       expect(names, isNot(contains('android_gen_snapshot')));
       expect(names, isNot(contains('android_maven')));
@@ -42,7 +42,7 @@ void main() {
         ),
       );
       expect(names, contains('ios'));
-      expect(names, containsAll(<String>['universal', 'informative']));
+      expect(names, containsAll(<String>['universal']));
       expect(names, isNot(contains('macos')));
     });
 
@@ -106,7 +106,7 @@ void main() {
       );
       expect(
         names,
-        containsAll(<String>['ios', 'web', 'macos', 'universal', 'informative']),
+        containsAll(<String>['ios', 'web', 'macos', 'universal']),
       );
     });
 

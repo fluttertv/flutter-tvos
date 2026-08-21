@@ -75,7 +75,7 @@ flutter:
   shaders:
     - shaders/ripple.frag
 ''');
-      writePackageConfigFiles(directory: fileSystem.currentDirectory, mainLibName: 'example');
+      writePackageConfigFile(directory: fileSystem.currentDirectory, mainLibName: 'example');
       fileSystem.file('shaders/ripple.frag')
         ..createSync(recursive: true)
         ..writeAsStringSync('void main() {}');

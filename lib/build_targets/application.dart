@@ -14,14 +14,11 @@ import 'package:flutter_tools/src/build_system/exceptions.dart';
 import 'package:flutter_tools/src/build_system/targets/assets.dart';
 import 'package:flutter_tools/src/build_system/targets/common.dart';
 import 'package:flutter_tools/src/build_system/targets/localizations.dart';
-import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/compile.dart';
 import 'package:flutter_tools/src/dart/package_map.dart';
 import 'package:flutter_tools/src/devfs.dart';
-import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
-import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
@@ -150,22 +147,10 @@ class TvosKernelSnapshot extends KernelSnapshot {
     final String? frontendServerStarterPath = environment.defines[kFrontendServerStarterPath];
     final List<String> extraFrontEndOptions =
         decodeCommaSeparated(environment.defines, kExtraFrontEndOptions);
-    // New in 3.47.0. `KernelSnapshot.outputs` — which we inherit — declares
-    // recorded_uses.json whenever the record-use feature is on, and it is on by
-    // default on every channel. A declared output that no build step writes
-    // fails the build, so this must be mirrored, not skipped.
-    final File recordedUsesFile = environment.buildDir.childFile(
-      KernelSnapshot.recordedUsesFileName,
-    );
-    if (featureFlags.isRecordUseEnabled) {
-      if (buildMode.isPrecompiled) {
-        extraFrontEndOptions.add('--recorded-uses=${recordedUsesFile.path}');
-      } else {
-        // Produce an empty file to satisfy the build system in JIT mode.
-        // Always overwrite to avoid stale data.
-        recordedUsesFile.writeAsStringSync(KernelSnapshot.recordedUsesEmptyContent);
-      }
-    }
+    // No recorded-uses handling: the record-use feature (and
+    // `KernelSnapshot.recordedUsesFileName` / `recordedUsesEmptyContent` /
+    // `FeatureFlags.isRecordUseEnabled`) arrived in 3.47.0 and does not exist
+    // in this Flutter, so `KernelSnapshot.outputs` never declares that file.
     final List<String>? fileSystemRoots = environment.defines[kFileSystemRoots]?.split(',');
     final String? fileSystemScheme = environment.defines[kFileSystemScheme];
 
@@ -316,13 +301,12 @@ class TvosCopyFlutterBundle extends CopyFlutterBundle {
           .file(isolateSnapshotData)
           .copySync(environment.outputDir.childFile('isolate_snapshot_data').path);
     }
-    // 3.47.0 renamed DartBuild → LinkHooks (and dartHookResultFilename →
-    // resultFilename); the loader itself is unchanged.
-    final DartHooksResult dartHookResult = await LinkHooks.loadHookResult(environment);
+    // No `dartHookResult` here: this Flutter's `copyAssets` predates that
+    // parameter, and we skip the native-assets targets for tvOS anyway (see
+    // `dependencies`), so there are no build-hook results to pass on.
     final Depfile assetDepfile = await copyAssets(
       environment,
       environment.outputDir,
-      dartHookResult: dartHookResult,
       // tvOS rides the iOS engine (Impeller/Metal): shaders need the Metal
       // runtime stage that only the ios shader target emits.
       targetPlatform: TargetPlatform.ios,
