@@ -20,7 +20,6 @@ import 'package:flutter_tools/src/compile.dart';
 import 'package:flutter_tools/src/dart/package_map.dart';
 import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
-import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:meta/meta.dart';
 import 'package:package_config/package_config.dart';
@@ -299,11 +298,12 @@ class TvosCopyFlutterBundle extends CopyFlutterBundle {
           .file(isolateSnapshotData)
           .copySync(environment.outputDir.childFile('isolate_snapshot_data').path);
     }
-    final DartHooksResult dartHookResult = await DartBuild.loadHookResult(environment);
+    // No `dartHookResult` here: this Flutter version's `copyAssets` predates
+    // that parameter, and we skip the native-assets targets for tvOS anyway
+    // (see `dependencies`), so there are no build-hook results to pass on.
     final Depfile assetDepfile = await copyAssets(
       environment,
       environment.outputDir,
-      dartHookResult: dartHookResult,
       // tvOS rides the iOS engine (Impeller/Metal): shaders need the Metal
       // runtime stage that only the ios shader target emits.
       targetPlatform: TargetPlatform.ios,

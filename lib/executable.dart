@@ -104,7 +104,9 @@ List<FlutterCommand> tvosCommands({required bool verbose, required bool verboseH
       ScreenshotCommand(fs: globals.fs),
       ShellCompletionCommand(),
       SymbolizeCommand(stdio: globals.stdio, fileSystem: globals.fs),
-      UpdatePackagesCommand(verboseHelp: verboseHelp),
+      // No `verboseHelp:` — this Flutter version's UpdatePackagesCommand takes
+      // no constructor arguments.
+      UpdatePackagesCommand(),
       // Commands extended for tvOS.
       // `upgrade` is overridden so it upgrades the flutter-tvos toolchain to its
       // latest release tag instead of moving the pinned Flutter SDK upstream

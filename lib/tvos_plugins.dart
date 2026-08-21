@@ -5,6 +5,8 @@
 import 'dart:convert';
 
 import 'package:flutter_tools/src/base/file_system.dart';
+import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/dart/language_version.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/platform_plugins.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -816,7 +818,10 @@ void writeTvosDartPluginRegistrant(FlutterProject project, {List<TvosPlugin>? pl
       '// so this file is never overwritten by the upstream generator.\n'
       '//\n'
       '\n'
-      '// @dart = 3.9\n'
+      // Derived, never hardcoded: the registrant must not declare a language
+      // version above the Dart SDK shipped with the pinned Flutter, or the
+      // build fails with "specified language version is too high".
+      '// @dart = ${currentLanguageVersion(globals.fs, Cache.flutterRoot!)}\n'
       '\n'
       '$dartImports\n'
       "@pragma('vm:entry-point')\n"
