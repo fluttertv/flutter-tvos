@@ -191,8 +191,21 @@ function update_flutter_tvos() {
     needs_pub_get="true"
   fi
 
+  # `tool_revision` is the git HEAD SHA in a checkout, which never moves for an
+  # uncommitted edit — so editing bin/ or lib/ and re-running silently executes
+  # the previous snapshot. Hashing every file instead would be correct but costs
+  # ~0.6s on each invocation (52 files), which is why the SHA shortcut exists at
+  # all. An mtime probe gets the same answer for ~9ms: `-print -quit` stops at
+  # the first file newer than the stamp, and the stamp is rewritten after every
+  # successful compile. Same shape as the pubspec.yaml check above.
+  local edited=""
+  if [[ -f "$stamp_path" ]]; then
+    edited="$(find "$ROOT_DIR/bin" "$ROOT_DIR/lib" -type f \
+      -not -path "$ROOT_DIR/bin/cache/*" -newer "$stamp_path" -print -quit 2>/dev/null)"
+  fi
+
   if [[ ! -f "$SNAPSHOT_PATH" || ! -s "$stamp_path" || "$revision" != "$(cat "$stamp_path")"
-        || "$needs_pub_get" == "true" ]]; then
+        || -n "$edited" || "$needs_pub_get" == "true" ]]; then
     if [[ "$needs_pub_get" == "true" ]]; then
       echo "Running pub get..."
       (cd "$ROOT_DIR" && "$FLUTTER_EXE" pub get --offline) || \
