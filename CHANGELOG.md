@@ -2,20 +2,261 @@
 
 All notable changes to flutter-tvos will be documented here.
 
-> **This branch is the Flutter 3.32.8 release line** (`release/flutter-3.32.8`,
-> tagged `v3.32.8-tvos.1.5.0`). It is not the mainline: `main` tracks Flutter
-> 3.44.8. Switch between lines with `flutter-tvos versions` and
-> `flutter-tvos use <version>`. `flutter-tvos upgrade` always resolves to the
-> newest Flutter line and will never move you onto this one.
+## [1.7.0-flutter3.32.8] - 2026-08-21
 
-## [Unreleased]
+The Flutter 3.32.8 release line, refreshed onto the 1.7.0 mainline. Same CLI
+feature set as 1.7.0, pinned to Flutter 3.32.8 and engine
+`v1.0.1-flutter3.32.8`. Not merged into the mainline: that would move the
+toolchain backwards.
 
-## [1.5.0] — Flutter 3.32.8 - 2026-08-06
+### Changed
 
-The `1.5.0` feature set back-ported to Flutter 3.32.8, pinned to engine
-artifacts `v1.0.1-flutter3.32.8` (origin-signed). The Dart sources under `lib/`
-are byte-identical to the 3.44.8 `1.5.0` release apart from the changes listed
-here, which exist only because 3.32.8's `flutter_tools` API differs.
+- **Retargeted to Flutter 3.32.8.** The CLI is written against a newer
+  `flutter_tools` than 3.32.8 ships, so pinning the version alone left it
+  uncompilable. Resolved toward what 3.32.8 actually provides:
+
+  - Record-use (`KernelSnapshot.recordedUsesFileName`,
+    `recordedUsesEmptyContent`, `FeatureFlags.isRecordUseEnabled`) is 3.47.0
+    and does not exist here; `KernelSnapshot.outputs` never declares that file,
+    so the mirroring block has nothing to satisfy.
+  - `copyAssets` predates `dartHookResult`, and `LinkHooks` / `DartHooksResult`
+    are absent. We already skip the native-assets targets for tvOS and write an
+    empty manifest, so there were never hook results to pass on.
+  - `Device.isSupported` is synchronous here; `UpdatePackagesCommand` takes no
+    constructor arguments; `ArtifactSet` has no `displayName`, so precache
+    prints the bare stamp name.
+
+- **On-device debug goes through Xcode on this line.** `src/ios/lldb.dart`
+  arrived after 3.32.8, so the direct-lldb attach cannot be built. The Xcode
+  debug action — already the fallback path, and what stock Flutter 3.32.8 uses
+  for iOS Core Devices — is now the only path.
+
+- **CI covers `release/**` branches**, so this line is verified like the
+  mainline rather than by hand.
+
+### Carried forward from the mainline
+
+Everything through 1.7.0, including the archive-mode guard (#66): a project
+generated from this line carries the `Check Flutter build mode` phase, so an
+archive staged in the wrong mode fails the build instead of shipping a debug
+engine that blank-screens from TestFlight. The previous 3.32.8 port predated
+that work.
+
+## [1.7.0] - 2026-08-20
+
+### Changed
+
+- **Upgraded to Flutter 3.47.1**, with the engine artifacts rebuilt against it.
+
+  Nothing tvOS-facing moved. None of the files the tvOS patch set touches
+  changed between 3.47.0 and 3.47.1, `shell/platform/darwin` is untouched, and
+  the five Dart SDK files behind the platform-identity patches are identical at
+  both revisions. Upstream's changes land in `flutter_tools`, the Linux and
+  Windows embedders, and an Impeller compiler path fix.
+
+  The engine was rebuilt regardless, because `dart_revision` moved and AOT
+  snapshots are keyed to the Dart SDK hash: a profile or release build compiled
+  against the previous artifacts fails to load with an SDK-hash mismatch. For
+  the same reason, upgrading the CLI without the matching engine — or the
+  reverse — is not supported; `flutter-tvos precache` pulls the pair.
+
+### Fixed
+
+- **An Xcode archive no longer silently ships a payload built for a different
+  mode** (#65).
+
+  The Runner project runs no Dart build. Its phases copy whatever the last
+  `flutter-tvos build/run` staged into `tvos/Flutter`, and the engine comes from
+  the `Flutter.xcframework` that same run copied in — so Xcode's configuration
+  never had any influence on the Flutter payload. Building or archiving Release
+  after a debug run therefore shipped the **debug/JIT engine** and a
+  `kernel_blob.bin` inside a release app.
+
+  That build installs and runs fine from Xcode, because a development signature
+  permits the JIT pages the VM needs. Installed from TestFlight or the App
+  Store, where the distribution signature carries no `get-task-allow`, the VM
+  cannot get executable pages at all: the app launches, the launch screen
+  paints, and the first Flutter frame never arrives — a blank screen with no
+  crash. Nothing upstream caught it either: `altool --validate-app`, the upload
+  and App Store processing all accept such a build without a warning.
+
+  `Generated.xcconfig` now records `FLUTTER_BUILD_MODE`, and the app template
+  gained a **"Check Flutter build mode"** build phase — first in the target, so
+  it runs before anything copies a payload in — that fails the build when the
+  staged mode does not match the configuration, naming the exact command to
+  run. A profile payload under the Release configuration is only a warning
+  (`flutter-tvos` drives profile builds through that configuration, and they do
+  run), and an unset `FLUTTER_BUILD_MODE` from an older CLI is a warning too.
+
+  Existing projects keep their old phase list — `project.pbxproj` is written
+  once at `create` time and never rewritten on build — so device builds now
+  print a warning naming the risk. The mitigation that works everywhere is to
+  run the release build immediately before each archive; `flutter-tvos create .`
+  will **not** add the phase to a project that already has a `tvos/` directory,
+  and now says so rather than exiting silently.
+
+## [1.6.0] - 2026-08-14
+
+### Changed
+
+- **The minimum tvOS deployment target is now 15.0, up from 13.0.**
+
+  Not a choice — upstream Flutter raised `ios_deployment_target` from `13.0` to
+  `15.0` between 3.44.8 and 3.47.0, and the tvOS engine takes its deployment
+  target from that same variable. The shipped `Flutter.framework` declares
+  `minos 15.0` in all four variants (the previous engine declared `12.0`).
+
+  Everything that encodes the floor moves with it, because leaving them behind
+  produced an app that *claimed* tvOS 13 while embedding a framework that
+  refuses to load below 15 — it builds and runs on any current Apple TV, so
+  nothing catches it until a user on an old OS launches the app, or App Store
+  validation rejects the archive for the `MinimumOSVersion` / `minos` mismatch
+  (ITMS-90208):
+
+  - `_kTvosMinimumOSVersion` in `lib/build_targets/application.dart`, which is
+    what `-mtvos-version-min` / `-mtvos-simulator-version-min` stamp onto the
+    AOT `App.framework`
+  - `TvosSwiftPackageManager.kDefaultDeploymentTarget`, i.e. `.tvOS("15.0")` in
+    the generated SwiftPM manifest
+  - the app template's `Podfile` and all three `TVOS_DEPLOYMENT_TARGET`
+    configurations in `Runner.xcodeproj`
+  - the generated-plugin podspec and `Package.swift` templates
+  - the bundled `flutter_tvos` podspec, and its example app
+
+  **No Apple TV hardware is dropped.** Every model that can run tvOS 13 can run
+  tvOS 15 or later, so this affects only devices that have not been updated.
+
+  Existing projects keep whatever their `tvos/` directory already declares —
+  regenerate with `flutter-tvos create .` to pick up 15.0, or raise
+  `TVOS_DEPLOYMENT_TARGET` and the `Podfile` platform line by hand.
+
+- Bumped the pinned Flutter SDK to **3.47.0** (`4cf24164`) and the tvOS engine
+  artifacts to **`engine-495915c`**.
+
+  Three upstream API changes landed in the code that deliberately shadows
+  `flutter_tools`' build graph, and none of them surfaces until a real build:
+
+  - `DartBuild` became `LinkHooks`. `TvosCopyFlutterBundle` mirrors upstream's
+    `build()`, which loads the hook result. Rename only.
+  - `LLDB` now requires an `XcodeProjectInterpreter`.
+  - `KernelSnapshot` gained a `recorded_uses.json` output, declared whenever the
+    record-use experiment is on — which is by default, on every channel.
+    `TvosKernelSnapshot` inherits that output list, so its mirrored `build()`
+    has to produce the file (`--recorded-uses` in AOT, an empty file in JIT) or
+    the build fails on an output nothing wrote.
+
+  Platform identity holds on 3.47.0: `os=tvos isIOS=true isTvOS=true
+  target=TargetPlatform.iOS`, verified on a tvOS 17.5 simulator and a physical
+  Apple TV 4K in debug, profile and release. The `targetOS: null` plus
+  patched-compile-SDK path still keeps the platform getters runtime-resolved
+  rather than const-folded to `ios` under AOT.
+
+- Engine artifact releases are now tagged with the engine repository's commit
+  SHA (`engine-<sha>`) instead of `v1.0.x-flutter<version>`.
+
+  The old tag embedded a Flutter version in the artifact's identity, which went
+  stale the moment a patch set was reused across Flutter releases — 3.44.9
+  shipped on artifacts tagged 3.44.8 because the Dart revision was unchanged,
+  and the tag then actively misled. A SHA names what was built rather than what
+  it happened to be built for, matching how `flutter.version` pins the SDK. The
+  `engine-` prefix is required: GitHub rejects any ref that is exactly 40 or 64
+  hex characters as ambiguous with a commit id.
+
+### Fixed
+
+- **On-device debug: hot reload, hot restart and DevTools were silently dead.**
+
+  `flutter-tvos run -d <appletv> --debug` launches with
+  `--vm-service-host=0.0.0.0`, so the URI the Dart VM prints carries a host the
+  Mac cannot dial and has to be rewritten to the device's LAN address. That
+  rewrite got a **single 10-second mDNS query**, and when it lost the race with
+  Bonjour propagation it returned the `0.0.0.0` URI anyway. The resident runner
+  accepts it and retries forever:
+
+  ```
+  SocketException: Connection refused, address = 0.0.0.0, port = 59104
+  ```
+
+  The session looks alive — the app on the TV is completely healthy — while hot
+  reload, hot restart and DevTools do nothing, and nothing says why.
+
+  mDNS is now polled in 5-second attempts up to 60 seconds (override with
+  `FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS`, which warns rather than silently
+  defaulting if given something unusable). The port match is kept so a stale
+  copy of the same bundle id still running on the TV cannot win the lookup, and
+  a first-attempt missing-permission failure no longer aborts a run that later
+  attempts would rescue.
+
+  The loop paces itself against the attempt window rather than assuming each
+  query consumed it. When macOS denies Local Network access the query fails in
+  milliseconds, so an unpaced retry would spin for the whole budget — and since
+  that path prints the permission instructions on every call, it would bury the
+  explanation under thousands of copies of another message.
+
+  When nothing resolves, the run now **exits on the explanation** naming Local
+  Network permission. Returning the dead URI let the runner retry `0.0.0.0`
+  forever; returning success with no URI was no better, because the runner turns
+  an absent URI into "connection to device ended too early" — an unrelated error
+  blaming the device connection. The app is left running on the TV either way.
+
+  `devicectl` cannot substitute for Bonjour here. A LAN-paired Apple TV reports
+  `tunnelState: "disconnected"` with no `networkAddresses` and no
+  `localHostnames` — but it *does* still list `potentialHostnames`, and those
+  `*.coredevice.local` names are registered locally by `remoted` only while a
+  tunnel to that device is up. With the tunnel down they resolve for no process
+  on the machine. Any host devicectl offers is therefore checked with a real
+  lookup before it is used, so this bonus path can never pre-empt the Bonjour
+  retries with a URI nothing can dial.
+
+  **Behaviour change for automated runs.** An mDNS miss used to degrade (the
+  session stayed up, hot reload was quietly dead); it is now a hard failure. For
+  anything running `flutter-tvos run` against a device unattended — CI without
+  Local Network permission, say — this turns a partially-working run into a
+  failing one. That is the intent, but it is a new way for such a job to go red.
+
+- The generated tvOS `dart_plugin_registrant.dart` no longer hardcodes its
+  `// @dart = 3.9` language-version marker; it is now derived from the Flutter
+  SDK in use. The hardcoded value made the kernel compile fail ("The specified
+  language version 3.9 is too high") on any Flutter shipping an older Dart.
+
+### Tests
+
+- The unit suite now runs with `TMPDIR` resolved through its symlinks.
+
+  Flutter 3.47.0 added an FS guard to the test harness that rejects writes
+  outside the system temp directory, but it resolves symlinks only when
+  computing the allowed root — not on the path it checks. On macOS `$TMPDIR` is
+  `/var/folders/…` behind a `/var` → `/private/var` symlink, so the two never
+  compare equal and roughly 30 tests fail, including ones that reach temp only
+  through `flutter_tools`' own `LocalFileSystem`. Resolving `TMPDIR` removes the
+  mismatch at the source and leaves the guard armed;
+  `FLUTTER_TEST_DISABLE_FS_GUARD` would instead switch off the thing that stops
+  a stray test writing to `$HOME`. Applied in both workflows and documented in
+  `test/README.md`.
+
+## [1.5.1] - 2026-08-12
+
+### Changed
+
+- Bumped the pinned Flutter SDK to **3.44.9** (`6b182d2c7585`).
+
+  Engine artifacts stay at `v1.0.2-flutter3.44.8`. 3.44.9 pins the same Dart
+  revision (`d684a576`) as 3.44.8, so the existing artifacts remain AOT-valid
+  and no engine rebuild or re-signing is needed. The only engine-tree changes
+  in 3.44.9 are Android lint/SDK bundle files, which tvOS does not build.
+
+  The build-graph overrides in `lib/build_targets/application.dart` needed no
+  changes: 3.44.9 touches nothing under `build_system/`, and leaves
+  `KernelSnapshot.build()` and `KernelCompiler.compile` untouched.
+
+  Tooling-side, 3.44.9 adds an LLDB stop hook (`thread backtrace all` then
+  `detach`) inside `LLDB.attachAndStart`, so a crashed app no longer hangs with
+  the debugger attached. `TvosDevice` drives that same class for on-device JIT
+  debugging and picks the fix up for free — the hook only fires on a real
+  process stop, and the tvOS JIT breakpoint script returns `False` (never
+  stops), so steady-state debug sessions are unaffected.
+
+## [1.5.0] - 2026-08-05
 
 ### Added
 
@@ -29,34 +270,12 @@ here, which exist only because 3.32.8's `flutter_tools` API differs.
 
 ### Changed
 
-- Pinned to Flutter `3.32.8` (`edada7c56edf4a183c1735310e123c7f923584f1`) and
-  engine artifacts `v1.0.1-flutter3.32.8`. The Dart SDK floor drops to `3.8.0`
-  accordingly (3.32.8 ships Dart 3.8.1).
-- The engine artifacts are origin-signed for ITMS-91065 compliance and carry
-  key-data support on the Siri Remote path: key events are sent on both
-  `flutter/keyevent` and the native key-data channel. Apps using standard
-  `Focus`/`FocusTraversal`/`Shortcuts` work unchanged (the framework bridges
-  either source), and the key-data channel adds future-proofing against
-  `RawKeyboard` deprecation plus correct physical codes for media keys. This
-  is the same `FlutterTvRemotePlugin` the 3.44.8 engine ships.
-- **On-device debug (JIT) attaches through Xcode, not lldb directly.** Flutter
-  3.32.8's `flutter_tools` has no `ios/lldb.dart` — the direct lldb attach the
-  3.44.8 line uses as its fast path does not exist to call. This line drives
-  Xcode's own debug action over OSA scripting instead, which is the same
-  mechanism stock Flutter 3.32.8 uses for iOS Core Devices, and the mechanism
-  the 3.44.8 line already falls back to when lldb does not attach. Practical
-  differences: the first run may prompt for permission to control Xcode
-  (System Settings ▸ Privacy & Security ▸ Automation), Xcode must be selected
-  (`xcode-select -p`), and the VM Service is resolved over mDNS rather than
-  from the console stream. Hot reload, hot restart, and DevTools work the same
-  once attached. `FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS` has no effect on
-  this line — there is no lldb attach to time out. Release and profile builds
-  on device are AOT and need no debugger, and the tvOS **simulator** remains
-  the fast debug path either way.
-- `flutter-tvos precache` fetches only the `universal` artifact set on top of
-  the tvOS engine. The 3.44.8 line also fetches `informative` (the engine
-  stamp); 3.32.8 defines no such artifact, so there is nothing to fetch. The
-  always-on set is declared by name, so this needed no code change.
+- Engine artifacts updated to `v1.0.2-flutter3.44.8` (origin-signed for ITMS-91065
+  compliance, plus key-data support on the Siri Remote path). The engine now sends
+  key events on both `flutter/keyevent` and native key-data channels — apps using
+  standard `Focus`/`FocusTraversal`/`Shortcuts` still work unchanged (the framework
+  bridges either source), and the key-data channel adds future-proofing against
+  `RawKeyboard` deprecation plus correct physical codes for media keys.
 
 ### Removed
 
@@ -71,15 +290,6 @@ here, which exist only because 3.32.8's `flutter_tools` API differs.
   `flutter-tvos versions` and `flutter-tvos use <version>` instead.
 
 ### Fixed
-
-- **tvOS simulator apps no longer crash at launch.** The `tvos_debug_sim_arm64`
-  engine in the first upload of `v1.0.1-flutter3.32.8` aborted inside the Dart
-  VM's `VirtualMemory::Init()` before any Dart code ran, so every simulator app
-  died immediately. The device-only RWX JIT flag had been guarded on a macro
-  this Dart revision does not define, which compiled it into the simulator
-  engine. Re-run `flutter-tvos precache --force` if you fetched the engine
-  before 2026-08-06; the device, profile, and release engines were never
-  affected.
 
 - `flutter-tvos upgrade` no longer moves the checkout with `git reset --hard`.
   It now uses `git checkout --force --detach`, which produces an identical

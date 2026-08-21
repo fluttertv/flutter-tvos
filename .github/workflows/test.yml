@@ -2,9 +2,12 @@ name: Test
 
 on:
   push:
-    branches: [main, dev]
+    # `release/**` covers the per-Flutter-version lines (e.g.
+    # release/flutter-3.32.8). They are never merged into the mainline, so
+    # without this they would carry no CI at all.
+    branches: [main, dev, "release/**"]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, "release/**"]
 
 jobs:
   test:
@@ -41,9 +44,21 @@ jobs:
         # `dart test`'s implicit ensureUpToDate. The deps are already
         # cached from the previous step, so the test still has
         # everything it needs.
+        #
+        # TMPDIR is resolved through its symlinks because Flutter's test
+        # harness installs an FS guard (test/src/fs_safety.dart) that rejects
+        # writes outside the system temp directory. It resolves symlinks when
+        # computing the allowed root but not on the path it checks, and on
+        # macOS $TMPDIR is /var/folders/... while /var is a symlink to
+        # /private/var — so the two never compare equal and ~30 tests fail,
+        # including ones that only reach temp through flutter_tools' own
+        # LocalFileSystem. Resolving it here removes the mismatch at the
+        # source; FLUTTER_TEST_DISABLE_FS_GUARD would instead switch off the
+        # guard that stops a stray test writing outside temp. See test/README.md.
         env:
           PUB_OFFLINE: "1"
-        run: flutter/bin/dart test test/
+        run: |
+          TMPDIR="$(cd "${TMPDIR:-/tmp}" && pwd -P)" flutter/bin/dart test test/
 
       # The step above is path-scoped to the root suite, so the bundled
       # package's 103 tests never ran. They are widget tests and need the

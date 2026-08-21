@@ -15,20 +15,8 @@ void main() {
   Set<String> namesOf(Set<DevelopmentArtifact> artifacts) =>
       artifacts.map((DevelopmentArtifact a) => a.name).toSet();
 
-  // The always-on set the command declares, intersected with what this Flutter
-  // version actually defines. `_alwaysOn` names both 'universal' and
-  // 'informative', but 'informative' (the engine stamp) is a Flutter 3.44.x
-  // artifact — 3.32.8 has no such DevelopmentArtifact, so nothing can select
-  // it. Deriving the expectation keeps these assertions about the behaviour
-  // being tested (the always-on set is always selected) rather than about
-  // which artifacts a given SDK happens to enumerate.
-  final Set<String> alwaysOn = DevelopmentArtifact.values
-      .map((DevelopmentArtifact a) => a.name)
-      .where(<String>{'universal', 'informative'}.contains)
-      .toSet();
-
   group('TvosPrecacheCommand.selectRequiredArtifacts', () {
-    testWithoutContext('with no platform flags fetches only the always-on set — '
+    testWithoutContext('with no platform flags fetches only the universal set — '
         'no Android, iOS, web, or macOS', () {
       final Set<String> names = namesOf(
         TvosPrecacheCommand.selectRequiredArtifacts(
@@ -37,8 +25,7 @@ void main() {
           isFlagOn: flagsOn(<String>{}),
         ),
       );
-      expect(names, containsAll(alwaysOn));
-      expect(names, contains('universal'));
+      expect(names, containsAll(<String>['universal']));
       expect(names, isNot(contains('ios')));
       expect(names, isNot(contains('android_gen_snapshot')));
       expect(names, isNot(contains('android_maven')));
@@ -46,7 +33,7 @@ void main() {
       expect(names, isNot(contains('macos')));
     });
 
-    testWithoutContext('--ios adds the iOS artifact (and keeps the always-on set)', () {
+    testWithoutContext('--ios adds the iOS artifact (and keeps the universal set)', () {
       final Set<String> names = namesOf(
         TvosPrecacheCommand.selectRequiredArtifacts(
           featureFlags: TestFeatureFlags(),
@@ -55,7 +42,7 @@ void main() {
         ),
       );
       expect(names, contains('ios'));
-      expect(names, containsAll(alwaysOn));
+      expect(names, containsAll(<String>['universal']));
       expect(names, isNot(contains('macos')));
     });
 
@@ -117,7 +104,10 @@ void main() {
           isFlagOn: flagsOn(<String>{}),
         ),
       );
-      expect(names, containsAll(<String>['ios', 'web', 'macos', ...alwaysOn]));
+      expect(
+        names,
+        containsAll(<String>['ios', 'web', 'macos', 'universal']),
+      );
     });
 
     testWithoutContext('a disabled iOS feature excludes iOS even from the default set', () {

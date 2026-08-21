@@ -10,6 +10,7 @@ import 'package:flutter_tools/src/dart/language_version.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/platform_plugins.dart';
 import 'package:flutter_tools/src/project.dart';
+import 'package:package_config/package_config.dart';
 import 'package:yaml/yaml.dart';
 
 import 'tvos_swift_package_manager.dart';
@@ -806,13 +807,10 @@ void writeTvosDartPluginRegistrant(FlutterProject project, {List<TvosPlugin>? pl
     );
   }
 
-  // Derive the `// @dart =` marker from the SDK we are actually running,
-  // exactly as upstream's registrant generator does. Hardcoding it pins the
-  // generated file to one Flutter release: a literal `3.9` makes every build
-  // on a Flutter whose Dart is older fail the kernel compile outright with
-  // "The specified language version 3.9 is too high" — which is what happened
-  // on this 3.32.8 line (Dart 3.8.1).
-  final languageVersion = currentLanguageVersion(globals.fs, Cache.flutterRoot!);
+  // Derive the `// @dart = X.Y` marker from the SDK we're actually running.
+  // Hardcoding it breaks the kernel compile on any Flutter whose Dart is older
+  // than the literal ("The specified language version X.Y is too high").
+  final LanguageVersion languageVersion = currentLanguageVersion(globals.fs, Cache.flutterRoot!);
 
   final dartRegistrantContent =
       '//\n'

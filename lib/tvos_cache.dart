@@ -86,7 +86,7 @@ class TvosFlutterCache extends FlutterCache {
 ///
 /// The GitHub Releases base URL can be overridden with the
 /// `TVOS_ENGINE_BASE_URL` environment variable. The release tag comes from
-/// `bin/internal/engine.version` (e.g. `v1.0.0-flutter3.44.0`).
+/// `bin/internal/engine.version` (e.g. `engine-495915c579071a4ef6a5014637166d5231cb4aac`).
 class TvosEngineArtifacts extends EngineCachedArtifact {
   TvosEngineArtifacts(
     Cache cache, {
@@ -111,11 +111,9 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     'host_release.zip',
   ];
 
-  // NOTE: no `displayName` override here. Flutter 3.44.x added a per-artifact
-  // group header to `Cache.updateAll` and an `ArtifactSet.displayName` hook to
-  // label it; 3.32.8 has neither — it prints no group header at all, so a
-  // `displayName` getter on this line would be dead code that also fails
-  // analysis as a non-overriding `@override`.
+  // No `displayName` override: `ArtifactSet` has no such member in this Flutter
+  // version, so nothing would call it. The precache output therefore shows the
+  // bare stamp name rather than "tvOS Engine" — cosmetic only.
 
   @override
   Directory get location => tvosArtifactDirectory(globals.fs);
@@ -131,7 +129,13 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
     return versionFile.existsSync() ? versionFile.readAsStringSync().trim() : null;
   }
 
-  /// The release tag, e.g. `v1.0.0-flutter3.44.0`.
+  /// The release tag, e.g. `engine-495915c579071a4ef6a5014637166d5231cb4aac`.
+  ///
+  /// The tag is the engine repository's commit SHA, prefixed. It names what was
+  /// built rather than the Flutter version it happened to be built for — a
+  /// version-shaped tag went stale as soon as one patch set was reused across
+  /// Flutter releases. The `engine-` prefix is required: GitHub rejects any ref
+  /// that is exactly 40 or 64 hex characters as ambiguous with a commit id.
   String get releaseTag {
     if (version == null || version!.isEmpty) {
       throwToolExit(

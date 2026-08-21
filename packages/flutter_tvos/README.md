@@ -212,7 +212,7 @@ parallel — the two layers are independent.
 ## Requirements
 
 - Flutter 3.19.0+
-- tvOS 13.0+ deployment target
+- tvOS 15.0+ deployment target
 - Built with [flutter-tvos](https://fluttertv.dev) CLI
 
 ## Multi-platform / monorepo usage

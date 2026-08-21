@@ -37,7 +37,25 @@ Future<void> renderTvosRunner({
   final Directory templateDir = fileSystem.directory(tvosTemplatePath);
   final Directory targetDir =
       fileSystem.directory(projectDirPath).childDirectory('tvos');
-  if (!templateDir.existsSync() || targetDir.existsSync()) {
+  if (!templateDir.existsSync()) {
+    return;
+  }
+  if (targetDir.existsSync()) {
+    // `create` never overwrites an existing tvos/ directory: it carries the
+    // signing team, the bundle identifier and any build phases the user added,
+    // and a blind re-render would discard all of it.
+    //
+    // Say so out loud. Several build-time warnings tell users to run this
+    // command to pick up a newer template, and returning in silence reads as
+    // success — which is worse than the warning they were trying to clear,
+    // because they then archive believing they are protected.
+    logger.printStatus(
+      'tvos/ already exists, so nothing was regenerated — this command never '
+      'overwrites it (it holds your signing team, bundle identifier and any '
+      'build phases you added).\n'
+      'To adopt template changes, move tvos/ aside, re-run this command, and '
+      'reapply those settings to the new project.',
+    );
     return;
   }
 

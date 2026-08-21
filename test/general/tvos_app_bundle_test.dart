@@ -9,6 +9,8 @@
 //   3. flutter_assets were duplicated one level deep on rebuilds
 //      (flutter_assets/assets/assets/...).
 
+import 'dart:io' show Process, ProcessResult;
+
 import 'package:file/file.dart';
 import 'package:file/local.dart';
 import 'package:file/memory.dart';
@@ -18,6 +20,105 @@ import '../src/common.dart';
 
 void main() {
   // --- Issue #3: flutter_assets duplication -------------------------------
+  // The guard reads FLUTTER_STAGED_BUILD_MODE from the environment Xcode builds
+  // out of the target configuration's base xcconfig. runGuard injects that
+  // variable directly, so every guard test above stays green even if the chain
+  // that delivers it in a real build is broken. These assert the chain itself:
+  //
+  //   Generated.xcconfig
+  //     -> #include'd by Flutter/Debug.xcconfig and Flutter/Release.xcconfig
+  //       -> baseConfigurationReference on each configuration of the Runner target
+  //
+  // Drop the include, or add a configuration with no base reference, and the
+  // phase sees an unset marker: a hard failure for release, a warning for debug.
+  group('xcconfig chain', () {
+    test('each mode xcconfig includes Generated.xcconfig', () {
+      for (final String mode in <String>['debug', 'release']) {
+        expect(NativeTvosBundle.buildModeXcconfig(mode),
+            contains('#include "Generated.xcconfig"'),
+            reason: '$mode xcconfig must pull in the staged-mode marker');
+      }
+    });
+
+    for (final String relativePath in <String>[
+      'templates/app/swift/tvos.tmpl/Runner.xcodeproj/project.pbxproj.tmpl',
+      'packages/flutter_tvos/example/tvos/Runner.xcodeproj/project.pbxproj',
+    ]) {
+      test('$relativePath wires every Runner configuration to an xcconfig', () {
+        final String pbxproj =
+            const LocalFileSystem().file(relativePath).readAsStringSync();
+
+        // The Runner *target*'s configuration list, not the project's: only the
+        // target's configurations carry a base xcconfig.
+        final Match? listMatch = RegExp(
+          r'Build configuration list for PBXNativeTarget "Runner" \*/ = \{'
+          r'.*?buildConfigurations = \((.*?)\);',
+          dotAll: true,
+        ).firstMatch(pbxproj);
+        expect(listMatch, isNotNull,
+            reason: 'expected a configuration list for the Runner target');
+
+        final List<String> configIds = RegExp(r'([0-9A-F]{24})')
+            .allMatches(listMatch!.group(1)!)
+            .map((Match m) => m.group(1)!)
+            .toList();
+        expect(configIds, hasLength(greaterThanOrEqualTo(3)),
+            reason: 'expected Debug, Release and Profile');
+
+        for (final String id in configIds) {
+          final Match? config = RegExp(
+            '$id /\\* (\\w+) \\*/ = \\{(.*?)\\n\t\t\\};',
+            dotAll: true,
+          ).firstMatch(pbxproj);
+          expect(config, isNotNull, reason: 'no XCBuildConfiguration for $id');
+          final String name = config!.group(1)!;
+          final String body = config.group(2)!;
+
+          final Match? base =
+              RegExp(r'baseConfigurationReference = ([0-9A-F]{24})').firstMatch(body);
+          expect(base, isNotNull,
+              reason: 'the $name configuration has no baseConfigurationReference, '
+                  'so Generated.xcconfig never reaches the build-mode guard');
+
+          // ...and it must resolve to one of our xcconfigs, not any file.
+          final Match? fileRef = RegExp(
+            '${base!.group(1)} /\\* [^*]*\\*/ = \\{isa = PBXFileReference;[^\n]*?path = ([^;]+);',
+          ).firstMatch(pbxproj);
+          expect(fileRef, isNotNull,
+              reason: 'the $name base reference resolves to no file');
+          expect(fileRef!.group(1), anyOf('Flutter/Debug.xcconfig', 'Flutter/Release.xcconfig'),
+              reason: 'the $name configuration must inherit from a Flutter xcconfig');
+        }
+      });
+    }
+  });
+
+  group('stripJitPayload', () {
+    late FileSystem fs;
+    setUp(() => fs = MemoryFileSystem.test());
+
+    // build/tvos/ is shared across modes and nothing there removes the kernel
+    // blob, so an AOT build run after any debug build mirrored a 40+ MB debug
+    // kernel into the staged assets and shipped it inside the release app.
+    test('removes a kernel blob left by an earlier debug build', () {
+      final Directory staged = fs.directory('/app/tvos/Flutter/flutter_assets')
+        ..createSync(recursive: true);
+      staged.childFile('kernel_blob.bin').writeAsStringSync('jit');
+      staged.childFile('AssetManifest.bin').writeAsStringSync('assets');
+
+      expect(NativeTvosBundle.stripJitPayload(stagedAssets: staged), isTrue);
+      expect(staged.childFile('kernel_blob.bin').existsSync(), isFalse);
+      expect(staged.childFile('AssetManifest.bin').existsSync(), isTrue,
+          reason: 'only the JIT payload is removed');
+    });
+
+    test('reports nothing removed when no kernel blob is staged', () {
+      final Directory staged = fs.directory('/app/tvos/Flutter/flutter_assets')
+        ..createSync(recursive: true);
+      expect(NativeTvosBundle.stripJitPayload(stagedAssets: staged), isFalse);
+    });
+  });
+
   group('copyFlutterAssetsTree', () {
     late MemoryFileSystem fs;
 
@@ -135,14 +236,14 @@ void main() {
     test('device SDK pins the tvOS deployment target', () {
       expect(
         NativeTvosBundle.tvosVersionMinFlag('appletvos'),
-        '-mtvos-version-min=13.0',
+        '-mtvos-version-min=15.0',
       );
     });
 
     test('simulator SDK uses the simulator flag', () {
       expect(
         NativeTvosBundle.tvosVersionMinFlag('appletvsimulator'),
-        '-mtvos-simulator-version-min=13.0',
+        '-mtvos-simulator-version-min=15.0',
       );
     });
   });
@@ -151,7 +252,7 @@ void main() {
   // LC_BUILD_VERSION minos is stamped with the SDK version (ITMS-90208). The
   // flag's value is covered above; here we assert it actually reaches the argv.
   group('AOT clang argv carry the min-version flag', () {
-    const String flag = '-mtvos-version-min=13.0';
+    const String flag = '-mtvos-version-min=15.0';
 
     test('aotAssembleArgs (cc) includes the flag and inputs', () {
       final List<String> args = NativeTvosBundle.aotAssembleArgs(
@@ -512,6 +613,8 @@ void main() {
         buildDir: '/app/build',
         buildName: '2.3.4',
         buildNumber: '17',
+        buildMode: 'release',
+        stagedSdk: 'appletvos',
       );
       expect(xcconfig, contains('FLUTTER_ROOT=/opt/flutter-tvos/flutter'));
       expect(xcconfig, contains('FLUTTER_APPLICATION_PATH=/app'));
@@ -575,6 +678,8 @@ void main() {
         buildDir: buildDir,
         buildName: buildName,
         buildNumber: buildNumber,
+        buildMode: 'release',
+        stagedSdk: 'appletvos',
       );
       final RegExp exportLine = RegExp(r'^export "([^"]+)"$', multiLine: true);
       for (final Match m in exportLine.allMatches(sh)) {
@@ -620,4 +725,350 @@ void main() {
       });
     }
   });
+
+  // --- #65: an Xcode archive ships whatever mode the CLI last staged --------
+  //
+  // The Runner project runs no Dart build: its phases copy the payload left in
+  // tvos/Flutter by the last `flutter-tvos build/run`, and the engine comes
+  // from the Flutter.xcframework that same run copied in. Xcode's CONFIGURATION
+  // never touches any of it, so archiving Release straight after a debug run
+  // shipped the JIT engine inside a release app -- which runs under development
+  // signing and then hangs on a blank screen once installed from TestFlight
+  // (reproduced end to end: a build with the debug engine never draws a frame,
+  // while the same source built cleanly for release runs).
+  //
+  // FLUTTER_BUILD_MODE records the staged mode; the "Check Flutter build mode"
+  // phase compares it against the configuration and fails the build.
+  group('build-mode guard', () {
+    const fs = LocalFileSystem();
+
+    test('Generated.xcconfig records the staged build mode', () {
+      for (final mode in <String>['debug', 'profile', 'release']) {
+        expect(
+          NativeTvosBundle.buildGeneratedXcconfig(
+            flutterRoot: '/opt/flutter-tvos/flutter',
+            applicationPath: '/app',
+            targetFile: 'lib/main.dart',
+            buildDir: '/app/build',
+            buildName: '1.0.0',
+            buildNumber: '1',
+            buildMode: mode,
+            stagedSdk: 'appletvos',
+          ),
+          contains('FLUTTER_STAGED_BUILD_MODE=$mode'),
+        );
+      }
+    });
+
+    for (final relativePath in <String>[
+      'templates/app/swift/tvos.tmpl/Runner.xcodeproj/project.pbxproj.tmpl',
+      'packages/flutter_tvos/example/tvos/Runner.xcodeproj/project.pbxproj',
+    ]) {
+      test('$relativePath fails the build on a mode mismatch', () {
+        final File file = fs.file(relativePath);
+        expect(file.existsSync(), isTrue,
+            reason: 'expected to find $relativePath from package root');
+        final String pbxproj = file.readAsStringSync();
+
+        // The phase exists and is wired into the target, not just defined.
+        expect(pbxproj, contains('name = "Check Flutter build mode";'));
+        expect(
+          pbxproj,
+          contains('AAF60000000000000000F00D /* Check Flutter build mode */,'),
+          reason: 'the phase must be listed in the target buildPhases',
+        );
+
+        // It reads the staged mode and fails, rather than only warning: a
+        // warning scrolls past in an archive log and the bad build still ships.
+        final int guardStart =
+            pbxproj.indexOf('name = "Check Flutter build mode";');
+        final int guardEnd = pbxproj.indexOf('};', guardStart);
+        final String guard = pbxproj.substring(guardStart, guardEnd);
+        expect(guard, contains(r'STAGED=\"${FLUTTER_STAGED_BUILD_MODE}\"'),
+            reason: 'the marker must not be FLUTTER_BUILD_MODE, which is '
+                'upstream\'s user-facing override and can be set at target '
+                'level, shadowing Generated.xcconfig');
+        // The payload check is what survives a stale marker, so assert it is
+        // present rather than trusting the marker comparison alone.
+        expect(guard, contains('kernel_blob.bin'));
+        expect(guard, contains('exit 1'));
+        expect(guard, contains('flutter-tvos build tvos --'),
+            reason: 'the error must tell the user how to fix it');
+
+        // It has to run before the phases that copy the payload in, otherwise
+        // a failing build has already written the wrong engine into the bundle.
+        expect(
+          pbxproj.indexOf('AAF60000000000000000F00D /* Check Flutter build mode */,'),
+          lessThan(pbxproj.indexOf('AAF10000000000000000F00D /* Embed App.framework */,')),
+        );
+      });
+    }
+  });
+
+  // Projects created before the guard existed keep their old phase list --
+  // project.pbxproj is written once at `create` and never rewritten on build --
+  // so the CLI warns instead, the same way it does for the other phases that
+  // arrived after 1.0.0.
+  group('pbxprojLacksBuildModeGuard', () {
+    test('true for a project without the phase', () {
+      expect(
+        NativeTvosBundle.pbxprojLacksBuildModeGuard(
+            '\t\t\t\tname = "Embed App.framework";\n'),
+        isTrue,
+      );
+    });
+
+    test('false once the phase is present', () {
+      expect(
+        NativeTvosBundle.pbxprojLacksBuildModeGuard(
+            '\t\t\t\tname = "Check Flutter build mode";\n'),
+        isFalse,
+      );
+    });
+  });
+
+
+  // Asserting on the phase's *text* only proves the strings are still there.
+  // The thing that protects a release build is what the shell does, so run it:
+  // an inverted condition, or a case pattern that stopped matching Release,
+  // would leave every assertion above intact and still ship a dead app.
+  group('build-mode guard script', () {
+    const fs = LocalFileSystem();
+
+    /// The phase's `shellScript`, unescaped back into the source Xcode runs.
+    String guardScript(String pbxproj) {
+      final int phase = pbxproj.indexOf('/* Check Flutter build mode */ = {');
+      expect(phase, isNonNegative, reason: 'no build-mode guard phase found');
+      const key = 'shellScript = "';
+      final int start = pbxproj.indexOf(key, phase) + key.length;
+      final int end = pbxproj.indexOf('";', start);
+      final String escaped = pbxproj.substring(start, end);
+      final source = StringBuffer();
+      for (var i = 0; i < escaped.length; i++) {
+        if (escaped[i] != r'\') {
+          source.write(escaped[i]);
+          continue;
+        }
+        // Xcode escapes exactly \n, \" and \\ in this string.
+        final String escapee = escaped[++i];
+        source.write(escapee == 'n' ? '\n' : escapee);
+      }
+      return source.toString();
+    }
+
+    /// Runs [script] the way the build phase would, against a throwaway
+    /// project directory. [stagedMode] left null means an older CLI that never
+    /// wrote FLUTTER_BUILD_MODE.
+    ProcessResult runGuard(
+      String script, {
+      required String configuration,
+      String? stagedMode,
+      bool aotPayloadStaged = true,
+      bool jitPayloadStaged = false,
+      String? stagedSdk,
+      String? platformName,
+      bool optOut = false,
+    }) {
+      final Directory projectDir =
+          fs.systemTempDirectory.createTempSync('flutter_tvos_guard.');
+      addTearDown(() => projectDir.deleteSync(recursive: true));
+      final File file = projectDir.childFile('check_flutter_build_mode.sh')
+        ..writeAsStringSync(script);
+      if (aotPayloadStaged) {
+        projectDir
+            .childDirectory('Flutter')
+            .childDirectory('App.framework')
+            .createSync(recursive: true);
+      }
+      if (jitPayloadStaged) {
+        projectDir
+            .childDirectory('Flutter')
+            .childDirectory('flutter_assets')
+            .childFile('kernel_blob.bin')
+            .createSync(recursive: true);
+      }
+      return Process.runSync('/bin/sh', <String>[file.path], environment: <String, String>{
+        'CONFIGURATION': configuration,
+        'PROJECT_DIR': projectDir.path,
+        if (stagedMode != null) 'FLUTTER_STAGED_BUILD_MODE': stagedMode,
+        if (stagedSdk != null) 'FLUTTER_STAGED_SDK': stagedSdk,
+        if (platformName != null) 'PLATFORM_NAME': platformName,
+        if (optOut) 'FLUTTER_STAGED_BUILD_MODE_CHECK': 'off',
+      });
+    }
+
+    for (final relativePath in <String>[
+      'templates/app/swift/tvos.tmpl/Runner.xcodeproj/project.pbxproj.tmpl',
+      'packages/flutter_tvos/example/tvos/Runner.xcodeproj/project.pbxproj',
+    ]) {
+      group(relativePath, () {
+        late String script;
+
+        setUp(() {
+          script = guardScript(fs.file(relativePath).readAsStringSync());
+        });
+
+        // The reported failure: archive Release after a debug run and the
+        // build ships the JIT engine, which cannot start under a distribution
+        // signature.
+        test('fails a Release build staged for debug', () {
+          final ProcessResult result =
+              runGuard(script, configuration: 'Release', stagedMode: 'debug');
+          expect(result.exitCode, 1);
+          expect(result.stdout, contains('error: '));
+          expect(result.stdout, contains('flutter-tvos build tvos --release'));
+        });
+
+        test('passes a Release build staged for release', () {
+          final ProcessResult result =
+              runGuard(script, configuration: 'Release', stagedMode: 'release');
+          expect(result.exitCode, 0, reason: result.stdout.toString());
+        });
+
+        test('passes a Debug build staged for debug', () {
+          final ProcessResult result = runGuard(script,
+              configuration: 'Debug',
+              stagedMode: 'debug',
+              aotPayloadStaged: false);
+          expect(result.exitCode, 0, reason: result.stdout.toString());
+        });
+
+        // The CLI drives profile builds through the Release configuration, so
+        // this pairing is normal and the payload is AOT either way.
+        test('only warns for a Release build staged for profile', () {
+          final ProcessResult result =
+              runGuard(script, configuration: 'Release', stagedMode: 'profile');
+          expect(result.exitCode, 0);
+          expect(result.stdout, contains('warning: '));
+          expect(result.stdout, contains('profile'));
+        });
+
+        // An unset marker is the state after `flutter-tvos clean`, on a fresh
+        // checkout (Generated.xcconfig is gitignored) and with a CLI older than
+        // this phase. Under Debug the cost of guessing wrong is a launch
+        // failure on a device in your hand, so it warns...
+        test('only warns for a Debug build with no staged mode recorded', () {
+          final ProcessResult result = runGuard(script,
+              configuration: 'Debug', aotPayloadStaged: false);
+          expect(result.exitCode, 0);
+          expect(result.stdout, contains('warning: '));
+        });
+
+        // ...but under Release it is a submission that dies after review, and
+        // the App.framework backstop cannot catch it: nothing in a normal build
+        // ever deletes App.framework, so a release one survives any number of
+        // debug builds and is still sitting there.
+        test('fails a Release build with no staged mode recorded', () {
+          final ProcessResult result =
+              runGuard(script, configuration: 'Release');
+          expect(result.exitCode, 1);
+          expect(result.stdout, contains('error: '));
+        });
+
+        test('fails an unrecorded Release build even with App.framework staged',
+            () {
+          final ProcessResult result = runGuard(script,
+              configuration: 'Release', aotPayloadStaged: true);
+          expect(result.exitCode, 1);
+        });
+
+        // The payload check exists because the marker can go stale while what
+        // is on disk cannot: a kernel_blob under a non-debug configuration is
+        // proof of a JIT payload whatever the marker claims.
+        test('fails a Release build with a JIT payload despite a release marker',
+            () {
+          final ProcessResult result = runGuard(script,
+              configuration: 'Release',
+              stagedMode: 'release',
+              jitPayloadStaged: true);
+          expect(result.exitCode, 1);
+          expect(result.stdout, contains('kernel_blob.bin'));
+        });
+
+        // A simulator payload archives for a device just as quietly as a debug
+        // one ships under Release.
+        test('fails when the staged SDK does not match the platform', () {
+          final ProcessResult result = runGuard(script,
+              configuration: 'Release',
+              stagedMode: 'release',
+              stagedSdk: 'appletvsimulator',
+              platformName: 'appletvos');
+          expect(result.exitCode, 1);
+          expect(result.stdout, contains('appletvsimulator'));
+        });
+
+        test('passes when the staged SDK matches the platform', () {
+          final ProcessResult result = runGuard(script,
+              configuration: 'Release',
+              stagedMode: 'release',
+              stagedSdk: 'appletvos',
+              platformName: 'appletvos');
+          expect(result.exitCode, 0, reason: result.stdout.toString());
+        });
+
+        // The four cases below exist because mutating the script to enforce
+        // Release only, or deleting the Profile arm outright, previously left
+        // every test green.
+        test('fails a Debug build staged for release', () {
+          final ProcessResult result =
+              runGuard(script, configuration: 'Debug', stagedMode: 'release');
+          expect(result.exitCode, 1);
+        });
+
+        test('fails a Debug build staged for profile', () {
+          final ProcessResult result =
+              runGuard(script, configuration: 'Debug', stagedMode: 'profile');
+          expect(result.exitCode, 1);
+        });
+
+        test('fails a Profile build staged for debug', () {
+          final ProcessResult result =
+              runGuard(script, configuration: 'Profile', stagedMode: 'debug');
+          expect(result.exitCode, 1);
+        });
+
+        test('passes a Profile build staged for profile', () {
+          final ProcessResult result =
+              runGuard(script, configuration: 'Profile', stagedMode: 'profile');
+          expect(result.exitCode, 0, reason: result.stdout.toString());
+        });
+
+        test('skips when CONFIGURATION is unset', () {
+          final ProcessResult result =
+              runGuard(script, configuration: '', stagedMode: 'debug');
+          expect(result.exitCode, 0);
+          expect(result.stdout, contains('warning: '));
+        });
+
+        test('honours the opt-out setting', () {
+          final ProcessResult result = runGuard(script,
+              configuration: 'Release',
+              stagedMode: 'debug',
+              optOut: true);
+          expect(result.exitCode, 0);
+        });
+
+        test('fails a Release build with no App.framework staged', () {
+          final ProcessResult result = runGuard(script,
+              configuration: 'Release',
+              stagedMode: 'release',
+              aotPayloadStaged: false);
+          expect(result.exitCode, 1);
+          expect(result.stdout, contains('App.framework'));
+        });
+
+        // Flavors add configurations we know nothing about; guessing wrong
+        // there would fail builds that are perfectly fine.
+        test('skips a configuration it does not recognize', () {
+          final ProcessResult result = runGuard(script,
+              configuration: 'Staging', stagedMode: 'debug');
+          expect(result.exitCode, 0);
+          expect(result.stdout, contains('skipping'));
+          // warning, not note: note is dropped by xcbeautify and most CI filters.
+          expect(result.stdout, contains('warning: '));
+        });
+      });
+    }
+  });
+
 }

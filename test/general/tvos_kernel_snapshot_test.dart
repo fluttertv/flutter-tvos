@@ -9,10 +9,13 @@ import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/compile.dart';
+import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tvos/build_targets/application.dart';
 
 import '../src/common.dart';
+import '../src/context.dart';
 import '../src/fake_process_manager.dart';
+import '../src/fakes.dart';
 
 const String kBoundaryKey = '4d2d9609-c662-4571-afde-31410f96caa6';
 
@@ -55,7 +58,11 @@ void main() {
   }
 
   group('TvosKernelSnapshot.build (AOT platform identity)', () {
-    test('does NOT pass --target-os for a profile (AOT) build', () async {
+    // build() reads `featureFlags` for the record-use experiment, which is a
+    // context lookup — so these run under a context even where they don't
+    // otherwise need one. TestFeatureFlags leaves record-use off, matching
+    // upstream's own KernelSnapshot tests; the two tests below turn it on.
+    testUsingContext('does NOT pass --target-os for a profile (AOT) build', () async {
       environment = buildEnv(BuildMode.profile);
       final String build = environment.buildDir.path;
       final String sdkPath = artifacts.getArtifactPath(
@@ -102,9 +109,9 @@ void main() {
       expect(captured, isNotNull);
       expect(captured, isNot(contains('--target-os')));
       expect(processManager, hasNoRemainingExpectations);
-    });
+    }, overrides: <Type, Generator>{FeatureFlags: () => TestFeatureFlags()});
 
-    test('still produces a valid kernel command for release (AOT)', () async {
+    testUsingContext('still produces a valid kernel command for release (AOT)', () async {
       environment = buildEnv(BuildMode.release);
       final String build = environment.buildDir.path;
       final String sdkPath = artifacts.getArtifactPath(
@@ -141,7 +148,7 @@ void main() {
 
       await const TvosKernelSnapshot().build(environment);
       expect(processManager, hasNoRemainingExpectations);
-    });
+    }, overrides: <Type, Generator>{FeatureFlags: () => TestFeatureFlags()});
 
     test('throws MissingDefineException when build mode is absent', () async {
       environment = buildEnv(BuildMode.profile);

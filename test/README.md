@@ -28,11 +28,32 @@ test/
 
 ```bash
 # Run all tests
-flutter/bin/dart test test/
+TMPDIR="$(cd "${TMPDIR:-/tmp}" && pwd -P)" flutter/bin/dart test test/
 
 # Run a specific test file
-flutter/bin/dart test test/general/tvos_emulator_test.dart
+TMPDIR="$(cd "${TMPDIR:-/tmp}" && pwd -P)" flutter/bin/dart test test/general/tvos_emulator_test.dart
 ```
+
+### Why the resolved `TMPDIR` (macOS)
+
+Without it, ~30 tests fail with:
+
+```
+FileSystemException: Test attempted to modify directory outside of temp
+directory: /var/folders/.../T
+```
+
+Flutter's test harness installs an FS guard (`flutter/packages/flutter_tools/test/src/fs_safety.dart`)
+that rejects writes outside the system temp directory. It resolves symlinks when
+computing the allowed root but **not** on the path it checks — and on macOS
+`$TMPDIR` is `/var/folders/…` while `/var` is a symlink to `/private/var`. The two
+never compare equal, so any test touching a real temp directory fails, including
+ones that only reach it through flutter_tools' own `LocalFileSystem`.
+
+Passing an already-resolved `TMPDIR` removes the discrepancy at the source and
+leaves the guard fully armed. Do **not** substitute `FLUTTER_TEST_DISABLE_FS_GUARD=true`:
+that switches the guard off entirely, and the guard is what stops a stray test
+writing to `$HOME`.
 
 ## Writing Tests
 

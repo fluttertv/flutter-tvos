@@ -130,7 +130,7 @@ void main() {
       // contain underscores. The umbrella references this hyphenated product.
       expect(pkg, contains('.library(name: "gizmo-tvos", targets: ["gizmo_tvos"])'));
       // tvOS platform, tvOS deployment floor.
-      expect(pkg, contains('.tvOS(.v13)'));
+      expect(pkg, contains('.tvOS(.v15)'));
       // Reuses the same sources the podspec compiles — no duplicated tree.
       expect(pkg, contains('path: "Classes"'));
       // Keeps Swift `#if TARGET_OS_TV` branches active under SwiftPM.

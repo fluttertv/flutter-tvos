@@ -70,7 +70,7 @@ void main() {
       // Umbrella identity + static linkage (so plugin symbols land in Runner).
       expect(manifest, contains('name: "FlutterGeneratedPluginSwiftPackage"'));
       expect(manifest, contains('type: .static'));
-      expect(manifest, contains('.tvOS("13.0")'));
+      expect(manifest, contains('.tvOS("15.0")'));
 
       // Flutter engine dependency.
       expect(manifest, contains('.package(name: "FlutterFramework", path: "../FlutterFramework")'));

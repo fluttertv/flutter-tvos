@@ -120,6 +120,7 @@
 			buildConfigurationList = 97C147051CF9000082B4168C /* Build configuration list for PBXNativeTarget "Runner" */;
 			buildPhases = (
 				75D2D46BC28F65470A487BFA /* [CP] Check Pods Manifest.lock */,
+				AAF60000000000000000F00D /* Check Flutter build mode */,
 				97C146EA1CF9000082B4168C /* Sources */,
 				97C146EB1CF9000082B4168C /* Frameworks */,
 				97C146EC1CF9000082B4168C /* Resources */,
@@ -228,6 +229,22 @@
 			shellPath = /bin/sh;
 			shellScript = "#!/bin/sh\n# Copy flutter_assets into the app bundle\nFLUTTER_ASSETS_SRC=\"${PROJECT_DIR}/Flutter/flutter_assets\"\nDEST=\"${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/flutter_assets\"\nif [ -d \"${FLUTTER_ASSETS_SRC}\" ]; then\n  echo \"Copying flutter_assets to app bundle...\"\n  rsync -av --delete \"${FLUTTER_ASSETS_SRC}/\" \"${DEST}/\"\nelse\n  echo \"warning: flutter_assets not found at ${FLUTTER_ASSETS_SRC}\"\nfi\n";
 		};
+		AAF60000000000000000F00D /* Check Flutter build mode */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/Flutter/Generated.xcconfig",
+			);
+			name = "Check Flutter build mode";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\n# Fail the build when the Flutter payload staged in tvos/Flutter does not match\n# what Xcode is building.\n#\n# This project runs no Dart build. \"Embed App.framework\" and \"Copy\n# flutter_assets\" copy whatever the last `flutter-tvos build/run` staged, and\n# the engine comes from the Flutter.xcframework that same run copied in -- so\n# Xcode's CONFIGURATION has no influence on the Flutter payload at all.\n# Archiving Release right after a debug run therefore ships the JIT engine and\n# a kernel_blob inside a release app. That still installs and launches under\n# development signing, then hangs on a blank screen once installed from\n# TestFlight or the App Store, where the distribution signature carries no\n# get-task-allow and the VM cannot get executable pages.\n#\n# Two independent checks run below. The payload check reads what is on disk and\n# cannot go stale. The marker check reads FLUTTER_STAGED_BUILD_MODE, which is\n# more precise but only as fresh as the last build that finished staging. The\n# payload check therefore runs first, and is the one that catches a stale marker.\ncase \"${CONFIGURATION}\" in\n  Debug*)   EXPECTED=\"debug\" ;;\n  Profile*) EXPECTED=\"profile\" ;;\n  Release*) EXPECTED=\"release\" ;;\n  *)\n    # warning, not note. note is Xcode's lowest severity: absent from the issue\n    # navigator, dropped by xcbeautify and most CI log filters -- so announcing\n    # the check's own disablement at that level hides it from exactly the\n    # projects that customise configurations and most need to see it.\n    echo \"warning: unrecognized configuration \\\"${CONFIGURATION}\\\" - the Flutter build-mode check cannot tell which payload this configuration expects, so it is skipping. Set FLUTTER_STAGED_BUILD_MODE_CHECK=off in your project to silence this deliberately.\"\n    exit 0\n    ;;\nesac\n\nif [ \"${FLUTTER_STAGED_BUILD_MODE_CHECK}\" = \"off\" ]; then\n  exit 0\nfi\n\n# 1. Payload check -- what is actually on disk.\n#\n# kernel_blob.bin is staged only for debug/JIT builds. Its presence under a\n# non-debug configuration proves the payload is JIT no matter what any marker\n# says, which is what makes this check the backstop for a stale one.\nif [ \"${EXPECTED}\" != \"debug\" ] && [ -f \"${PROJECT_DIR}/Flutter/flutter_assets/kernel_blob.bin\" ]; then\n  echo \"error: ${PROJECT_DIR}/Flutter/flutter_assets/kernel_blob.bin is present, so the staged Flutter payload is a debug/JIT build, but Xcode is building the ${CONFIGURATION} configuration (${EXPECTED} mode).\"\n  echo \"error: this project copies the staged payload as-is, so the build would ship the debug engine and Dart code inside a ${EXPECTED} app. It would install and run from Xcode, then hang on a blank screen when installed from TestFlight or the App Store.\"\n  echo \"error: run \\\"flutter-tvos build tvos --${EXPECTED}\\\" first, then build or archive again.\"\n  exit 1\nfi\n\n# App.framework is deleted only by `flutter-tvos clean`, never by a build, so a\n# release one survives any number of debug builds. Its presence proves nothing;\n# its absence still proves an AOT build cannot work.\nif [ \"${EXPECTED}\" != \"debug\" ] && [ ! -d \"${PROJECT_DIR}/Flutter/App.framework\" ]; then\n  echo \"error: a ${EXPECTED} build needs the AOT App.framework, but ${PROJECT_DIR}/Flutter/App.framework does not exist. Run \\\"flutter-tvos build tvos --${EXPECTED}\\\" first.\"\n  exit 1\nfi\n\n# 2. Marker check -- what the last completed build recorded.\nSTAGED=\"${FLUTTER_STAGED_BUILD_MODE}\"\nif [ -z \"${STAGED}\" ] || [ \"${STAGED}\" = \"unknown\" ]; then\n  # Empty after `flutter-tvos clean` (which deletes Generated.xcconfig), on a\n  # fresh clone or CI checkout since that file is gitignored, or with a CLI\n  # older than this phase. \"unknown\" means a build began staging and did not\n  # finish. Either way nothing here describes the payload on disk. Under Debug\n  # the cost of being wrong is a launch failure on a device in your hand; under\n  # anything else it is a submission that dies after review, so this fails.\n  if [ \"${EXPECTED}\" = \"debug\" ]; then\n    echo \"warning: ${PROJECT_DIR}/Flutter/Generated.xcconfig records no completed staged build mode, so the payload could not be checked. Run \\\"flutter-tvos build tvos --debug\\\" to regenerate it.\"\n  else\n    echo \"error: ${PROJECT_DIR}/Flutter/Generated.xcconfig records no completed staged build mode, so nothing establishes that the staged payload matches the ${CONFIGURATION} configuration.\"\n    echo \"error: this is the state after \\\"flutter-tvos clean\\\", on a fresh checkout (Generated.xcconfig is gitignored), or when a build was interrupted while staging.\"\n    echo \"error: run \\\"flutter-tvos build tvos --${EXPECTED}\\\" first, then build or archive again.\"\n    exit 1\n  fi\nelif [ \"${STAGED}\" != \"${EXPECTED}\" ]; then\n  # flutter-tvos drives profile builds through the Release configuration, so a\n  # profile payload under Release is expected. It is AOT-compiled and does run,\n  # so warn rather than fail.\n  if [ \"${EXPECTED}\" = \"release\" ] && [ \"${STAGED}\" = \"profile\" ]; then\n    echo \"warning: the Flutter payload in ${PROJECT_DIR}/Flutter was built in profile mode while Xcode builds ${CONFIGURATION}. Profile builds carry the VM Service and are not meant for the App Store - run \\\"flutter-tvos build tvos --release\\\" before archiving.\"\n  else\n    echo \"error: the Flutter payload in ${PROJECT_DIR}/Flutter was built in ${STAGED} mode, but Xcode is building the ${CONFIGURATION} configuration (${EXPECTED} mode).\"\n    echo \"error: this project copies the staged payload as-is, so the build would ship the ${STAGED} engine and Dart code inside a ${EXPECTED} app.\"\n    echo \"error: run \\\"flutter-tvos build tvos --${EXPECTED}\\\" first, then build or archive again.\"\n    exit 1\n  fi\nfi\n\n# 3. SDK check -- a payload staged for the simulator archives just as quietly.\nif [ -n \"${FLUTTER_STAGED_SDK}\" ] && [ \"${FLUTTER_STAGED_SDK}\" != \"unknown\" ] && [ -n \"${PLATFORM_NAME}\" ] && [ \"${FLUTTER_STAGED_SDK}\" != \"${PLATFORM_NAME}\" ]; then\n  echo \"error: the staged Flutter payload was built against the ${FLUTTER_STAGED_SDK} SDK, but Xcode is building for ${PLATFORM_NAME}. The embedded App.framework and engine slice would be for the wrong platform.\"\n  echo \"error: run \\\"flutter-tvos build tvos --${EXPECTED}\\\" for this destination first, then build or archive again.\"\n  exit 1\nfi\n";
+		};
 		AAF10000000000000000F00D /* Embed App.framework */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -322,7 +339,7 @@
 				SDKROOT = appletvos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				TVOS_DEPLOYMENT_TARGET = 13.0;
+				TVOS_DEPLOYMENT_TARGET = 15.0;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Profile;
@@ -410,7 +427,7 @@
 				SDKROOT = appletvos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-				TVOS_DEPLOYMENT_TARGET = 13.0;
+				TVOS_DEPLOYMENT_TARGET = 15.0;
 			};
 			name = Debug;
 		};
@@ -490,7 +507,7 @@
 				SDKROOT = appletvos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				TVOS_DEPLOYMENT_TARGET = 13.0;
+				TVOS_DEPLOYMENT_TARGET = 15.0;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;

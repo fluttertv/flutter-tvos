@@ -33,6 +33,18 @@ flutter-tvos run -d <device_id> --release
 
 ## Archive and upload
 
+> **Re-run `flutter-tvos build tvos --release` immediately before archiving.**
+> The Xcode project does not build your Dart code — it copies whatever the last
+> `flutter-tvos build` or `flutter-tvos run` left in `tvos/Flutter`. A debug run
+> in between stages the debug engine, and archiving Release then ships it: the
+> app installs and runs from Xcode, passes App Store validation and processing,
+> and then shows nothing but a blank screen when a tester installs it from
+> TestFlight. Projects generated from the current template fail the build
+> instead (the "Check Flutter build mode" phase). Older projects do not have
+> it, and `flutter-tvos create .` will not add it — that command leaves an
+> existing `tvos/` untouched. Re-run the release build immediately before every
+> archive, or add the phase by hand.
+
 ### Using Xcode (recommended)
 
 1. Open the workspace in Xcode:

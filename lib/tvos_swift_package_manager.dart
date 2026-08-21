@@ -46,7 +46,7 @@ class TvosSwiftPackageManager {
 
   /// tvOS deployment floor the generated packages declare. Must be ≤ the app's
   /// `TVOS_DEPLOYMENT_TARGET` or SwiftPM rejects the dependency graph.
-  static const String kDefaultDeploymentTarget = '13.0';
+  static const String kDefaultDeploymentTarget = '15.0';
 
   /// Writes the `FlutterFramework` package into [packageDirectory] and symlinks
   /// [xcframework] inside it (binary targets must reference a local path).

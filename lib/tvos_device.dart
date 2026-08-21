@@ -4,10 +4,11 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Process;
+import 'dart:io' show InternetAddress, Process;
 
 import 'package:file/file.dart';
 import 'package:flutter_tools/src/application_package.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/build_info.dart';
@@ -351,6 +352,70 @@ class TvosDevice extends Device {
   DeviceLogReader? _logReader;
   XcodeDebug? _xcodeDebug;
 
+  /// How long to keep looking for the app's `_dartVmService._tcp` Bonjour
+  /// record before declaring the VM Service unreachable.
+  ///
+  /// The Dart VM publishes the record when its service starts, but it can take
+  /// seconds to reach this Mac's mDNS cache — longer on a cold cache, a busy
+  /// network, or right after the Mac joins the LAN. A single short query loses
+  /// that race often enough to be the difference between "hot reload works on
+  /// device" and a session that connects to nothing, so poll until this
+  /// deadline instead. Override with `FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS`.
+  ///
+  /// Read exactly once per launch, into a local — the value is reported back to
+  /// the user in the give-up message, and a getter that re-parses the
+  /// environment on each access could quote a different number there than the
+  /// one it actually enforced.
+  Duration _resolveMdnsTimeout() {
+    final String? raw = globals.platform.environment['FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS'];
+    if (raw == null) {
+      return _defaultMdnsResolveTimeout;
+    }
+    final int? seconds = int.tryParse(raw);
+    if (seconds == null || seconds <= 0) {
+      // Silently falling back makes a typo look like it took effect.
+      logger.printWarning(
+        'Ignoring FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS="$raw": expected a positive '
+        'whole number of seconds. Using '
+        '${_defaultMdnsResolveTimeout.inSeconds}s.',
+      );
+      return _defaultMdnsResolveTimeout;
+    }
+    return Duration(seconds: seconds);
+  }
+
+  static const Duration _defaultMdnsResolveTimeout = Duration(seconds: 60);
+
+  /// [_resolveMdnsTimeout], for tests. The retry loop itself drives the
+  /// `MDnsVmServiceDiscovery` singleton and cannot be covered without injecting
+  /// that global, but the override parsing is worth pinning: a wrong value here
+  /// silently changes how long a device run waits before giving up.
+  @visibleForTesting
+  Duration resolveMdnsTimeoutForTesting() => _resolveMdnsTimeout();
+
+  /// Exposed so the devicectl-host gate can be pinned: a `*.coredevice.local`
+  /// name from a device whose tunnel is down must be rejected, or it
+  /// short-circuits the mDNS retry budget with a URI nothing can dial.
+  @visibleForTesting
+  Future<bool> hostResolvesForTesting(String host) => _hostResolves(host);
+
+  /// Per-attempt mDNS query window inside the resolve timeout, and also the
+  /// pacing of the retry loop.
+  ///
+  /// Short, so a query that starts before the record is published is retried
+  /// rather than consuming the whole budget. It is *not* a lower bound on how
+  /// long an attempt takes: `queryForLaunch` can return in milliseconds — most
+  /// importantly when macOS denies Local Network access, where the underlying
+  /// socket error is caught and turned into an empty result immediately. The
+  /// loop therefore paces itself against this window rather than assuming each
+  /// attempt consumed it.
+  static const Duration _mdnsAttemptTimeout = Duration(seconds: 5);
+
+  /// How often the devicectl fallback may be consulted while polling. Keyed on
+  /// elapsed time, not attempt count: attempts are not reliably spaced (see
+  /// [_mdnsAttemptTimeout]), and this path spawns `xcrun devicectl`.
+  static const Duration _devicectlProbeInterval = Duration(seconds: 25);
+
   @override
   Future<TargetPlatform> get targetPlatform async => TargetPlatform.ios;
 
@@ -362,6 +427,8 @@ class TvosDevice extends Device {
   Future<String> get targetPlatformDisplayName async => 'tvos';
 
   @override
+  // Not `Future<bool>`: `Device.isSupported` is synchronous in this Flutter
+  // version.
   bool isSupported() => true;
 
   @override
@@ -619,6 +686,10 @@ class TvosDevice extends Device {
     // reported success (launchServicesIdentifier in the install output is
     // "unknown" at this point, which is the giveaway). Poll until the app
     // shows up in `devicectl device info apps`, up to 15s.
+    //
+    // The install URL we get here is reused for `_findAppPid` below — it
+    // saves an otherwise-redundant `devicectl info apps` round-trip that
+    // would have happened immediately after this one.
     logger.printTrace('Waiting for $bundleId to register...');
     final String? installUrl = await _waitForAppRegistration(id, bundleId);
     if (installUrl == null) {
@@ -630,107 +701,113 @@ class TvosDevice extends Device {
     }
 
     // 5. Launch with console output to capture VM service URL.
+    // Debug builds need JIT, which tvOS 14+ only allows when a debugger is
+    // attached. Launch `--start-stopped`, then attach lldb (mirrors what
+    // Xcode does) and resume the process.
     // Debug mode on a physical Apple TV ALWAYS needs a debugger: the engine's
     // ptrace_check (`ptrace(PT_TRACE_ME)`) refuses to create a FlutterEngine in
-    // debug mode unless the process is traced. Without one the app aborts with
-    // "Cannot create a FlutterEngine instance in debug mode". For fast debug
+    // debug mode unless the process is traced, and lldb is the only tracer
+    // available via the tooling on tvOS. So `enable-lldb-debugging: false` is
+    // NOT honoured here — without lldb the app aborts with "Cannot create a
+    // FlutterEngine instance in debug mode". For fast, lldb-free debug
     // iteration use the tvOS *simulator* (JIT works there without a debugger).
-    //
-    // On this release line the debugger is Xcode's. Flutter 3.32.8's
-    // flutter_tools has no `ios/lldb.dart` — the direct lldb attach that later
-    // Flutter versions expose (and that the 3.44.x flutter-tvos line uses as
-    // its fast path) simply does not exist to call. Xcode's own debug action,
-    // driven by OSA scripting, is the tracer instead: the same mechanism stock
-    // Flutter 3.32.8 uses for iOS Core Devices, and the one Xcode itself uses
-    // to debug a wirelessly-paired Apple TV.
-    if (debuggingOptions.buildInfo.isDebug) {
-      // Xcode installs, launches, and attaches by itself, so we deliberately do
-      // NOT start a devicectl launch here. The 3.44.8 line launches
-      // `--start-stopped` because it has a pid to hand to lldb; without that
-      // attach the launch would only have to be torn down again before Xcode
-      // could take the device over cleanly.
-      logger.printStatus(
-        'Starting the debug session through Xcode. You may be prompted to allow '
-        'controlling Xcode (Settings ▸ Privacy & Security ▸ Automation).',
-      );
-      final bool xcodeStarted = await _launchViaXcodeDebugger(
-        project: project,
-        debuggingOptions: debuggingOptions,
-      );
-      if (!xcodeStarted) {
-        // The app itself usually *did* install and launch (you may see it on
-        // the TV), but no debugger could attach and hold the session — and
-        // tvOS debug mode (JIT) aborts without a persistent debugger. The
-        // usual cause is a slow or stale CoreDevice tunnel. Give the user
-        // concrete remedies instead of a bare failure.
-        logger.printError(
-          'Could not attach a debugger to the app on this Apple TV, so the '
-          'debug session could not start (the app may briefly appear on the TV '
-          'and then exit — tvOS debug mode requires an attached debugger).\n'
-          '\n'
-          'Apple TV debugging is wireless-only and depends on the CoreDevice '
-          'tunnel. Things to try, in order:\n'
-          '  1. Restart the Apple TV (Settings ▸ System ▸ Restart) to reset the '
-          'tunnel, then run again — a cold/stale tunnel is the most common cause.\n'
-          '  2. Make sure the Apple TV and this Mac are on the same Wi-Fi/LAN, '
-          'and that the Mac has Local Network permission '
-          '(System Settings ▸ Privacy & Security ▸ Local Network).\n'
-          '  3. Check that Xcode is selected (`xcode-select -p`) and that this '
-          'terminal is allowed to control Xcode '
-          '(System Settings ▸ Privacy & Security ▸ Automation).\n'
-          '  4. For fast debug iteration without the device, use the tvOS '
-          'simulator (JIT works there without a debugger).',
-        );
-        return LaunchResult.failed();
-      }
-
-      // Xcode launched the app; its console output isn't routed through our
-      // log reader, so resolve the VM Service purely via mDNS (Bonjour) using
-      // the device's LAN IP — exactly how stock iOS resolves it for wireless.
-      //
-      // This can throwToolExit (multiple Dart VM services on the LAN, or
-      // denied macOS Local Network permission). The app is already running
-      // under the Xcode debugger at this point, so a throw escaping here would
-      // crash `run` and leave that debug session attached with no teardown.
-      // Catch it and degrade gracefully to a launched-but-no-hot-reload
-      // result with an actionable warning (see below).
-      Uri? xcodeUri;
-      try {
-        xcodeUri = await MDnsVmServiceDiscovery.instance!.getVMServiceUriForAttach(
-          bundleId,
-          this,
-          useDeviceIPAsHost: true,
-          timeout: const Duration(seconds: 60),
-        );
-      } on Object catch (e) {
-        logger.printTrace('mDNS VM Service lookup failed: $e');
-      }
-      if (xcodeUri != null) {
-        logger.printTrace('VM service (via Xcode + mDNS) available at: $xcodeUri');
-        return LaunchResult.succeeded(vmServiceUri: xcodeUri);
-      }
-      // Returning succeeded() with no vmServiceUri makes the resident runner
-      // report success while hot reload / DevTools silently do nothing — warn
-      // so the user isn't left with a mute, broken-feeling session.
-      logger.printWarning(
-        'App launched via Xcode, but its Dart VM Service was not found over '
-        'mDNS within 60s — hot reload, hot restart, and DevTools will be '
-        'unavailable. Check that this Mac has Local Network permission '
-        '(System Settings ▸ Privacy & Security ▸ Local Network) and that the '
-        'Apple TV is on the same network.',
-      );
-      return LaunchResult.succeeded();
-    }
-
-    // 6. Profile/release only — the debug path above always returns through the
-    //    Xcode debugger. These builds are AOT and need no debugger, so launch
-    //    them directly with devicectl and read the console stream.
+    final bool needsDebugger = debuggingOptions.buildInfo.isDebug;
     logger.printTrace('Launching $bundleId on Apple TV...');
     final logReader =
         (_logReader ??= TvosPhysicalDeviceLogReader(name)) as TvosPhysicalDeviceLogReader;
-    await logReader.startLogStreamForBundle(id, bundleId, startStopped: false);
+    await logReader.startLogStreamForBundle(id, bundleId, startStopped: needsDebugger);
 
-    //    Discover the Mac-reachable VM service URI. Two paths run in parallel:
+    if (needsDebugger) {
+      // Path 1 (lldb) is unavailable in this Flutter version: flutter_tools
+      // gained `src/ios/lldb.dart` after 3.32.8, so there is no LLDB helper to
+      // drive. Go straight to the Xcode debugger below — the same mechanism
+      // stock Flutter uses for iOS Core Devices, and the one Xcode itself uses
+      // to debug a wirelessly-paired Apple TV.
+      const attached = false;
+
+      if (!attached) {
+        // Path 2: Xcode debugger fallback — the same path stock Flutter uses
+        // for iOS Core Devices (devices.dart `_startAppOnCoreDevice`), and the
+        // mechanism Xcode itself uses to reliably debug a wirelessly-paired
+        // Apple TV. Tear down our devicectl launch + lldb first so Xcode can
+        // take the device over cleanly, then let Xcode install/launch/attach.
+        logger.printStatus(
+          'Starting the Xcode debugger to hold the debug session. '
+          'You may be prompted to allow controlling Xcode '
+          '(Settings ▸ Privacy & Security ▸ Automation).',
+        );
+        await _teardownDeviceLaunch();
+        final bool xcodeStarted = await _launchViaXcodeDebugger(
+          project: project,
+          debuggingOptions: debuggingOptions,
+        );
+        if (!xcodeStarted) {
+          // Both debug paths failed. The app itself usually *did* install and
+          // launch (you may see it on the TV), but no debugger could attach and
+          // hold the session — and tvOS debug mode (JIT) aborts without a
+          // persistent debugger. The Xcode automation fallback in particular
+          // does not reliably sustain a session on tvOS, so the usual cause is a
+          // slow or stale CoreDevice tunnel. Give the user concrete remedies
+          // instead of a bare failure.
+          logger.printError(
+            'Could not attach a debugger to the app on this Apple TV, so the '
+            'debug session could not start (the app may briefly appear on the TV '
+            'and then exit — tvOS debug mode requires an attached debugger).\n'
+            '\n'
+            'Apple TV debugging is wireless-only and depends on the CoreDevice '
+            'tunnel. Things to try, in order:\n'
+            '  1. Restart the Apple TV (Settings ▸ System ▸ Restart) to reset the '
+            'tunnel, then run again — a cold/stale tunnel is the most common cause.\n'
+            '  2. Make sure the Apple TV and this Mac are on the same Wi-Fi/LAN, '
+            'and that the Mac has Local Network permission '
+            '(System Settings ▸ Privacy & Security ▸ Local Network).\n'
+            '  3. Re-run — the Xcode attach over the tunnel can be slow and a '
+            'second attempt often succeeds.\n'
+            '  4. For fast debug iteration without the device, use the tvOS '
+            'simulator (JIT works there without a debugger).',
+          );
+          return LaunchResult.failed();
+        }
+        // Xcode launched the app; its console output isn't routed through our
+        // log reader, so resolve the VM Service purely via mDNS (Bonjour) using
+        // the device's LAN IP — exactly how stock iOS resolves it for wireless.
+        //
+        // This can throwToolExit (multiple Dart VM services on the LAN, or
+        // denied macOS Local Network permission). The app is already running
+        // under the Xcode debugger at this point, so a throw escaping here would
+        // crash `run` and leave that debug session attached with no teardown.
+        // Catch it and degrade gracefully to a launched-but-no-hot-reload
+        // result with an actionable warning (see below).
+        Uri? xcodeUri;
+        try {
+          xcodeUri = await MDnsVmServiceDiscovery.instance!.getVMServiceUriForAttach(
+            bundleId,
+            this,
+            useDeviceIPAsHost: true,
+            timeout: const Duration(seconds: 60),
+          );
+        } on Object catch (e) {
+          logger.printTrace('mDNS VM Service lookup failed: $e');
+        }
+        if (xcodeUri != null) {
+          logger.printTrace('VM service (via Xcode + mDNS) available at: $xcodeUri');
+          return LaunchResult.succeeded(vmServiceUri: xcodeUri);
+        }
+        // Returning succeeded() with no vmServiceUri makes the resident runner
+        // report success while hot reload / DevTools silently do nothing — warn
+        // so the user isn't left with a mute, broken-feeling session.
+        logger.printWarning(
+          'App launched via Xcode, but its Dart VM Service was not found over '
+          'mDNS within 60s — hot reload, hot restart, and DevTools will be '
+          'unavailable. Check that this Mac has Local Network permission '
+          '(System Settings ▸ Privacy & Security ▸ Local Network) and that the '
+          'Apple TV is on the same network.',
+        );
+        return LaunchResult.succeeded();
+      }
+    }
+
+    // 6. Discover the Mac-reachable VM service URI. Two paths run in parallel:
     //    a) ProtocolDiscovery scans the console stream and finds the loopback
     //       URL (e.g. http://127.0.0.1:52281/) printed by the Dart VM. That
     //       host isn't reachable from the Mac, but the port is real.
@@ -750,46 +827,49 @@ class TvosDevice extends Device {
 
     if (vmServiceUri != null &&
         (vmServiceUri.host == '127.0.0.1' || vmServiceUri.host == '0.0.0.0')) {
-      // Console URL host is unreachable from the Mac. Use mDNS to find the
-      // device's LAN address by matching the port we just discovered (the
-      // SRV target name doesn't match our Device.name verbatim — it's the
-      // hardware-suffixed Bonjour name like `Bedroom-C4F7C15554D7.local.`,
-      // so we skip the deviceName filter and rely on the port).
-      final int devicePort = vmServiceUri.port;
-      final String authPath = vmServiceUri.path;
-      try {
-        // `queryForLaunch` is annotated `@visibleForTesting` upstream, but it
-        // is the only iOS-mDNS code path that handles paired-but-LAN-resolved
-        // Apple TVs (where devicectl reports the loopback URL but the host
-        // can only reach the device by its `*.coredevice.local` Bonjour name).
-        // Stock Flutter's iOS device manager calls it the same way for the
-        // physical device flow.
-        final MDnsVmServiceDiscoveryResult? result =
-            // ignore: invalid_use_of_visible_for_testing_member
-            await MDnsVmServiceDiscovery.instance!.queryForLaunch(
-              applicationId: bundleId,
-              deviceVmservicePort: devicePort,
-              useDeviceIPAsHost: true,
-              timeout: const Duration(seconds: 10),
-            );
-        if (result != null && result.ipAddress != null) {
-          vmServiceUri = Uri(
-            scheme: 'http',
-            host: result.ipAddress!.address,
-            port: result.port,
-            path: authPath,
-          );
-        } else {
-          // Fallback: use devicectl hostname (e.g. bedroom.coredevice.local).
-          // Only useful if Bonjour is reachable from the Mac.
-          final String? deviceIp = await _resolveDeviceIp(id);
-          if (deviceIp != null) {
-            vmServiceUri = vmServiceUri.replace(host: deviceIp);
-          }
-        }
-      } on Object catch (e) {
-        logger.printTrace('mDNS lookup failed: $e');
+      // Console URL host is unreachable from the Mac. Resolve the device's LAN
+      // address, then keep the port and auth path we already have.
+      final Duration budget = _resolveMdnsTimeout();
+      final Uri? reachable = await _resolveReachableVmServiceUri(
+        bundleId: bundleId,
+        deviceId: id,
+        deviceUri: vmServiceUri,
+        budget: budget,
+      );
+      if (reachable == null) {
+        // Handing back the unreachable URI is not an option: the resident
+        // runner accepts it and then retries forever against 0.0.0.0
+        // ("Connection refused"), so the session looks alive while hot reload
+        // never works and nothing says why.
+        //
+        // Neither is returning LaunchResult.succeeded() with no URI. The runner
+        // turns an absent URI into an empty vmServiceUris stream, whose onDone
+        // completes with "connection to device ended too early" — so the
+        // message below would be immediately followed by an unrelated error
+        // blaming the device connection, which is the same confusion this whole
+        // path exists to remove. Exit on the explanation instead.
+        //
+        // The app is left running on the TV deliberately: it is healthy, and
+        // the user may want to keep looking at it while fixing permissions.
+        throwToolExit(
+          'App launched on this Apple TV, but its Dart VM Service could not be '
+          'reached within ${budget.inSeconds}s — hot reload, hot restart, and '
+          'DevTools are unavailable.\n'
+          '\n'
+          'The app itself is fine and is still running on the device. It '
+          'advertises its VM Service over Bonjour, so this is almost always a '
+          'local-network problem on the Mac side:\n'
+          '  1. Grant this terminal Local Network permission (System Settings ▸ '
+          'Privacy & Security ▸ Local Network), then run again.\n'
+          '  2. Check the Apple TV is on the same Wi-Fi/LAN as this Mac.\n'
+          '  3. Quit any older copy of this app still running on the Apple TV — '
+          'a stale instance advertises a second service for the same bundle id.\n'
+          '\n'
+          'Raise the wait with FLUTTER_TVOS_MDNS_TIMEOUT_SECONDS if this device '
+          'is simply slow to publish.',
+        );
       }
+      vmServiceUri = reachable;
     }
 
     if (vmServiceUri != null) {
@@ -809,6 +889,15 @@ class TvosDevice extends Device {
       'Security ▸ Local Network) and that the Apple TV is on the same network.',
     );
     return LaunchResult.succeeded();
+  }
+
+  /// Tears down the in-flight devicectl `--console` launch so the Xcode
+  /// debugger can take the device over cleanly. Killing the `--console` launch
+  /// process (held by the log reader) terminates the `--start-stopped` app
+  /// instance on the device.
+  Future<void> _teardownDeviceLaunch() async {
+    _logReader?.dispose();
+    _logReader = null;
   }
 
   /// Launches + debugs the app through Xcode (AppleScript automation), mirroring
@@ -993,9 +1082,152 @@ class TvosDevice extends Device {
     return null;
   }
 
-  /// Asks devicectl for the device's network IP. Used as a fallback when
-  /// mDNS discovery fails — we still want to give DevTools a reachable URL
-  /// instead of the loopback one printed by the Dart VM.
+  /// Resolves a Mac-reachable VM Service URI for an app whose advertised URI
+  /// carries an unreachable host (`0.0.0.0` because we launch with
+  /// `--vm-service-host=0.0.0.0`, or `127.0.0.1`).
+  ///
+  /// Keeps [deviceUri]'s port and auth path — only the host is wrong. Returns
+  /// null if nothing reachable turned up within [budget].
+  ///
+  /// Two sources, in order of reliability on a wirelessly-paired Apple TV:
+  ///
+  ///  1. **Bonjour** (`_dartVmService._tcp`), which the Dart VM publishes
+  ///     itself. Matched on the device port rather than the device name: the
+  ///     SRV target is the hardware-suffixed Bonjour name (e.g.
+  ///     `Bedroom-C4F7C15554D7.local.`), which never equals [Device.name]. The
+  ///     port match also keeps us off a *stale* instance of the same bundle id
+  ///     still running on the TV, which advertises a second service.
+  ///  2. **devicectl's hostname**, which is only *usable* while the CoreDevice
+  ///     tunnel is up. A LAN-paired Apple TV reports `tunnelState:
+  ///     "disconnected"` with no `networkAddresses` and no `localHostnames`,
+  ///     but it still lists `potentialHostnames` — names that resolve for
+  ///     nobody once the tunnel is down. Anything this path offers is
+  ///     therefore checked with [_hostResolves] before it is trusted, so a
+  ///     bonus path can never pre-empt the Bonjour retries below. It shells
+  ///     out, so it is tried sparingly — see [_devicectlProbeInterval].
+  Future<Uri?> _resolveReachableVmServiceUri({
+    required String bundleId,
+    required String deviceId,
+    required Uri deviceUri,
+    required Duration budget,
+  }) async {
+    final int devicePort = deviceUri.port;
+    final String authPath = deviceUri.path;
+    final Stopwatch elapsed = Stopwatch()..start();
+    var attempt = 0;
+    Duration lastDevicectlProbe = Duration.zero;
+    var probedDevicectl = false;
+
+    while (elapsed.elapsed < budget) {
+      attempt++;
+      final Duration attemptStarted = elapsed.elapsed;
+      try {
+        // `queryForLaunch` is annotated `@visibleForTesting` upstream, but it
+        // is the only iOS-mDNS code path that handles paired-but-LAN-resolved
+        // Apple TVs. Stock Flutter's iOS device manager calls it the same way
+        // for the physical-device flow.
+        final MDnsVmServiceDiscoveryResult? result =
+            // ignore: invalid_use_of_visible_for_testing_member
+            await MDnsVmServiceDiscovery.instance!.queryForLaunch(
+              applicationId: bundleId,
+              deviceVmservicePort: devicePort,
+              useDeviceIPAsHost: true,
+              timeout: _mdnsAttemptTimeout,
+              // We retry, so a missing-Local-Network-permission ToolExit on an
+              // early attempt would abort a run that the later attempts (or the
+              // user granting permission) could still rescue. The warning at
+              // the call site names that permission explicitly.
+              throwOnMissingLocalNetworkPermissionsError: false,
+            );
+        if (result?.ipAddress != null) {
+          logger.printTrace(
+            'mDNS resolved the VM Service on attempt $attempt '
+            '(${elapsed.elapsed.inSeconds}s): ${result!.ipAddress!.address}:${result.port}',
+          );
+          return Uri(
+            scheme: 'http',
+            host: result.ipAddress!.address,
+            port: result.port,
+            path: authPath,
+          );
+        }
+        // devicectl is a bonus path, not a fallback to rely on, and it spawns a
+        // subprocess — so probe it once up front and then only at
+        // [_devicectlProbeInterval]. Inside the same try as the mDNS query on
+        // purpose: it creates a temp directory and runs `xcrun`, either of
+        // which can throw (full or read-only temp, xcrun missing from PATH),
+        // and losing the VM Service host must not abort a run whose app is
+        // already installed and running on the TV.
+        if (!probedDevicectl ||
+            elapsed.elapsed - lastDevicectlProbe >= _devicectlProbeInterval) {
+          probedDevicectl = true;
+          lastDevicectlProbe = elapsed.elapsed;
+          final String? deviceHost = await _resolveDeviceIp(deviceId);
+          // devicectl yields either a numeric address from `networkAddresses`
+          // or a `*.coredevice.local` name from `potentialHostnames`. The
+          // latter is registered locally by `remoted` and only exists while a
+          // tunnel to that device is up — and `potentialHostnames` stays
+          // populated on a LAN-paired Apple TV whose `tunnelState` is
+          // `disconnected`, where those names resolve for nobody on the
+          // machine. Returning one unchecked would hand back a URI nothing can
+          // dial and short-circuit the whole retry budget below on the first
+          // failed mDNS attempt, which is the silent-dead-hot-reload this
+          // method exists to prevent. A numeric address costs nothing to
+          // confirm; a name that does not resolve is discarded so the loop can
+          // keep waiting for Bonjour.
+          if (deviceHost != null && await _hostResolves(deviceHost)) {
+            logger.printTrace('Resolved device host via devicectl: $deviceHost');
+            return deviceUri.replace(host: deviceHost);
+          } else if (deviceHost != null) {
+            logger.printTrace(
+              'devicectl offered host "$deviceHost", but it does not resolve '
+              '(the CoreDevice tunnel is likely down) — ignoring it.',
+            );
+          }
+        }
+      } on Object catch (e) {
+        logger.printTrace('mDNS lookup attempt $attempt failed: $e');
+      }
+
+      // Pace the loop against the attempt window rather than assuming the query
+      // consumed it. `queryForLaunch` can return in milliseconds — most
+      // importantly when macOS denies Local Network access, where the socket
+      // error is caught and turned into an empty result at once. Without this
+      // the loop would spin for the whole budget, and since that same path
+      // prints the multi-line permission instructions on every call, it would
+      // bury the give-up message under thousands of copies of another one.
+      final Duration spent = elapsed.elapsed - attemptStarted;
+      final Duration remaining = budget - elapsed.elapsed;
+      if (spent < _mdnsAttemptTimeout && remaining > Duration.zero) {
+        final Duration pause = _mdnsAttemptTimeout - spent;
+        await Future<void>.delayed(pause < remaining ? pause : remaining);
+      }
+    }
+
+    logger.printTrace(
+      'No reachable VM Service host after $attempt attempt(s) in '
+      '${elapsed.elapsed.inSeconds}s.',
+    );
+    return null;
+  }
+
+  /// Whether [host] resolves on this machine.
+  ///
+  /// A numeric address short-circuits inside `lookup` without touching the
+  /// resolver, so this is only a real query for the `*.coredevice.local` names
+  /// devicectl reports — exactly the ones that go stale when the CoreDevice
+  /// tunnel drops.
+  Future<bool> _hostResolves(String host) async {
+    try {
+      final List<InternetAddress> addresses = await InternetAddress.lookup(
+        host,
+      ).timeout(const Duration(seconds: 2));
+      return addresses.isNotEmpty;
+    } on Object {
+      return false;
+    }
+  }
+
   Future<String?> _resolveDeviceIp(String deviceId) async {
     final Directory tmp = globals.fs.systemTempDirectory.createTempSync('devicectl_ip.');
     try {
@@ -1095,8 +1327,9 @@ class TvosDevice extends Device {
   /// spuriously with "application is not installed".
   ///
   /// On success returns the install URL (e.g. `file:///private/var/...
-  /// /Applications/.../Runner.app`); a null return means registration never
-  /// completed, which the caller reports as a failed launch.
+  /// /Applications/.../Runner.app`). The caller forwards this to
+  /// [_findAppPid] so we don't have to query `info apps` a second time
+  /// just to translate the bundle id back into a path.
   ///
   /// LaunchServices typically indexes within 200–400 ms, so a 200 ms
   /// poll captures the registration on the first or second poll while

@@ -147,6 +147,10 @@ class TvosKernelSnapshot extends KernelSnapshot {
     final String? frontendServerStarterPath = environment.defines[kFrontendServerStarterPath];
     final List<String> extraFrontEndOptions =
         decodeCommaSeparated(environment.defines, kExtraFrontEndOptions);
+    // No recorded-uses handling: the record-use feature (and
+    // `KernelSnapshot.recordedUsesFileName` / `recordedUsesEmptyContent` /
+    // `FeatureFlags.isRecordUseEnabled`) arrived in 3.47.0 and does not exist
+    // in this Flutter, so `KernelSnapshot.outputs` never declares that file.
     final List<String>? fileSystemRoots = environment.defines[kFileSystemRoots]?.split(',');
     final String? fileSystemScheme = environment.defines[kFileSystemScheme];
 
@@ -297,6 +301,9 @@ class TvosCopyFlutterBundle extends CopyFlutterBundle {
           .file(isolateSnapshotData)
           .copySync(environment.outputDir.childFile('isolate_snapshot_data').path);
     }
+    // No `dartHookResult` here: this Flutter's `copyAssets` predates that
+    // parameter, and we skip the native-assets targets for tvOS anyway (see
+    // `dependencies`), so there are no build-hook results to pass on.
     final Depfile assetDepfile = await copyAssets(
       environment,
       environment.outputDir,
@@ -413,6 +420,15 @@ class NativeTvosBundle extends Target {
       throw Exception('Missing tvOS project directory');
     }
 
+    // 0. Invalidate the staged-payload marker before anything is replaced.
+    //    Everything from here to step 5 mutates tvos/Flutter; an exception or a
+    //    Ctrl-C in that window would otherwise leave Generated.xcconfig
+    //    describing the payload that was there before. Concretely: a release
+    //    build followed by an interrupted debug build leaves the JIT engine and
+    //    a kernel_blob staged under a marker still reading `release`, and the
+    //    Xcode guard then blesses exactly the archive it exists to stop.
+    _generateXcconfigs(project, tvosProjectDir, stagedModeOverride: 'unknown');
+
     // 1. Copy Flutter.framework from engine artifacts
     _copyFlutterFramework(tvosProjectDir);
 
@@ -527,6 +543,9 @@ class NativeTvosBundle extends Target {
       // Warn if the app-icon catalog predates the completed template and would
       // fail App Store asset validation.
       _warnIfIncompleteAppIconCatalog(tvosProjectDir);
+      // Warn if the project predates the build-mode guard, so an archive taken
+      // straight from Xcode can still ship a payload from the wrong mode.
+      _warnIfMissingBuildModeGuard(tvosProjectDir);
     }
 
     final platformSuffix = buildInfo.simulator
@@ -1023,6 +1042,59 @@ class NativeTvosBundle extends Target {
     return false;
   }
 
+  /// Warns if the Runner project has no "Check Flutter build mode" phase, so
+  /// an `xcodebuild archive` run straight from Xcode cannot notice that the
+  /// staged Flutter payload was built for a different mode.
+  ///
+  /// The Xcode project runs no Dart build: its phases copy whatever the last
+  /// `flutter-tvos build/run` left in `tvos/Flutter`, and the engine comes from
+  /// the `Flutter.xcframework` that same run copied in. Xcode's configuration
+  /// has no influence on any of it, so archiving Release after a debug run
+  /// ships the JIT engine inside a release app — which still launches under
+  /// development signing and then hangs on a blank screen once installed from
+  /// TestFlight or the App Store (issue #65). `project.pbxproj` is written once
+  /// at `create` time and never rewritten on build, so existing projects keep
+  /// the old phase list and need regenerating to gain the guard.
+  void _warnIfMissingBuildModeGuard(Directory tvosProjectDir) {
+    final File pbxproj = tvosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    if (!pbxproj.existsSync()) {
+      return;
+    }
+    String contents;
+    try {
+      contents = pbxproj.readAsStringSync();
+    } on FileSystemException {
+      return; // Unreadable — don't crash the build over an advisory check.
+    }
+    if (!pbxprojLacksBuildModeGuard(contents)) {
+      return;
+    }
+    globals.logger.printWarning(
+      'Warning: this project\'s Xcode project (Runner.xcodeproj) has no '
+      '"Check Flutter build mode" build phase. Building or archiving directly '
+      'from Xcode copies whatever "flutter-tvos build/run" staged last, '
+      'regardless of the configuration Xcode is building — so archiving '
+      'Release after a debug run ships the debug engine, which runs locally '
+      'and then hangs on a blank screen when installed from TestFlight or the '
+      'App Store.\n'
+      'Run "flutter-tvos build tvos --release" immediately before every '
+      'archive. That is the whole mitigation, and it works today.\n'
+      'To get the build phase itself, add it by hand (doc/publish-app.md shows '
+      'the script) or move tvos/ aside and re-create the project — '
+      '"flutter-tvos create ." will not add it to a tvos/ that already exists.',
+    );
+  }
+
+  /// True if [pbxprojContents] has no "Check Flutter build mode" phase.
+  ///
+  /// Keys on the phase *name* as the template writes it, which is also what a
+  /// hand-added phase would have to be called to do the same job.
+  @visibleForTesting
+  static bool pbxprojLacksBuildModeGuard(String pbxprojContents) =>
+      !pbxprojContents.contains('Check Flutter build mode');
+
   /// Warns if the project's `Podfile` predates the SPM skip guard while SPM
   /// plugins are present. The current Podfile skips any plugin that ships a
   /// `Package.swift` (it references `'Package.swift'` in the guard); an older
@@ -1142,7 +1214,41 @@ class NativeTvosBundle extends Target {
     }
 
     copyFlutterAssetsTree(source: flutterAssetsSource, target: flutterAssetsTarget);
+
+    // kernel_blob.bin is the JIT payload and is written only by a debug build,
+    // but `build/tvos/` is shared across modes and nothing there removes it. A
+    // profile or release build run after any debug build therefore mirrored a
+    // stale 40+ MB debug kernel into the staged assets and shipped it inside an
+    // AOT app, where the engine ignores it entirely — dead weight in the bundle,
+    // and the app's Dart kernel handed out with a release build.
+    //
+    // Drop it here rather than cleaning the shared output directory, which
+    // incremental builds rely on.
+    if (!buildInfo.buildInfo.isDebug) {
+      if (stripJitPayload(stagedAssets: flutterAssetsTarget)) {
+        globals.logger.printTrace(
+          'Removed kernel_blob.bin staged by an earlier debug build',
+        );
+      }
+    }
+
     globals.logger.printTrace('Copied flutter_assets to ${flutterAssetsTarget.path}');
+  }
+
+  /// Removes the JIT payload from [stagedAssets], returning whether one was
+  /// there. Only a debug build writes `kernel_blob.bin`, so its presence in an
+  /// AOT build means it survived in the shared `build/tvos/` output directory
+  /// and was mirrored forward.
+  ///
+  /// Returns false when there is nothing to remove, which is the normal case.
+  @visibleForTesting
+  static bool stripJitPayload({required Directory stagedAssets}) {
+    final File kernel = stagedAssets.childFile('kernel_blob.bin');
+    if (!kernel.existsSync()) {
+      return false;
+    }
+    kernel.deleteSync();
+    return true;
   }
 
   /// Mirrors the build output's flutter_assets tree into [target].
@@ -1374,13 +1480,13 @@ class NativeTvosBundle extends Target {
   /// Minimum tvOS version the embedded App.framework declares. Must match the
   /// `TVOS_DEPLOYMENT_TARGET` baked into the Xcode project template, otherwise
   /// App Store validation rejects the binary for a deployment-target mismatch.
-  static const String _kTvosMinimumOSVersion = '13.0';
+  static const String _kTvosMinimumOSVersion = '15.0';
 
   /// Deployment-target flag for the AOT clang steps (assemble + link).
   ///
   /// Without it clang stamps LC_BUILD_VERSION `minos` with the SDK version
   /// (e.g. 26.0) and App Store validation rejects the archive with
-  /// ITMS-90208: App.framework's `MinimumOSVersion` (13.0) must match the
+  /// ITMS-90208: App.framework's `MinimumOSVersion` (15.0) must match the
   /// binary's `minos`.
   static String tvosVersionMinFlag(String sdkName) =>
       sdkName.contains('simulator')
@@ -1571,7 +1677,18 @@ class NativeTvosBundle extends Target {
   }
 
   /// Generates Generated.xcconfig, Debug.xcconfig, and Release.xcconfig.
-  void _generateXcconfigs(FlutterProject project, Directory tvosProjectDir) {
+  /// Writes `Generated.xcconfig` and the Debug/Release includes.
+  ///
+  /// [stagedModeOverride] forces the staged-payload keys to a value other than
+  /// the mode being built. `build()` passes `unknown` before it touches
+  /// anything in `tvos/Flutter`, so that a build interrupted midway through
+  /// staging leaves a marker the guard rejects rather than one that still
+  /// describes the payload it replaced.
+  void _generateXcconfigs(
+    FlutterProject project,
+    Directory tvosProjectDir, {
+    String? stagedModeOverride,
+  }) {
     final Directory flutterDir = tvosProjectDir.childDirectory('Flutter');
     flutterDir.createSync(recursive: true);
 
@@ -1610,6 +1727,8 @@ class NativeTvosBundle extends Target {
             buildDir: buildDir,
             buildName: buildName,
             buildNumber: buildNumber,
+            buildMode: stagedModeOverride ?? buildInfo.buildInfo.modeName,
+            stagedSdk: stagedModeOverride != null ? 'unknown' : buildInfo.sdkName,
           ),
         );
 
@@ -1628,21 +1747,29 @@ class NativeTvosBundle extends Target {
           ),
         );
 
-    // Debug.xcconfig — always write with Pods include so CocoaPods sandbox check passes.
+    // Debug.xcconfig / Release.xcconfig — always written with the Pods include
+    // so the CocoaPods sandbox check passes.
     flutterDir
         .childFile('Debug.xcconfig')
-        .writeAsStringSync(
-          '#include "Generated.xcconfig"\n'
-          '#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"\n',
-        );
-
-    // Release.xcconfig — same.
+        .writeAsStringSync(buildModeXcconfig('debug'));
     flutterDir
         .childFile('Release.xcconfig')
-        .writeAsStringSync(
-          '#include "Generated.xcconfig"\n'
-          '#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"\n',
-        );
+        .writeAsStringSync(buildModeXcconfig('release'));
+  }
+
+  /// Body of `tvos/Flutter/<Mode>.xcconfig`.
+  ///
+  /// The `Generated.xcconfig` include is the first link in the chain that
+  /// carries `FLUTTER_STAGED_BUILD_MODE` to the "Check Flutter build mode"
+  /// build phase: Generated.xcconfig → this file → the target configuration's
+  /// `baseConfigurationReference`. Break any link and the phase sees an unset
+  /// marker, which is a hard failure for a release build and a warning for a
+  /// debug one — so the chain is asserted end to end in the tests rather than
+  /// left to be discovered at archive time.
+  @visibleForTesting
+  static String buildModeXcconfig(String mode) {
+    return '#include "Generated.xcconfig"\n'
+        '#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.$mode.xcconfig"\n';
   }
 
   /// Body of `tvos/Flutter/Generated.xcconfig`.
@@ -1664,6 +1791,8 @@ class NativeTvosBundle extends Target {
     required String buildDir,
     required String buildName,
     required String buildNumber,
+    required String buildMode,
+    required String stagedSdk,
   }) {
     return (StringBuffer()
           ..writeln('FLUTTER_ROOT=$flutterRoot')
@@ -1672,6 +1801,28 @@ class NativeTvosBundle extends Target {
           ..writeln('FLUTTER_BUILD_DIR=$buildDir')
           ..writeln('FLUTTER_BUILD_NAME=$buildName')
           ..writeln('FLUTTER_BUILD_NUMBER=$buildNumber')
+          // Records what is currently staged in tvos/Flutter (engine,
+          // App.framework, flutter_assets). The Xcode project runs no Dart
+          // build, so this is the only thing a build phase can compare its
+          // CONFIGURATION against — see the "Check Flutter build mode" phase
+          // in the app template.
+          //
+          // Deliberately NOT named FLUTTER_BUILD_MODE. That name is upstream's
+          // user-facing override (`${FLUTTER_BUILD_MODE:-${CONFIGURATION}}`),
+          // which Flutter users with flavors or custom configurations are told
+          // to set themselves — and a target-level definition shadows this
+          // file, since Generated.xcconfig is only the base configuration. The
+          // guard would then compare the user's declared intent against itself,
+          // match every time, and pass on exactly the archive it exists to stop.
+          //
+          // `unknown` is written at the start of every build and replaced only
+          // once staging has finished, so an interrupted build leaves a value
+          // that fails closed rather than one describing a payload that is no
+          // longer on disk.
+          ..writeln('FLUTTER_STAGED_BUILD_MODE=$buildMode')
+          // Which SDK the staged payload was built against, so the guard can
+          // catch a simulator payload being archived for a device.
+          ..writeln('FLUTTER_STAGED_SDK=$stagedSdk')
           ..writeln('COCOAPODS_PARALLEL_CODE_SIGN=true'))
         .toString();
   }

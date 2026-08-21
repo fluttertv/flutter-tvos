@@ -14,10 +14,10 @@ Uses dart:ffi for synchronous native calls with zero async overhead.
   s.source_files     = 'Classes/flutter_tvos_ffi.{h,m}'
   s.public_header_files = 'Classes/flutter_tvos_ffi.h'
 
-  s.platform         = :tvos, '13.0'
+  s.platform         = :tvos, '15.0'
 
   s.frameworks       = 'UIKit', 'Foundation'
-  s.tvos.deployment_target = '13.0'
+  s.tvos.deployment_target = '15.0'
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

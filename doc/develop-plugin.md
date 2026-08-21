@@ -79,7 +79,7 @@ public class MyTvosPlugin: NSObject, FlutterPlugin {
 
 ### 3. CocoaPods podspec
 
-The generated `tvos/my_tvos_plugin.podspec` targets tvOS 13.0. One important rule — **do not** use `s.dependency 'Flutter'` because the Flutter pod does not declare tvOS support. Use `FRAMEWORK_SEARCH_PATHS` instead:
+The generated `tvos/my_tvos_plugin.podspec` targets tvOS 15.0. One important rule — **do not** use `s.dependency 'Flutter'` because the Flutter pod does not declare tvOS support. Use `FRAMEWORK_SEARCH_PATHS` instead:
 
 ```ruby
 Pod::Spec.new do |s|
@@ -91,7 +91,7 @@ Pod::Spec.new do |s|
   s.author           = { 'FlutterTV' => 'info@fluttertv.dev' }
   s.source           = { :path => '.' }
   s.source_files     = 'Classes/**/*'
-  s.platform         = :tvos, '13.0'
+  s.platform         = :tvos, '15.0'
 
   # Use FRAMEWORK_SEARCH_PATHS instead of s.dependency 'Flutter'
   s.xcconfig = {

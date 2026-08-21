@@ -17,6 +17,22 @@ analyzer:
     # globs above don't match through symlinks, so analyse-resolved paths still
     # land in the SDK trees. Exclude the proxy tree explicitly.
     - "proxy_root/**"
+    # Generated output and per-platform host projects, wherever they sit.
+    #
+    # These are `**/`-prefixed on purpose. Analyzer excludes are globs relative
+    # to this file, so a bare `build/**` matches only a top-level `build/` —
+    # which does not exist — while the one build directory that *does* get
+    # created, `packages/flutter_tvos/build/`, went unmatched. The platform
+    # entries are the standard Flutter set: none of those directories exists
+    # today, but an example app regains them the moment anyone runs
+    # `flutter create` in one, and generated host projects are not ours to lint.
+    - "**/build/**"
+    - "**/android/**"
+    - "**/ios/**"
+    - "**/web/**"
+    - "**/windows/**"
+    - "**/macos/**"
+    - "**/linux/**"
 
 linter:
   rules:

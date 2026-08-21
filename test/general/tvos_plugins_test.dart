@@ -7,7 +7,11 @@ import 'dart:convert';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/dart/language_version.dart';
+import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
+import 'package:package_config/package_config.dart' show LanguageVersion;
 import 'package:flutter_tvos/tvos_plugins.dart'
     show
         TvosPlugin,
@@ -44,7 +48,7 @@ void main() {
         templateDir
             .childFile('Podfile')
             .writeAsStringSync(
-              "platform :tvos, '13.0'\n"
+              "platform :tvos, '15.0'\n"
               "target 'Runner' do\n"
               '  use_frameworks!\n'
               'end\n',
@@ -1185,6 +1189,73 @@ flutter:
       overrides: <Type, Generator>{
         FileSystem: () => fileSystem,
         ProcessManager: () => processManager,
+      },
+    );
+  });
+
+  // Regression test for the hardcoded `// @dart = 3.9` marker that used to be
+  // baked into the generated registrant. It was latent on a Flutter whose Dart
+  // is >= 3.9, but on an older SDK (e.g. Flutter 3.32.8 / Dart 3.8.1) the
+  // kernel compile died with "The specified language version 3.9 is too high.
+  // The highest supported language version is 3.8."
+  group('dart_plugin_registrant language version', () {
+    late BufferLogger logger;
+    setUp(() => logger = BufferLogger.test());
+
+    testUsingContext(
+      'derives the @dart marker from the SDK rather than hardcoding it',
+      () async {
+        final Directory projectDir = fileSystem.directory('/p')..createSync();
+        projectDir.childDirectory('tvos').createSync();
+        projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+        fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+        projectDir
+            .childFile('.flutter-plugins-dependencies')
+            .writeAsStringSync(json.encode(<String, dynamic>{'dependencyGraph': <dynamic>[]}));
+
+        final FlutterProject project = FlutterProject.fromDirectory(projectDir);
+        await ensureReadyForTvosTooling(project);
+
+        final String registrant = projectDir
+            .childDirectory('.dart_tool')
+            .childDirectory('flutter_build')
+            .childFile('dart_plugin_registrant.dart')
+            .readAsStringSync();
+
+        // Assert the shape independently of the implementation. Comparing
+        // against another call to currentLanguageVersion() would move both
+        // sides together and pass for any value it returned, however malformed.
+        final RegExpMatch? marker = RegExp(
+          r'^// @dart = (\d+)\.(\d+)$',
+          multiLine: true,
+        ).firstMatch(registrant);
+        expect(
+          marker,
+          isNotNull,
+          reason: 'the registrant must carry a well-formed `// @dart = X.Y` '
+              'marker on its own line',
+        );
+
+        // And that it tracks the SDK rather than any fixed literal. Pinning the
+        // expected number here would encode today's SDK; pinning "not 3.9"
+        // would be worse still, since 3.9 is only wrong by accident of which
+        // Flutter is checked out — it is the correct answer on an SDK whose
+        // Dart really is 3.9.
+        final LanguageVersion sdk = currentLanguageVersion(globals.fs, Cache.flutterRoot!);
+        expect(
+          <String>[marker!.group(1)!, marker.group(2)!],
+          <String>['${sdk.major}', '${sdk.minor}'],
+          reason: 'the marker must come from the SDK in use, not a literal — a '
+              'hardcoded value breaks the kernel compile on any Flutter whose '
+              'Dart is older ("language version X.Y is too high")',
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Logger: () => logger,
       },
     );
   });
