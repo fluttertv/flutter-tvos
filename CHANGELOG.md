@@ -2,6 +2,46 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.7.0-flutter3.32.8] - 2026-08-21
+
+The Flutter 3.32.8 release line, refreshed onto the 1.7.0 mainline. Same CLI
+feature set as 1.7.0, pinned to Flutter 3.32.8 and engine
+`v1.0.1-flutter3.32.8`. Not merged into the mainline: that would move the
+toolchain backwards.
+
+### Changed
+
+- **Retargeted to Flutter 3.32.8.** The CLI is written against a newer
+  `flutter_tools` than 3.32.8 ships, so pinning the version alone left it
+  uncompilable. Resolved toward what 3.32.8 actually provides:
+
+  - Record-use (`KernelSnapshot.recordedUsesFileName`,
+    `recordedUsesEmptyContent`, `FeatureFlags.isRecordUseEnabled`) is 3.47.0
+    and does not exist here; `KernelSnapshot.outputs` never declares that file,
+    so the mirroring block has nothing to satisfy.
+  - `copyAssets` predates `dartHookResult`, and `LinkHooks` / `DartHooksResult`
+    are absent. We already skip the native-assets targets for tvOS and write an
+    empty manifest, so there were never hook results to pass on.
+  - `Device.isSupported` is synchronous here; `UpdatePackagesCommand` takes no
+    constructor arguments; `ArtifactSet` has no `displayName`, so precache
+    prints the bare stamp name.
+
+- **On-device debug goes through Xcode on this line.** `src/ios/lldb.dart`
+  arrived after 3.32.8, so the direct-lldb attach cannot be built. The Xcode
+  debug action — already the fallback path, and what stock Flutter 3.32.8 uses
+  for iOS Core Devices — is now the only path.
+
+- **CI covers `release/**` branches**, so this line is verified like the
+  mainline rather than by hand.
+
+### Carried forward from the mainline
+
+Everything through 1.7.0, including the archive-mode guard (#66): a project
+generated from this line carries the `Check Flutter build mode` phase, so an
+archive staged in the wrong mode fails the build instead of shipping a debug
+engine that blank-screens from TestFlight. The previous 3.32.8 port predated
+that work.
+
 ## [1.7.0] - 2026-08-20
 
 ### Changed

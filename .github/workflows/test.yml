@@ -2,9 +2,12 @@ name: Test
 
 on:
   push:
-    branches: [main, dev]
+    # `release/**` covers the per-Flutter-version lines (e.g.
+    # release/flutter-3.32.8). They are never merged into the mainline, so
+    # without this they would carry no CI at all.
+    branches: [main, dev, "release/**"]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, "release/**"]
 
 jobs:
   test:

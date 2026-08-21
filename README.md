@@ -8,13 +8,18 @@ A Flutter toolchain for building and running Flutter apps on **Apple TV (tvOS)**
 
 ## Current version
 
-- flutter-tvos: `1.6.0`
-- Flutter SDK: `3.47.0` (`4cf24164269a5ebf0c16a028a00727d0e77bbb05`)
-- tvOS engine artifacts: `engine-495915c579071a4ef6a5014637166d5231cb4aac` (origin-signed)
+> **You are on the Flutter 3.32.8 release line** (`release/flutter-3.32.8`).
+> The mainline is Flutter 3.47.1 — see [`dev`](https://github.com/fluttertv/flutter-tvos).
+> `flutter-tvos upgrade` always targets the newest Flutter line and will not
+> move you onto this one.
 
-The engine artifact tag is the commit that produced those artifacts, rather than
-a Flutter version. A version-shaped tag went stale as soon as one patch set was
-reused across Flutter releases; a SHA names what was actually built.
+- flutter-tvos: `1.7.0`
+- Flutter SDK: `3.32.8` (`edada7c56edf4a183c1735310e123c7f923584f1`)
+- tvOS engine artifacts: `v1.0.1-flutter3.32.8` (origin-signed)
+
+The mainline names engine artifacts by the commit that produced them, because a
+version-shaped tag went stale as soon as one patch set was reused across Flutter
+releases. This line predates that change and keeps its original tag.
 
 ## Installation
 
@@ -150,7 +155,7 @@ Then inside `io_impl.dart`, branch on `Platform.isTvOS` vs `Platform.isIOS`.
 - **No WebKit / `webview_flutter`.** tvOS does not ship WebKit. Plugins depending on `WKWebView` will not compile for Apple TV.
 - **No haptics, clipboard, or status bar.** `HapticFeedback.*`, `Clipboard.*`, and `SystemChrome.setSystemUIOverlayStyle` are no-ops on tvOS.
 - **No `fork()`.** Apple TV disallows `fork()` entirely. Some background-work libraries are affected; Perfetto's daemonize path is already patched in our engine build.
-- **On-device debug needs a debugger attached.** Debug (JIT) now works on a physical Apple TV — `flutter-tvos run -d <appletv> --debug` gives you hot reload, hot restart, and DevTools over the wireless CoreDevice tunnel (the bundled tvOS debug engine artifact ships the `NOTIFY_DEBUGGER_ABOUT_RX_PAGES` hook lldb's attach needs). Because Apple TV is wireless-only the attach is slower than USB iOS; the **simulator remains the fast-iteration path** for debug. Release/profile on device run AOT and need no debugger.
+- **On-device debug needs a debugger attached, and on this line that debugger is Xcode.** Flutter 3.32.8's `flutter_tools` has no direct-lldb attach API, so `flutter-tvos run -d <appletv> --debug` drives Xcode's debug action over OSA scripting instead — the same mechanism stock Flutter 3.32.8 uses for iOS Core Devices. Xcode must be selected (`xcode-select -p`), and the first run may ask for permission to control it (System Settings ▸ Privacy & Security ▸ Automation). Because Apple TV is wireless-only the attach is slower than USB iOS; the **simulator remains the fast-iteration path** for debug. Release/profile on device run AOT and need no debugger.
 - **Metal-only rendering.** No OpenGL backend. Apps relying on GL-specific platform views will not work.
 
 ## Add tvOS support to an existing plugin
