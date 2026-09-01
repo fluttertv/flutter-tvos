@@ -26,10 +26,18 @@ toolchain backwards.
     constructor arguments; `ArtifactSet` has no `displayName`, so precache
     prints the bare stamp name.
 
-- **On-device debug goes through Xcode on this line.** `src/ios/lldb.dart`
-  arrived after 3.32.8, so the direct-lldb attach cannot be built. The Xcode
-  debug action — already the fallback path, and what stock Flutter 3.32.8 uses
-  for iOS Core Devices — is now the only path.
+- **On-device debug attaches lldb directly.** `src/ios/lldb.dart` arrived after
+  3.32.8, so this line vendors a port of it (`lib/tvos_lldb.dart`) rather than
+  leaving the Xcode debug action as the only path. Xcode remains the fallback,
+  and is used automatically when it has not yet finished preparing debugger
+  support for the device's OS build — lldb is unusable until it has.
+
+  Verified on hardware (Apple TV 4K, tvOS 26.6): launch, hot reload and hot
+  restart. This requires the engine artifact published at
+  `v1.0.1-flutter3.32.8` **on or after 2026-09-01**, which replaced the earlier
+  one in place to fix a Dart JIT failure on tvOS 18.4 and newer. Because the
+  version string did not change, an existing checkout will not re-download it:
+  `rm -rf engine_artifacts && flutter-tvos precache`.
 
 - **CI covers `release/**` branches**, so this line is verified like the
   mainline rather than by hand.
