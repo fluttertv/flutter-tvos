@@ -491,4 +491,41 @@ void main() {
       expect(TvosDevice.parseDeviceUdid(''), isNull);
     });
   });
+
+  group('TvosDevice.parseOsBuildUpdate', () {
+    // The OS build names the Xcode device-support directory
+    // (`AppleTV14,1 26.6 (23L773)`). Without a completed directory for the
+    // build the device is running, lldb reads the system libraries out of
+    // process memory over the wireless tunnel and the app never finishes
+    // launching — so this value decides whether the lldb path is attempted at
+    // all. Getting it wrong sends every run down the slow Xcode path (or, worse,
+    // into the attach timeout), so pin the shape we read it from.
+    testWithoutContext('extracts the OS build from devicectl info details JSON', () {
+      const jsonOutput = '''
+{
+  "result": {
+    "deviceProperties": {
+      "name": "Bedroom",
+      "osVersionNumber": "26.6",
+      "osBuildUpdate": "23L773"
+    },
+    "hardwareProperties": { "productType": "AppleTV14,1" }
+  },
+  "info": { "outcome": "success" }
+}
+''';
+      expect(TvosDevice.parseOsBuildUpdate(jsonOutput), '23L773');
+    });
+
+    testWithoutContext('returns null when the build is missing', () {
+      expect(TvosDevice.parseOsBuildUpdate('{"result": {"deviceProperties": {}}}'), isNull);
+      expect(TvosDevice.parseOsBuildUpdate('{"result": {}}'), isNull);
+      expect(TvosDevice.parseOsBuildUpdate('{}'), isNull);
+    });
+
+    testWithoutContext('returns null for malformed or empty JSON', () {
+      expect(TvosDevice.parseOsBuildUpdate('not json'), isNull);
+      expect(TvosDevice.parseOsBuildUpdate(''), isNull);
+    });
+  });
 }
