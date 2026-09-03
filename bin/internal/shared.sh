@@ -30,7 +30,40 @@ DART_EXE="$FLUTTER_DIR/bin/cache/dart-sdk/bin/dart"
 
 function tool_revision() {
   if [[ -d "$ROOT_DIR/.git" ]] && git --git-dir="$ROOT_DIR/.git" rev-parse HEAD >/dev/null 2>&1; then
-    git --git-dir="$ROOT_DIR/.git" rev-parse HEAD
+    local head
+    head="$(git --git-dir="$ROOT_DIR/.git" rev-parse HEAD)"
+
+    # HEAD alone describes what was committed, not what is on disk. In a
+    # development checkout those differ constantly, and the difference is
+    # invisible here: edit anything under lib/, run the CLI, and it silently
+    # executes the previously compiled snapshot instead. The symptom is a
+    # change that appears to do nothing -- the same build, the same failure,
+    # byte for byte -- which reads as "my fix is wrong" rather than "my fix
+    # never ran". `rm bin/cache/flutter-tvos.snapshot` was the folk remedy.
+    #
+    # The non-git branch below never had this problem: it hashes the contents
+    # of bin/ and lib/, so it is content-addressed by construction. This makes
+    # the git branch agree, by folding uncommitted work into the revision.
+    #
+    # Scoped to the sources that actually go into the snapshot, so editing a
+    # README or a test does not force a recompile. Only paid when the tree is
+    # dirty: a clean checkout returns the bare SHA exactly as before, so
+    # nobody who is not editing the CLI sees any change at all.
+    local dirty
+    dirty="$(git -C "$ROOT_DIR" status --porcelain -- bin lib pubspec.yaml pubspec.lock 2>/dev/null)"
+    if [[ -n "$dirty" ]]; then
+      local fingerprint
+      fingerprint="$( {
+        printf '%s\n' "$dirty"
+        # Names and statuses alone would collide across two different edits to
+        # the same file, so the tracked content goes in too.
+        git -C "$ROOT_DIR" diff HEAD -- bin lib pubspec.yaml pubspec.lock 2>/dev/null
+      } | shasum | awk '{print $1}' )"
+      echo "$head-$fingerprint"
+      return
+    fi
+
+    echo "$head"
     return
   fi
 
