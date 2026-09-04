@@ -22,22 +22,30 @@ const String _identities = '''
      4 valid identities found
 ''';
 
+/// The ordinary tvOS developer: an Apple Distribution certificate (required to
+/// upload at all) and no Developer ID, which only an Account Holder can create.
+const String _distributionOnly = '''
+  1) AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "Apple Development: Someone (ABCDE12345)"
+  2) CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC "Apple Distribution: Someone (TEAM123456)"
+     2 valid identities found
+''';
+
 const String _noDeveloperId = '''
   1) AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "Apple Development: Someone (ABCDE12345)"
      1 valid identity found
 ''';
 
 /// A revoked certificate. `find-identity` annotates it but still counts it in
-/// the "valid identities found" total, and it is listed *before* the good
-/// Developer ID so that taking the first match would pick the wrong one.
+/// the "valid identities found" total, and it is listed *before* the good one
+/// so that taking the first match would pick the wrong certificate.
 const String _revokedFirst = '''
-  1) EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE "Developer ID Application: Someone (TEAM123456)" (CSSMERR_TP_CERT_REVOKED)
-  2) DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD "Developer ID Application: Someone (TEAM123456)"
+  1) EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE "Apple Distribution: Someone (TEAM123456)" (CSSMERR_TP_CERT_REVOKED)
+  2) CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC "Apple Distribution: Someone (TEAM123456)"
      2 valid identities found
 ''';
 
 const String _revokedOnly = '''
-  1) EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE "Developer ID Application: Someone (TEAM123456)" (CSSMERR_TP_CERT_REVOKED)
+  1) EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE "Apple Distribution: Someone (TEAM123456)" (CSSMERR_TP_CERT_REVOKED)
      1 valid identity found
 ''';
 
@@ -86,13 +94,31 @@ void main() {
   });
 
   group('identity resolution', () {
-    testWithoutContext('prefers Developer ID Application', () {
+    testWithoutContext('uses the Apple Distribution certificate', () {
+      // The regression that broke 1.9.0 for customers: artifacts ship unsigned
+      // and the CLI signs locally, but it only accepted a certificate most
+      // tvOS developers cannot obtain, so their engine shipped unsigned and
+      // Apple rejected it with ITMS-91065.
+      final pm = FakeProcessManager.list(<FakeCommand>[
+        const FakeCommand(command: _findIdentity, stdout: _distributionOnly),
+      ]);
+      final ({String hash, String name})? identity =
+          _signer(fs: fileSystem, pm: pm, logger: logger).resolveIdentity();
+      expect(identity?.name, 'Apple Distribution: Someone (TEAM123456)');
+      expect(identity?.hash, 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC');
+    });
+
+    testWithoutContext('picks Apple Distribution even when a Developer ID is present', () {
+      // Developer ID also satisfies the check, but it is not accepted: it is a
+      // certificate almost no tvOS developer holds, so supporting it would add
+      // a branch that practically never fires.
       final pm = FakeProcessManager.list(<FakeCommand>[
         const FakeCommand(command: _findIdentity, stdout: _identities),
       ]);
-      final ({String hash, String name})? identity = _signer(fs: fileSystem, pm: pm, logger: logger).resolveIdentity();
-      expect(identity?.name, 'Developer ID Application: Someone (TEAM123456)');
-      expect(identity?.hash, 'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD');
+      expect(
+        _signer(fs: fileSystem, pm: pm, logger: logger).resolveIdentity()?.name,
+        'Apple Distribution: Someone (TEAM123456)',
+      );
     });
 
     testWithoutContext('returns null rather than falling back to a development cert', () {
@@ -110,10 +136,10 @@ void main() {
           _signer(fs: fileSystem, pm: pm, logger: logger).resolveIdentity();
       // codesign exits 0 with a revoked certificate, so picking it would
       // produce a build that only fails at submission.
-      expect(identity?.hash, 'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD');
+      expect(identity?.hash, 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC');
     });
 
-    testWithoutContext('returns null when the only Developer ID is revoked', () {
+    testWithoutContext('returns null when the only certificate is revoked', () {
       final pm = FakeProcessManager.list(<FakeCommand>[
         const FakeCommand(command: _findIdentity, stdout: _revokedOnly),
       ]);
@@ -327,7 +353,7 @@ void main() {
             '--options',
             'runtime',
             '--sign',
-            'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
+            'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
             '/artifacts/tvos_release_arm64/Flutter.xcframework/tvos-arm64/Flutter.framework',
           ],
           exitCode: 1,

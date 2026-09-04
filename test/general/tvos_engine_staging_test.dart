@@ -28,9 +28,10 @@ import '../src/context.dart';
 import '../src/fake_process_manager.dart';
 import '../src/fakes.dart';
 
-/// One Developer ID, so `resolveIdentity` has something to pick.
+/// One Apple Distribution certificate, so `resolveIdentity` has something to
+/// pick -- the certificate every developer who can upload to TestFlight holds.
 const String _identities = '''
-  1) DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD "Developer ID Application: Someone (TEAM123456)"
+  1) CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC "Apple Distribution: Someone (TEAM123456)"
      1 valid identity found
 ''';
 
@@ -115,7 +116,7 @@ void main() {
                 '--options',
                 'runtime',
                 '--sign',
-                'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
+                'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
                 RegExp(r'.*Flutter\.framework$'),
               ],
             ),

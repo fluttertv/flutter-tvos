@@ -2,6 +2,99 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.10.0] - 2026-09-03
+
+### Fixed
+
+- **The engine is now signed with your `Apple Distribution` certificate**,
+  instead of `Developer ID Application`. 1.9.0 stopped publishing origin-signed
+  artifacts and signs the engine locally instead, but it would only sign with a
+  Developer ID — a certificate only a team's Account Holder can create, subject
+  to a per-team cap, and one a tvOS developer has no other reason to hold. A
+  developer without one got a warning on an otherwise successful build and an
+  unsigned engine in the bundle, then ITMS-91065 at submission. That is a
+  regression against 1.4.0-1.8.0, where the published artifact carried a
+  signature and nothing was required of the developer.
+
+  `Apple Distribution` is the certificate every developer who can upload to
+  TestFlight already has, so signing now asks nothing extra of anyone. Verified
+  end to end against Apple: a tvOS build whose engine was signed
+  `Apple Distribution` before embedding processed to `VALID` and cleared
+  external testing, where the same build with an unsigned engine is rejected.
+
+  `Developer ID Application` also satisfies the check and is what flutter.dev
+  signs its own engine with, but it is no longer used: nobody shipping a tvOS
+  app needs one, so accepting it would only add a branch that almost never
+  fires. A development certificate is refused, as it is not known to satisfy
+  the check.
+
+  No action is needed on an existing project — signing happens in the artifact
+  cache on every device build, so upgrading the CLI is enough.
+
+### Added
+
+- **`xcodebuild` can authenticate with an App Store Connect API key.**
+  `-allowProvisioningUpdates` lets Xcode create or refresh a provisioning
+  profile, but on its own it can only do so through a signed-in Xcode account.
+  On a machine without a usable one — CI, or a developer who only has an API
+  key — xcodebuild cannot fetch the profile and quietly settles for a cached
+  wildcard instead.
+
+  Any app with an entitlement then fails, and fails misleadingly:
+
+  ```
+  error: Provisioning profile "tvOS Team Provisioning Profile: *"
+  doesn't include the Game Center capability.
+  ```
+
+  That names the capability the *wildcard* lacks, not the credential that is
+  actually missing, so the obvious next step is to go auditing the App ID's
+  capabilities in the developer portal — where everything is already correct.
+
+  Set all three and the key is forwarded:
+
+  ```sh
+  export APP_STORE_CONNECT_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXX.p8
+  export APP_STORE_CONNECT_KEY_ID=XXXXXXXXXX
+  export APP_STORE_CONNECT_ISSUER_ID=<issuer-uuid>
+  ```
+
+  Values are trimmed, and a leading `~` is expanded against `HOME` — an
+  interactive shell expands one before the CLI ever sees it, but a CI `env:`
+  block, a quoted assignment, a `.env` file and an Xcode scheme variable all
+  deliver it literally.
+
+  Absent entirely, nothing is added and a machine with a working Xcode account
+  behaves exactly as before, silently. Anything *between* that and a working
+  setup is reported: a partly-set trio, a value that is empty rather than
+  absent (which is how an undefined CI secret arrives), or a key path that
+  does not exist. Staying quiet in those cases is indistinguishable from never
+  having configured it, and the build goes on to fail with the capability
+  message above, minutes later and nowhere near the cause. A successful
+  handover names the key id at default verbosity, so "working" and
+  "half-configured" can be told apart from the log.
+
+  The `.p8` contents never pass through the CLI — only the path is read, and
+  xcodebuild opens the file itself. The path, key id and issuer id are not
+  secret and do appear in output, both on that success line and in
+  xcodebuild's own echoed command line, which is dumped on a failed build.
+
+  How it was established: an Apple TV device build of an app carrying
+  `com.apple.developer.game-center` failed with the message above. The App ID
+  was `UNIVERSAL` and already had `GAME_CENTER` enabled; querying the App Store
+  Connect API showed the real gap was that no `TVOS_APP_DEVELOPMENT` profile
+  existed for that bundle at all — iOS, App Store, watch and Mac profiles were
+  all present. With the key forwarded, xcodebuild created the missing profile
+  and the same build signed, installed and launched on the device unchanged.
+
+### Changed
+
+- `CONTRIBUTING.md` now warns that the compiled CLI snapshot is only
+  invalidated by a change in git revision, so an edit under `lib/` does
+  nothing until `bin/cache/flutter-tvos.snapshot` is removed. Detecting this
+  in the tool was measured and rejected: it costs ~28ms of `git status` on
+  every invocation, paid by every user to help only the few editing the CLI.
+
 ## [1.9.0] - 2026-08-29
 
 ### Added

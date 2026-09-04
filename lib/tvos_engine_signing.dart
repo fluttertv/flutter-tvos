@@ -52,6 +52,9 @@ class TvosEngineSigner {
   /// Set to `1` to skip signing entirely.
   static const String kSkipEnvVar = 'TVOS_ENGINE_SKIP_SIGNING';
 
+  /// The certificate type used to sign the engine. See [resolveIdentity].
+  static const String kIdentityPrefix = 'Apple Distribution:';
+
   /// A codesigning identity in the login keychain.
   ///
   /// [hash] is the SHA-1. Everything downstream signs by hash, never by name:
@@ -96,10 +99,21 @@ class TvosEngineSigner {
   /// The identity to sign the engine with, or `null` when there is none and the
   /// build should proceed unsigned.
   ///
-  /// Prefers `Developer ID Application`, which is what flutter.dev uses on its
-  /// own engine artifacts. Falls back to nothing rather than to a development
-  /// certificate: a wrong-type signature is not obviously better than none, and
-  /// silently picking one would hide the real problem.
+  /// Uses `Apple Distribution`, the certificate every developer who can upload
+  /// to TestFlight already holds, so signing asks nothing extra of anyone.
+  ///
+  /// Verified against Apple: a tvOS build whose engine was signed
+  /// `Apple Distribution` before embedding processed to VALID and cleared
+  /// external testing, where the same build with an unsigned engine is
+  /// rejected with ITMS-91065.
+  ///
+  /// Deliberately the only accepted type. `Developer ID Application` also
+  /// works and is what flutter.dev signs its own engine with, but it is a
+  /// macOS outside-the-App-Store certificate that only a team's Account Holder
+  /// can create, subject to a per-team cap — nobody shipping a tvOS app needs
+  /// one, so accepting it would only add a branch that almost never fires.
+  /// A development certificate is not accepted either: it is not known to
+  /// satisfy the check, and silently using one would hide the real problem.
   ({String hash, String name})? resolveIdentity() {
     final List<({String hash, String name})> identities = _availableIdentities();
 
@@ -137,16 +151,16 @@ class TvosEngineSigner {
       return named.single;
     }
 
-    final List<({String hash, String name})> developerIds = identities
-        .where((({String hash, String name}) id) => id.name.startsWith('Developer ID Application:'))
+    final List<({String hash, String name})> matches = identities
+        .where((({String hash, String name}) id) => id.name.startsWith(kIdentityPrefix))
         .toList();
-    if (developerIds.isEmpty) {
+    if (matches.isEmpty) {
       return null;
     }
     // Revoked certificates are already gone, so duplicates here are the
     // renewed-certificate case: same subject, different hash, either will
     // verify. Signing by hash means picking one is safe.
-    return developerIds.first;
+    return matches.first;
   }
 
   /// Signs the engine bundles under [variantDir] (an `engine_artifacts/<variant>`
@@ -250,11 +264,13 @@ class TvosEngineSigner {
 
     if (identity == null) {
       _logger.printStatus(
-        'Warning: no "Developer ID Application" certificate found, so the Flutter '
+        'Warning: no "Apple Distribution" certificate found, so the Flutter '
         'engine is being embedded unsigned.\n'
         'Local builds and internal TestFlight work, but App Store and external '
         'TestFlight submissions are rejected with ITMS-91065 ("Missing signature").\n'
-        'Create one at https://developer.apple.com/account/resources/certificates, '
+        'This is the certificate you already need to upload to TestFlight at all — '
+        'create it in Xcode (Settings > Accounts > Manage Certificates) or at '
+        'https://developer.apple.com/account/resources/certificates, '
         'or set $kIdentityEnvVar to the identity to use. '
         'Set $kSkipEnvVar=1 to silence this.',
       );

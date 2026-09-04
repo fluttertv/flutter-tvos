@@ -8,12 +8,12 @@ A Flutter toolchain for building and running Flutter apps on **Apple TV (tvOS)**
 
 ## Current version
 
-- flutter-tvos: `1.9.0`
+- flutter-tvos: `1.10.0`
 - Flutter SDK: `3.47.2` (`d3b14c876900e553bc736ca19295fc09e3853e8e`)
 - tvOS engine artifacts: published unsigned — `flutter-tvos` signs the engine on
-  your machine with your own `Developer ID Application` certificate on every
-  device build, which is what Apple's ITMS-91065 check requires. See
-  "Code signing" below.
+  your machine with your own `Apple Distribution` certificate on every device
+  build, which is what Apple's ITMS-91065 check requires. See "Code signing"
+  below.
 
 The engine artifact tag is the commit that produced those artifacts, rather than
 a Flutter version. A version-shaped tag went stale as soon as one patch set was
@@ -159,28 +159,32 @@ Then inside `io_impl.dart`, branch on `Platform.isTvOS` vs `Platform.isIOS`.
 ## Code signing
 
 Apple treats Flutter as a "commonly used third-party SDK", and rejects any
-submission whose engine did not already carry a `Developer ID Application`
-signature when the build embedded it (**ITMS-91065**, *"Missing signature"*).
-Signing the copy inside the app is not enough, and neither is the Distribution
-signature `xcodebuild -exportArchive` applies. The engine artifacts published here are
-deliberately unsigned — a public project should not stamp one maintainer's
-Developer ID onto every download — so **`flutter-tvos` signs the engine on your
-machine instead**, with your own certificate, on every device build.
+submission whose engine did not already carry a signature when the build
+embedded it (**ITMS-91065**, *"Missing signature"*). Signing the copy inside the
+app is not enough, and neither is the signature `xcodebuild -exportArchive`
+applies. The engine artifacts published here are deliberately unsigned — a
+public project should not stamp one maintainer's identity onto every download —
+so **`flutter-tvos` signs the engine on your machine instead**, with your own
+certificate, on every device build.
 
-You need a **`Developer ID Application`** certificate in your login keychain.
-Nothing to configure: the CLI finds it, signs the engine with
-`--timestamp --options runtime` (matching how flutter.dev signs its own), and
-skips the work on later builds. Simulator builds never need it.
+**Usually there is nothing to do.** The CLI signs with your `Apple Distribution`
+certificate — the one you already need in order to upload to TestFlight at all —
+using `--timestamp --options runtime`, and skips the work on later builds.
+Simulator builds never need it.
 
 ```sh
-security find-identity -v -p codesigning | grep "Developer ID Application"
+security find-identity -v -p codesigning | grep "Apple Distribution"
 ```
 
-Nothing listed? Create one at
+`Developer ID Application` also satisfies the check — it is what flutter.dev
+signs its own engine with — but flutter-tvos does not use it: only a team's
+Account Holder can create one, and no tvOS developer needs one otherwise. A
+*development* certificate is deliberately not used either; it is not known to
+satisfy the check.
+
+Nothing listed at all? Create an Apple Distribution certificate in Xcode
+(**Settings → Accounts → Manage Certificates**) or at
 [developer.apple.com → Certificates](https://developer.apple.com/account/resources/certificates).
-Apple allows only a team's **Account Holder** to create Developer ID
-certificates, and caps how many a team may have — if you are an Admin on someone
-else's team, ask the Account Holder for one.
 
 Without a certificate the build still succeeds and warns you; the app runs
 locally and on internal TestFlight, then fails external Beta App Review. That
@@ -195,6 +199,43 @@ A caution about testing: upload, `altool --validate-app`, App Store Connect
 processing to `VALID`, and internal TestFlight **all succeed** with an unsigned
 engine. Only pushing a build to an external TestFlight group exercises this
 check, so that is the only way to confirm a submission is really clean.
+
+### Provisioning on a machine with no Xcode account
+
+A device build passes `-allowProvisioningUpdates` so Xcode can create or refresh
+the provisioning profile. On its own that only works through a signed-in Xcode
+account — on CI, or on a machine that only holds an API key, xcodebuild cannot
+fetch the profile and quietly settles for a cached **wildcard** one. Any app
+with an entitlement then fails with a message naming the capability the
+wildcard lacks rather than the credential that is actually missing:
+
+```
+error: Provisioning profile "tvOS Team Provisioning Profile: *"
+doesn't include the Game Center capability.
+```
+
+Set all three of these and the key is forwarded to xcodebuild instead:
+
+| Variable | Effect |
+|---|---|
+| `APP_STORE_CONNECT_KEY_PATH` | Path to the `.p8` private key. `~` is expanded. |
+| `APP_STORE_CONNECT_KEY_ID` | The key's id, e.g. `ABC1234567`. |
+| `APP_STORE_CONNECT_ISSUER_ID` | The issuer id (a UUID). Note this one has no `KEY_`. |
+
+```sh
+export APP_STORE_CONNECT_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_ABC1234567.p8
+export APP_STORE_CONNECT_KEY_ID=ABC1234567
+export APP_STORE_CONNECT_ISSUER_ID=00000000-1111-2222-3333-444444444444
+```
+
+xcodebuild requires all three or none, so a partial set is not forwarded — but
+it is reported, as is an empty value (how an undefined CI secret arrives) and a
+key path that does not exist. Set none of them and nothing changes: a machine
+with a working Xcode account behaves exactly as before.
+
+The `.p8` contents never pass through the CLI; only the path is read, and
+xcodebuild opens the file itself. The path, key id and issuer id are not secret
+and do appear in build output.
 
 ## Add tvOS support to an existing plugin
 
