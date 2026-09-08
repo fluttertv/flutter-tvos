@@ -45,9 +45,13 @@ The following commands from the [Flutter CLI](https://flutter.dev/docs/reference
 
   # Build for a physical Apple TV in profile mode (AOT, with profiling enabled).
   flutter-tvos build tvos --profile
+
+  # Compile a device build on a machine with no signing certificate — CI, most
+  # often. The result links and can be inspected; it cannot be installed.
+  flutter-tvos build tvos --release --no-codesign
   ```
 
-  Note: Simulator builds always use debug (JIT) mode. Device builds use AOT compilation (`--release` or `--profile`) and require Xcode code signing to be configured with a valid development team.
+  Note: Simulator builds always use debug (JIT) mode. Device builds use AOT compilation (`--release` or `--profile`) and are code-signed, so they need a development team configured — either through `DEVELOPMENT_TEAM`, the Xcode project, or a certificate in your keychain. Pass `--no-codesign` to skip signing entirely when you only need to know that the app compiles and links.
 
 - ### `clean`
 
