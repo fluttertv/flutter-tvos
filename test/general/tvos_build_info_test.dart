@@ -33,4 +33,15 @@ void main() {
     expect(buildInfo.simulator, isFalse);
     expect(buildInfo.sdkName, equals('appletvos'));
   });
+
+  test('signs a device build unless asked not to', () {
+    // The default matters more than the flag: every existing caller omits it,
+    // and a default of false would silently stop signing real device builds.
+    const signed = TvosBuildInfo(BuildInfo.release, targetArch: 'arm64');
+    expect(signed.codesign, isTrue);
+
+    const unsigned = TvosBuildInfo(BuildInfo.release, targetArch: 'arm64', codesign: false);
+    expect(unsigned.codesign, isFalse);
+  });
+
 }

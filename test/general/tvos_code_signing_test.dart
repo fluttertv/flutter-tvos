@@ -372,6 +372,7 @@ buildSettings = {
   group('Code signing - xcodebuild argument wiring', () {
     List<String> args({
       bool isSimulator = false,
+      bool codesign = true,
       List<String> signingArgs = const <String>[],
       List<String> authenticationArgs = const <String>[],
     }) {
@@ -383,6 +384,7 @@ buildSettings = {
         isSimulator: isSimulator,
         signingArgs: signingArgs,
         authenticationArgs: authenticationArgs,
+        codesign: codesign,
       );
     }
 
@@ -429,6 +431,21 @@ buildSettings = {
         args(signingArgs: <String>['DEVELOPMENT_TEAM=XYZ9876543', 'CODE_SIGN_STYLE=Automatic']),
         containsAllInOrder(<String>['DEVELOPMENT_TEAM=XYZ9876543', 'CODE_SIGN_STYLE=Automatic']),
       );
+    });
+
+    testWithoutContext('--no-codesign drops provisioning from a device build', () {
+      // -allowProvisioningUpdates is the flag that sends xcodebuild to the
+      // developer portal for a profile. An unsigned build has no profile to
+      // fetch, and the machine running one typically has no account to fetch
+      // it with, so leaving the flag on is how an unsigned CI build turns into
+      // a signing error anyway.
+      final List<String> unsigned = args(
+        codesign: false,
+        authenticationArgs: <String>['-authenticationKeyID', 'ABC1234567'],
+      );
+
+      expect(unsigned, isNot(contains('-allowProvisioningUpdates')));
+      expect(unsigned, isNot(contains('-authenticationKeyID')));
     });
 
     testWithoutContext('selects the project or the workspace', () {
