@@ -5,7 +5,10 @@
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tvos/build_targets/application.dart';
+import 'package:flutter_tvos/tvos_build_info.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -468,6 +471,123 @@ buildSettings = {
       expect(args().first, 'xcodebuild');
       expect(args().last, 'build');
     });
+  });
+
+  group('Code signing - what --no-codesign actually passes', () {
+    // The group above pins the PLUMBING: that `codesign` reaches xcodebuildArgs
+    // and drops -allowProvisioningUpdates. This one pins the PAYLOAD: which
+    // build settings the resolver returns. Both are needed. With only the
+    // former, every one of these five settings could be deleted, or the
+    // `!codesign` branch bypassed entirely, and the suite stayed green --
+    // verified by mutation. They are exercised for real only on a machine with
+    // no certificate, which is not where anyone runs the suite, so a regression
+    // would surface as a red CI build in release-train rather than a red test.
+
+    NativeTvosBundle bundle({bool codesign = true, bool simulator = false}) =>
+        NativeTvosBundle(
+          TvosBuildInfo(
+            const BuildInfo(
+              BuildMode.release,
+              null,
+              treeShakeIcons: false,
+              packageConfigPath: '.dart_tool/package_config.json',
+            ),
+            targetArch: 'arm64',
+            simulator: simulator,
+            codesign: codesign,
+          ),
+          'lib/main.dart',
+        );
+
+    testUsingContext(
+      'an unsigned device build passes exactly the five settings that make it work',
+      () async {
+        expect(
+          await bundle(codesign: false).resolveSigningArgs(
+            fileSystem.directory('tvos')..createSync(recursive: true),
+            false,
+            codesign: false,
+          ),
+          // Not containsAll: the claim in the source comment is that every one
+          // of these is required, so the exact list is the assertion. Adding a
+          // setting to production code should make a reviewer look here.
+          equals(<String>[
+            'CODE_SIGNING_ALLOWED=NO',
+            'CODE_SIGNING_REQUIRED=NO',
+            'CODE_SIGN_IDENTITY=',
+            'CODE_SIGN_ENTITLEMENTS=',
+            'EXPANDED_CODE_SIGN_IDENTITY=',
+          ]),
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'refuses to sign even when a team is there for the taking',
+      () async {
+        // The mutation this exists to catch is bypassing the `!codesign`
+        // branch. Without a team in the environment that mutation falls
+        // through to keychain discovery and still returns something empty-ish;
+        // with one, it returns DEVELOPMENT_TEAM and the difference is loud.
+        expect(
+          await bundle(codesign: false).resolveSigningArgs(
+            fileSystem.directory('tvos')..createSync(recursive: true),
+            false,
+            codesign: false,
+          ),
+          isNot(contains('DEVELOPMENT_TEAM=ABC1234567')),
+        );
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+        Platform: () => FakePlatform(
+          environment: <String, String>{'DEVELOPMENT_TEAM': 'ABC1234567'},
+        ),
+      },
+    );
+
+    testUsingContext(
+      'says so, because an unsigned artifact cannot be installed',
+      () async {
+        await bundle(codesign: false).resolveSigningArgs(
+          fileSystem.directory('tvos')..createSync(recursive: true),
+          false,
+          codesign: false,
+        );
+        expect(testLogger.statusText, contains('--no-codesign'));
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'a simulator build carries no signing settings either way',
+      () async {
+        for (final codesign in <bool>[true, false]) {
+          expect(
+            await bundle(codesign: codesign, simulator: true)
+                .resolveSigningArgs(
+              fileSystem.directory('tvos')..createSync(recursive: true),
+              true,
+              codesign: codesign,
+            ),
+            isEmpty,
+            reason: 'simulator, codesign: $codesign',
+          );
+        }
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
   });
 
   // The former 'Code signing - simulator vs device' group lived here. Both of

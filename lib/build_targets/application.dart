@@ -650,7 +650,7 @@ class NativeTvosBundle extends Target {
     final bool hasWorkspace = tvosProjectDir.childDirectory('Runner.xcworkspace').existsSync();
 
     // Code signing settings for physical device builds
-    final List<String> signingArgs = await _resolveSigningArgs(
+    final List<String> signingArgs = await resolveSigningArgs(
       tvosProjectDir,
       buildInfo.simulator,
       codesign: buildInfo.codesign,
@@ -855,7 +855,14 @@ class NativeTvosBundle extends Target {
   /// 3. First Apple Development identity in the keychain
   ///
   /// Returns xcodebuild arguments like `DEVELOPMENT_TEAM=...` and `CODE_SIGN_STYLE=Automatic`.
-  Future<List<String>> _resolveSigningArgs(
+  ///
+  /// Visible for testing because the `codesign: false` branch is the whole of
+  /// `--no-codesign`, and it is only ever exercised for real on a machine with
+  /// no certificate — which is not where anyone runs the suite. Left private,
+  /// each of its five settings could be deleted with the suite still green,
+  /// and the regression would surface as a red CI build rather than a red test.
+  @visibleForTesting
+  Future<List<String>> resolveSigningArgs(
     Directory tvosProjectDir,
     bool isSimulator, {
     bool codesign = true,
