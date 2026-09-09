@@ -650,14 +650,21 @@ class NativeTvosBundle extends Target {
     final bool hasWorkspace = tvosProjectDir.childDirectory('Runner.xcworkspace').existsSync();
 
     // Code signing settings for physical device builds
-    final List<String> signingArgs = await _resolveSigningArgs(tvosProjectDir, buildInfo.simulator);
+    final List<String> signingArgs = await resolveSigningArgs(
+      tvosProjectDir,
+      buildInfo.simulator,
+      codesign: buildInfo.codesign,
+    );
 
     // Resolved *before* startProgress below, not inside the argument list:
     // this can warn, and a warning raised under the spinner is emitted at the
     // top of a multi-minute build — then buried under xcodebuild's full
     // stdout and stderr if the build fails. Same reasoning as the migration
     // guards further down, which are deliberately emitted after the build.
-    final List<String> authenticationArgs = buildInfo.simulator
+    // Nothing to authenticate when nothing is being signed: the key exists to
+    // let xcodebuild create a provisioning profile, and an unsigned build asks
+    // for none.
+    final List<String> authenticationArgs = buildInfo.simulator || !buildInfo.codesign
         ? const <String>[]
         : resolveAuthenticationArgs(
             globals.platform.environment,
@@ -677,6 +684,7 @@ class NativeTvosBundle extends Target {
           isSimulator: buildInfo.simulator,
           signingArgs: signingArgs,
           authenticationArgs: authenticationArgs,
+          codesign: buildInfo.codesign,
         ),
         workingDirectory: tvosProjectDir.path,
       );
@@ -847,9 +855,37 @@ class NativeTvosBundle extends Target {
   /// 3. First Apple Development identity in the keychain
   ///
   /// Returns xcodebuild arguments like `DEVELOPMENT_TEAM=...` and `CODE_SIGN_STYLE=Automatic`.
-  Future<List<String>> _resolveSigningArgs(Directory tvosProjectDir, bool isSimulator) async {
+  ///
+  /// Visible for testing because the `codesign: false` branch is the whole of
+  /// `--no-codesign`, and it is only ever exercised for real on a machine with
+  /// no certificate — which is not where anyone runs the suite. Left private,
+  /// each of its five settings could be deleted with the suite still green,
+  /// and the regression would surface as a red CI build rather than a red test.
+  @visibleForTesting
+  Future<List<String>> resolveSigningArgs(
+    Directory tvosProjectDir,
+    bool isSimulator, {
+    bool codesign = true,
+  }) async {
     if (isSimulator) {
       return const <String>[];
+    }
+
+    // `--no-codesign`. Every one of these is needed: CODE_SIGNING_ALLOWED=NO
+    // alone still leaves Xcode resolving a provisioning profile for the
+    // bundle's entitlements, which is the half of signing that fails on a
+    // machine with no certificate. The empty identity and the disabled
+    // requirement together are what upstream `flutter build ios --no-codesign`
+    // passes, and they are what make this work with no keychain at all.
+    if (!codesign) {
+      globals.logger.printStatus('Building without code signing (--no-codesign).');
+      return const <String>[
+        'CODE_SIGNING_ALLOWED=NO',
+        'CODE_SIGNING_REQUIRED=NO',
+        'CODE_SIGN_IDENTITY=',
+        'CODE_SIGN_ENTITLEMENTS=',
+        'EXPANDED_CODE_SIGN_IDENTITY=',
+      ];
     }
 
     // 1. Check DEVELOPMENT_TEAM environment variable
@@ -1850,6 +1886,7 @@ class NativeTvosBundle extends Target {
     required bool isSimulator,
     required List<String> signingArgs,
     required List<String> authenticationArgs,
+    bool codesign = true,
   }) {
     return <String>[
       'xcodebuild',
@@ -1872,10 +1909,11 @@ class NativeTvosBundle extends Target {
       // device. Without this, a device build fails with "Automatic
       // signing is disabled and unable to generate a profile … pass
       // -allowProvisioningUpdates". Not used for the simulator, which
-      // is not code-signed.
-      if (!isSimulator) '-allowProvisioningUpdates',
+      // is not code-signed, nor under --no-codesign, where there is no
+      // profile to update and nothing to reach the developer portal for.
+      if (!isSimulator && codesign) '-allowProvisioningUpdates',
       // ...and give it something to authenticate *with*.
-      if (!isSimulator) ...authenticationArgs,
+      if (!isSimulator && codesign) ...authenticationArgs,
       'build',
     ];
   }

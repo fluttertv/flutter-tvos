@@ -2,6 +2,26 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.10.1] - 2026-09-08
+
+### Added
+
+- **`flutter-tvos build tvos --no-codesign`**, mirroring `flutter build ios`.
+  A device build always tried to sign: with no `DEVELOPMENT_TEAM`, no team in
+  the Xcode project and no certificate in the keychain, `xcodebuild` failed with
+  *Signing for "Runner" requires a development team*. There was no way to
+  compile a device build on a machine without a certificate.
+
+  That is what a CI compile check needs — it proves the app links and that the
+  symbols it depends on reached the binary, both of which happen before signing.
+  The flag also drops `-allowProvisioningUpdates` and the App Store Connect key,
+  since an unsigned build has no profile to fetch.
+
+  Verified on an `appletvos` release build with no team in the environment: the
+  bundle comes out unsigned with no embedded provisioning profile, and all ten
+  of `package:flutter_tvos`'s FFI symbols are defined and in the dyld export
+  trie. Signed builds are unchanged.
+
 ## [1.10.0] - 2026-09-03
 
 ### Fixed

@@ -65,6 +65,14 @@ class BuildTvosCommand extends BuildSubCommand with TvosRequiredArtifacts {
       'simulator',
       help: 'Build for the tvOS Simulator instead of a physical device.',
     );
+    argParser.addFlag(
+      'codesign',
+      defaultsTo: true,
+      help:
+          'Codesign the application bundle. Disable to compile a device build '
+          'on a machine with no signing certificate — the result links and can '
+          'be inspected, but cannot be installed. Simulator builds ignore this.',
+    );
   }
 
   @override
@@ -88,6 +96,7 @@ class BuildTvosCommand extends BuildSubCommand with TvosRequiredArtifacts {
       await getBuildInfo(),
       targetArch: 'arm64',
       simulator: simulator,
+      codesign: boolArg('codesign'),
     );
 
     await TvosBuilder.buildBundle(
