@@ -2,7 +2,12 @@ name: Test
 
 on:
   push:
-    branches: [main, dev]
+    # train/** is here so a release-train bump is tested on its own branch, on
+    # push, before anything proposes moving dev onto it. The train lands a bump
+    # by fast-forwarding dev directly -- no pull request is ever opened -- so
+    # without this the bump commit reaches dev carrying no checks at all, and
+    # the `pull_request` trigger below never fires for it.
+    branches: [main, dev, 'train/**']
   pull_request:
     branches: [main, dev]
 
