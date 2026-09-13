@@ -1,0 +1,88 @@
+name: Bug report
+description: Something in flutter-tvos does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The version fields are the ones CONTRIBUTING.md asks for; a report that has them can usually be reproduced the same day.
+  - type: input
+    id: version
+    attributes:
+      label: flutter-tvos --version
+      description: Paste the full output.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: "`sw_vers -productVersion`"
+      placeholder: "26.1"
+    validations:
+      required: true
+  - type: input
+    id: xcode
+    attributes:
+      label: Xcode version
+      description: "`xcodebuild -version`"
+      placeholder: "Xcode 26.1 (17B55)"
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Where does it happen?
+      multiple: true
+      options:
+        - tvOS Simulator
+        - Physical Apple TV
+        - Build only, no device involved
+        - CLI itself (doctor, create, devices, ...)
+    validations:
+      required: true
+  - type: input
+    id: tvos
+    attributes:
+      label: tvOS version and device model
+      description: If a device or simulator is involved.
+      placeholder: "tvOS 26.1, Apple TV 4K (3rd generation)"
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Build mode
+      multiple: true
+      options:
+        - debug
+        - profile
+        - release
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. flutter-tvos create my_app
+        2. cd my_app && flutter-tvos run -d <id>
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Full output
+      description: The complete error output, ideally from a `-v` run. Formatted as a code block automatically.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: "`flutter-tvos doctor -v` reports no problems, or its problems are included above"
+        - label: I searched the existing issues

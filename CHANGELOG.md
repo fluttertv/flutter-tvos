@@ -6,6 +6,10 @@ All notable changes to flutter-tvos will be documented here.
 
 ### Changed
 
+- **GitHub releases now carry their changelog entry.** The release page used to say
+  "See CHANGELOG.md"; it now shows this file's entry for the released version,
+  with the Flutter and CLI versions underneath.
+
 - **Upgraded to Flutter 3.47.4** (`9584c6713b324636289d067944a46fd6b49df14b`).
   The engine artifacts are unchanged: nothing the tvOS engine is compiled from
   moved in this Flutter release, so `engine-87021d7a8cd67447b3e722a510bca8199d49f783`

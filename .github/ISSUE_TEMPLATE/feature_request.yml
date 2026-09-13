@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest a change to the CLI, the templates or the docs.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is the problem?
+      description: What you are trying to do today, and where flutter-tvos gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like instead?
+      description: If the stock `flutter` CLI or another embedder already does this, say how.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you have tried

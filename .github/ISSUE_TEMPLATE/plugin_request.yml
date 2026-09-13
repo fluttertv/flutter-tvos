@@ -1,0 +1,40 @@
+name: Plugin port request
+description: Ask for a tvOS implementation of an existing Flutter plugin.
+labels: [plugin-request]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        tvOS plugins live in [fluttertv/plugins](https://github.com/fluttertv/plugins) and are published on pub.dev under the `fluttertv.dev` publisher. Check the list there first.
+
+        You can also scaffold a port yourself: `flutter-tvos plugin port --from-pub <package>` produces a `<package>_tvos` package from the plugin's iOS implementation. See [Porting an existing plugin](https://github.com/fluttertv/flutter-tvos/blob/dev/doc/port-plugin.md).
+  - type: input
+    id: package
+    attributes:
+      label: pub.dev package
+      placeholder: video_player
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: How does its iOS implementation work?
+      options:
+        - Platform channels (Swift or Objective-C)
+        - FFI (C symbols)
+        - Dart only
+        - Not sure
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you need it for?
+      description: Which parts of the plugin's API your app uses. A port can start with those.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I checked fluttertv/plugins and pub.dev for an existing `_tvos` package
+        - label: I tried `flutter-tvos plugin port` and can describe where it stopped
