@@ -2,6 +2,37 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.10.3] - 2026-09-13
+
+### Changed
+
+- **Upgraded to Flutter 3.47.4** (`9584c6713b324636289d067944a46fd6b49df14b`).
+  The engine artifacts are unchanged: nothing the tvOS engine is compiled from
+  moved in this Flutter release, so `engine-87021d7a8cd67447b3e722a510bca8199d49f783`
+  still describes them.
+
+  Ported by hand, not by the release train. 3.47.4 cherry-picked
+  [flutter/flutter#192301](https://github.com/flutter/flutter/pull/192301), which
+  made `LLDB.attachAndStart` take a required `IOSDeviceSupport`, so the CLI did
+  not compile against it. The CLI analyzes and tests clean against the new SDK;
+  the end-to-end matrix did not run for this release.
+
+### Fixed
+
+- **Device debug on an Apple TV is unchanged by Flutter 3.47.4's Device Support
+  handling.** Upstream's `IOSDeviceSupport` looks for symbols only in
+  `~/Library/Developer/Xcode/iOS DeviceSupport`, and when it finds them lldb is
+  sent `platform select remote-ios --sysroot <symbols>` before attaching. The
+  new `TvosDeviceSupport` looks in `tvOS DeviceSupport` instead, under the
+  directory name Xcode uses (`AppleTV14,1 26.6 (23L773)`, from devicectl's
+  model, OS version and build), and never hands lldb a sysroot, so the attach
+  sequence on an Apple TV is the one 3.47.3 used.
+
+  If the attach is slow, the warning now names the missing or unfinished tvOS
+  Device Support directory — the known cause of a device debug run that hangs
+  with no error — and treats `.finalized` as the completion marker, since the
+  lock files survive a successful copy.
+
 ## [1.10.2] - 2026-09-10
 
 ### Changed
