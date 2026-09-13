@@ -1,23 +1,51 @@
-# flutter-tvos
+<p align="center">
+  <img src="doc/assets/flutter-tvos-logo.png" width="340" alt="flutter-tvos">
+</p>
 
-A Flutter toolchain for building and running Flutter apps on **Apple TV (tvOS)**.
+<h1 align="center">flutter-tvos</h1>
 
-`flutter-tvos` is a drop-in CLI companion to the Flutter SDK — same commands, same hot reload, same DevTools — targeting tvOS instead of iOS.
+<p align="center">
+  Build and run Flutter apps on <strong>Apple TV</strong>.<br>
+  Same commands, same hot reload, same DevTools — targeting tvOS instead of iOS.
+</p>
+
+<p align="center">
+  <a href="https://github.com/fluttertv/flutter-tvos/releases/latest"><img src="https://img.shields.io/github/v/release/fluttertv/flutter-tvos?label=release&color=54C5F8" alt="Latest release"></a>
+  <a href="https://github.com/fluttertv/flutter-tvos/actions/workflows/test.yml"><img src="https://github.com/fluttertv/flutter-tvos/actions/workflows/test.yml/badge.svg?branch=dev" alt="Test"></a>
+  <a href="https://pub.dev/packages/flutter_tvos"><img src="https://img.shields.io/pub/v/flutter_tvos?label=flutter_tvos" alt="flutter_tvos on pub.dev"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/fluttertv/flutter-tvos" alt="License"></a>
+</p>
+
+<p align="center">
+  <a href="https://fluttertv.dev">fluttertv.dev</a> ·
+  <a href="doc/get-started.md">Getting started</a> ·
+  <a href="doc/commands.md">Commands</a> ·
+  <a href="https://github.com/fluttertv/plugins">Plugins</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="https://github.com/fluttertv/flutter-tvos/discussions">Discussions</a>
+</p>
+
+`flutter-tvos` is a drop-in CLI companion to the Flutter SDK. The Flutter SDK
+itself is never patched: tvOS support lives in a pre-built engine and in this
+CLI, the same way flutter-tizen and flutter-elinux work.
 
 > **macOS only.** Xcode is required.
 
-## Current version
+## Versions
 
-- flutter-tvos: `1.10.1`
-- Flutter SDK: `3.47.2` (`d3b14c876900e553bc736ca19295fc09e3853e8e`)
-- tvOS engine artifacts: published unsigned — `flutter-tvos` signs the engine on
-  your machine with your own `Apple Distribution` certificate on every device
-  build, which is what Apple's ITMS-91065 check requires. See "Code signing"
-  below.
+Every release pins one Flutter SDK and the matching tvOS engine together, and
+the tag names both: `v<flutter>-tvos.<cli>`, so `v3.47.3-tvos.1.10.2` is
+flutter-tvos 1.10.2 on Flutter 3.47.3. The release badge above is the current
+one. `flutter-tvos versions` lists every line that is still supported, and
+`flutter-tvos use <version>` switches between them.
 
-The engine artifact tag is the commit that produced those artifacts, rather than
-a Flutter version. A version-shaped tag went stale as soon as one patch set was
-reused across Flutter releases; a SHA names what was actually built.
+The engine artifacts are published unsigned — `flutter-tvos` signs the engine
+on your machine with your own `Apple Distribution` certificate on every device
+build, which is what Apple's ITMS-91065 check requires. See
+[Code signing](#code-signing). Their release tag is the engine commit that built
+them rather than a Flutter version: a version-shaped tag went stale as soon as
+one patch set was reused across Flutter releases, and a SHA names what was
+actually built.
 
 ## Installation
 
