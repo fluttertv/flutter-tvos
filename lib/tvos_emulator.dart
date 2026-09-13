@@ -210,6 +210,11 @@ class TvosEmulator {
           logger: logger,
           isSimulator: false,
           osVersion: osVersion.isEmpty ? null : osVersion,
+          modelCode: hardware['productType'] as String?,
+          // Xcode's Device Support directory spelling: "26.6 (23L773)".
+          deviceSupportVersion: osVersionNumber == null || osBuildUpdate == null
+              ? null
+              : '$osVersionNumber ($osBuildUpdate)',
         ),
       );
     }

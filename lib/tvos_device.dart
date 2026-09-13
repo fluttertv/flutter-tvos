@@ -28,6 +28,7 @@ import 'package:meta/meta.dart';
 import 'tvos_application_package.dart';
 import 'tvos_build_info.dart';
 import 'tvos_builder.dart';
+import 'tvos_device_support.dart';
 
 /// A log reader that captures logs from a physical tvOS device via devicectl.
 ///
@@ -333,6 +334,8 @@ class TvosDevice extends Device {
     required this.logger,
     required this.isSimulator,
     this.osVersion,
+    this.modelCode,
+    this.deviceSupportVersion,
   }) : super(
          category: Category.mobile,
          platformType: PlatformType.custom,
@@ -350,6 +353,21 @@ class TvosDevice extends Device {
   /// devices` shows the same version detail stock `flutter devices` does
   /// for iOS.
   final String? osVersion;
+
+  /// Hardware model such as `AppleTV14,1`. Physical devices only.
+  final String? modelCode;
+
+  /// OS version and build as Xcode names its Device Support directories, such
+  /// as `26.6 (23L773)`. Physical devices only.
+  final String? deviceSupportVersion;
+
+  late final TvosDeviceSupport deviceSupport = TvosDeviceSupport(
+    homeDirectory: globals.fsUtils.homeDirPath == null
+        ? null
+        : globals.fs.directory(globals.fsUtils.homeDirPath),
+    modelCode: modelCode,
+    operatingSystemVersion: deviceSupportVersion,
+  );
 
   DeviceLogReader? _logReader;
   LLDB? _lldb;
@@ -779,6 +797,7 @@ class TvosDevice extends Device {
               appProcessId: pid,
               lldbLogForwarder: lldbForwarder,
               mode: debuggingOptions.buildInfo.mode,
+              deviceSupport: deviceSupport,
             )
             .timeout(
               timeout,
