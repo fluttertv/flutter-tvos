@@ -2,14 +2,33 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'package:file/file.dart';
+import 'dart:async';
+
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/build_info.dart';
+import 'package:flutter_tools/src/ios/device_support.dart';
+import 'package:flutter_tools/src/ios/lldb.dart';
 import 'package:flutter_tvos/tvos_device.dart';
 import 'package:flutter_tvos/tvos_device_support.dart';
 import 'package:flutter_tvos/tvos_emulator.dart';
+import 'package:test/fake.dart';
 
 import '../src/common.dart';
+import '../src/context.dart';
+
+const String _devicectlAppleTv = '''
+{"result": {"devices": [{
+  "identifier": "00008110-000A1B2C3D4E5F60",
+  "deviceProperties": {"name": "Living Room", "osVersionNumber": "26.6", "osBuildUpdate": "23L773"},
+  "hardwareProperties": {"platform": "tvOS", "reality": "physical", "productType": "AppleTV14,1"}
+}]}}
+''';
+
+const String _deviceDirPath =
+    '/Users/dev/Library/Developer/Xcode/tvOS DeviceSupport/AppleTV14,1 26.6 (23L773)';
 
 void main() {
   late FileSystem fs;
@@ -30,16 +49,22 @@ void main() {
     operatingSystemVersion: version,
   );
 
-  Directory deviceDir() => home
-      .childDirectory('Library/Developer/Xcode/tvOS DeviceSupport')
-      .childDirectory('AppleTV14,1 26.6 (23L773)');
+  Directory deviceDir() => fs.directory(_deviceDirPath);
+
+  // A home directory in the memory file system is all the device reads from
+  // the context; nothing here launches a process.
+  Map<Type, Generator> overrides() => <Type, Generator>{
+    FileSystem: () => fs,
+    ProcessManager: () => FakeProcessManager.empty(),
+    Platform: () => FakePlatform(environment: <String, String>{'HOME': '/Users/dev'}),
+  };
+
+  // What upstream's slow-attach timer prints when the warning is null.
+  const upstreamBugReport = 'flutter/flutter/issues';
 
   group('TvosDeviceSupport', () {
     testWithoutContext('looks in tvOS DeviceSupport, named the way Xcode names it', () {
-      expect(
-        support().deviceDirectory!.path,
-        '/Users/dev/Library/Developer/Xcode/tvOS DeviceSupport/AppleTV14,1 26.6 (23L773)',
-      );
+      expect(support().deviceDirectory!.path, _deviceDirPath);
     });
 
     testWithoutContext('never gives lldb a sysroot, even when symbols exist', () {
@@ -51,12 +76,30 @@ void main() {
       expect(support().existingDeviceSupportSymbols, isNull);
     });
 
-    testWithoutContext('no warning once Xcode has finished preparing the device', () {
+    testWithoutContext('blames the network, not Flutter, for a slow attach with symbols ready', () {
       deviceDir().childDirectory('Symbols').createSync(recursive: true);
       deviceDir().childFile('.finalized').createSync();
 
-      expect(support().missingSymbolsWarning(), isNull);
-      expect(support().missingSymbolsWarning(warnWhenSymbolsExist: true), isNull);
+      final String? warning = support().missingSymbolsWarning();
+      expect(warning, contains('most likely the wireless connection'));
+      expect(warning, contains('FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS'));
+      expect(warning, isNot(contains(upstreamBugReport)));
+    });
+
+    testWithoutContext('calls a prepared copy stale when lldb still reads from the device', () {
+      deviceDir().childDirectory('Symbols').createSync(recursive: true);
+      deviceDir().childFile('.finalized').createSync();
+
+      final String? warning = support().missingSymbolsWarning(warnWhenSymbolsExist: true);
+      expect(warning, contains('probably stale or incomplete'));
+      expect(warning, contains('rm -rf "$_deviceDirPath"'));
+    });
+
+    testWithoutContext('accepts symbols one level down, the Xcode 27 iOS layout', () {
+      deviceDir().childDirectory('arm64e').childDirectory('Symbols').createSync(recursive: true);
+      deviceDir().childFile('.finalized').createSync();
+
+      expect(support().missingSymbolsWarning(), contains('wireless connection'));
     });
 
     testWithoutContext(
@@ -68,10 +111,21 @@ void main() {
 
         final String? warning = support().missingSymbolsWarning();
         expect(warning, contains('has not finished preparing'));
-        expect(warning, contains('tvOS DeviceSupport/AppleTV14,1 26.6 (23L773)'));
+        expect(warning, contains(_deviceDirPath));
         expect(warning, isNot(contains('iOS DeviceSupport')));
       },
     );
+
+    testWithoutContext('does not count .finalized without symbols as finished', () {
+      deviceDir().createSync(recursive: true);
+      deviceDir().childFile('.finalized').createSync();
+
+      expect(support().missingSymbolsWarning(), contains('has not finished preparing'));
+      expect(
+        support().missingSymbolsWarning(warnWhenSymbolsExist: true),
+        contains('has not finished preparing'),
+      );
+    });
 
     testWithoutContext('warns that support is missing when there is no directory', () {
       final String? warning = support().missingSymbolsWarning();
@@ -79,10 +133,13 @@ void main() {
       expect(warning, isNot(contains('finished')));
     });
 
-    testWithoutContext('says nothing when the device cannot be identified', () {
-      expect(support(modelCode: null).missingSymbolsWarning(), isNull);
-      expect(support(version: null).missingSymbolsWarning(), isNull);
-      expect(support(modelCode: null).deviceDirectory, isNull);
+    testWithoutContext('still warns, without a path, when the device cannot be identified', () {
+      for (final unknown in <TvosDeviceSupport>[support(modelCode: null), support(version: null)]) {
+        expect(unknown.deviceDirectory, isNull);
+        final String? warning = unknown.missingSymbolsWarning();
+        expect(warning, contains('could not work out where Xcode keeps debugger support'));
+        expect(warning, isNot(contains(upstreamBugReport)));
+      }
     });
 
     testWithoutContext('prepareDeviceSupport does nothing', () async {
@@ -93,13 +150,10 @@ void main() {
 
   group('devicectl discovery', () {
     testWithoutContext('carries the model and Device Support version onto the device', () {
-      final List<TvosDevice> devices = TvosEmulator.parseDevicectlOutput('''
-{"result": {"devices": [{
-  "identifier": "00008110-000A1B2C3D4E5F60",
-  "deviceProperties": {"name": "Living Room", "osVersionNumber": "26.6", "osBuildUpdate": "23L773"},
-  "hardwareProperties": {"platform": "tvOS", "reality": "physical", "productType": "AppleTV14,1"}
-}]}}
-''', BufferLogger.test());
+      final List<TvosDevice> devices = TvosEmulator.parseDevicectlOutput(
+        _devicectlAppleTv,
+        BufferLogger.test(),
+      );
 
       expect(devices, hasLength(1));
       expect(devices.single.modelCode, 'AppleTV14,1');
@@ -118,5 +172,94 @@ void main() {
       expect(devices.single.modelCode, isNull);
       expect(devices.single.deviceSupportVersion, isNull);
     });
+
+    testUsingContext("builds the device's support from its home directory, model and build", () {
+      final TvosDevice device = TvosEmulator.parseDevicectlOutput(
+        _devicectlAppleTv,
+        BufferLogger.test(),
+      ).single;
+
+      expect(device.deviceSupport.deviceDirectory?.path, _deviceDirPath);
+    }, overrides: overrides());
   });
+
+  group('TvosDevice.attachLldb', () {
+    testUsingContext(
+      "hands lldb the device's own support, and surfaces lldb's missing-symbols line",
+      () async {
+        final logger = BufferLogger.test();
+        final TvosDevice device = TvosEmulator.parseDevicectlOutput(
+          _devicectlAppleTv,
+          logger,
+        ).single;
+        final forwarder = LLDBLogForwarder();
+        final lldb = _FakeLLDB(forwarder);
+
+        final bool attached = await device.attachLldb(
+          lldb: lldb,
+          lldbLogForwarder: forwarder,
+          pid: 42,
+          mode: BuildMode.debug,
+          timeout: const Duration(minutes: 3),
+        );
+        // Let the broadcast stream deliver the line.
+        await pumpEventQueue();
+
+        expect(attached, isTrue);
+        expect(lldb.receivedSupport, same(device.deviceSupport));
+        expect(lldb.receivedPid, 42);
+        expect(logger.warningText, contains('has not prepared debugger support'));
+        expect(logger.warningText, contains(_deviceDirPath));
+        expect(logger.traceText, contains('[lldb] warning: libobjc.A.dylib'));
+      },
+      overrides: overrides(),
+    );
+
+    testUsingContext('gives up at the timeout instead of waiting on lldb forever', () async {
+      final logger = BufferLogger.test();
+      final TvosDevice device = TvosEmulator.parseDevicectlOutput(_devicectlAppleTv, logger).single;
+      final forwarder = LLDBLogForwarder();
+
+      final bool attached = await device.attachLldb(
+        lldb: _FakeLLDB(forwarder, never: true),
+        lldbLogForwarder: forwarder,
+        pid: 42,
+        mode: BuildMode.debug,
+        timeout: const Duration(milliseconds: 10),
+      );
+
+      expect(attached, isFalse);
+      expect(logger.traceText, contains('lldb attach timed out'));
+    }, overrides: overrides());
+  });
+}
+
+class _FakeLLDB extends Fake implements LLDB {
+  _FakeLLDB(this._forwarder, {this.never = false});
+
+  final LLDBLogForwarder _forwarder;
+  final bool never;
+
+  IOSDeviceSupport? receivedSupport;
+  int? receivedPid;
+
+  @override
+  Future<bool> attachAndStart({
+    required String deviceId,
+    required int appProcessId,
+    required LLDBLogForwarder lldbLogForwarder,
+    required BuildMode mode,
+    required IOSDeviceSupport deviceSupport,
+  }) {
+    receivedSupport = deviceSupport;
+    receivedPid = appProcessId;
+    if (never) {
+      return Completer<bool>().future;
+    }
+    _forwarder.addLog(
+      'warning: libobjc.A.dylib is being read from process memory. This may '
+      'slow down debugging.',
+    );
+    return Future<bool>.value(true);
+  }
 }
