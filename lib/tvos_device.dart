@@ -28,6 +28,7 @@ import 'package:meta/meta.dart';
 import 'tvos_application_package.dart';
 import 'tvos_build_info.dart';
 import 'tvos_builder.dart';
+import 'tvos_device_support.dart';
 
 /// A log reader that captures logs from a physical tvOS device via devicectl.
 ///
@@ -333,6 +334,8 @@ class TvosDevice extends Device {
     required this.logger,
     required this.isSimulator,
     this.osVersion,
+    this.modelCode,
+    this.deviceSupportVersion,
   }) : super(
          category: Category.mobile,
          platformType: PlatformType.custom,
@@ -350,6 +353,21 @@ class TvosDevice extends Device {
   /// devices` shows the same version detail stock `flutter devices` does
   /// for iOS.
   final String? osVersion;
+
+  /// Hardware model such as `AppleTV14,1`. Physical devices only.
+  final String? modelCode;
+
+  /// OS version and build as Xcode names its Device Support directories, such
+  /// as `26.6 (23L773)`. Physical devices only.
+  final String? deviceSupportVersion;
+
+  late final TvosDeviceSupport deviceSupport = TvosDeviceSupport(
+    homeDirectory: globals.fsUtils.homeDirPath == null
+        ? null
+        : globals.fs.directory(globals.fsUtils.homeDirPath),
+    modelCode: modelCode,
+    operatingSystemVersion: deviceSupportVersion,
+  );
 
   DeviceLogReader? _logReader;
   LLDB? _lldb;
@@ -419,6 +437,56 @@ class TvosDevice extends Device {
   /// elapsed time, not attempt count: attempts are not reliably spaced (see
   /// [_mdnsAttemptTimeout]), and this path spawns `xcrun devicectl`.
   static const Duration _devicectlProbeInterval = Duration(seconds: 25);
+
+  /// Attaches [lldb] to the app process [pid] and resumes it, giving up after
+  /// [timeout]. Returns whether the debugger attached.
+  ///
+  /// lldb's own output goes to the verbose log. The one line that is surfaced
+  /// is lldb reporting that it is reading system libraries from the device,
+  /// which on an Apple TV means the tvOS Device Support copy is missing,
+  /// unfinished or stale; [deviceSupport] turns that into a warning naming the
+  /// directory. [LLDB] forwards log lines only once it has attached, lets that
+  /// line through once per session, and not at all if its slow-attach timer
+  /// has already warned, so this covers symbol reads during the run, not
+  /// during a slow attach.
+  @visibleForTesting
+  Future<bool> attachLldb({
+    required LLDB lldb,
+    required LLDBLogForwarder lldbLogForwarder,
+    required int pid,
+    required BuildMode mode,
+    required Duration timeout,
+  }) {
+    lldbLogForwarder.logLines.listen((String line) {
+      logger.printTrace('[lldb] $line');
+      if (LLDB.missingSymbolsPattern.hasMatch(line)) {
+        final String? warning = deviceSupport.missingSymbolsWarning(warnWhenSymbolsExist: true);
+        if (warning != null) {
+          logger.printWarning(warning);
+        }
+      }
+    });
+    // lldb.attachAndStart only warns after 60s — it never gives up on its own.
+    // Over the wireless CoreDevice tunnel the attach can otherwise hang forever,
+    // so cap it here. The cap is generous (see [_lldbAttachTimeout]) because on
+    // tvOS the lldb path is the only one that sustains a debug session, and a
+    // too-short cap abandons attaches that would have succeeded.
+    return lldb
+        .attachAndStart(
+          deviceId: id,
+          appProcessId: pid,
+          lldbLogForwarder: lldbLogForwarder,
+          mode: mode,
+          deviceSupport: deviceSupport,
+        )
+        .timeout(
+          timeout,
+          onTimeout: () {
+            logger.printTrace('lldb attach timed out after ${timeout.inSeconds}s; falling back.');
+            return false;
+          },
+        );
+  }
 
   /// How long to wait for lldb to attach over the (wireless-only) CoreDevice
   /// tunnel before giving up. Apple TV has no USB data port, so the lldb attach
@@ -742,9 +810,6 @@ class TvosDevice extends Device {
       if (pid != null) {
         logger.printTrace('Attaching lldb to pid $pid for JIT debugging...');
         final LLDBLogForwarder lldbForwarder = _lldbLogForwarder ??= LLDBLogForwarder();
-        lldbForwarder.logLines.listen((String line) {
-          logger.printTrace('[lldb] $line');
-        });
         // 3.47.0 made xcodeProjectInterpreter required — LLDB now reads the
         // Xcode version to decide whether it needs the `process interrupt`
         // stop-hook dance. Stock flutter_tools receives it as an injected
@@ -766,29 +831,13 @@ class TvosDevice extends Device {
           processUtils: globals.processUtils,
           xcodeProjectInterpreter: interpreter,
         );
-        // lldb.attachAndStart only prints a "taking longer than expected"
-        // *warning* after 60s — it never gives up on its own. Over the wireless
-        // CoreDevice tunnel the attach can otherwise hang forever, so cap it
-        // ourselves. The cap is generous (see [_lldbAttachTimeout]) because on
-        // tvOS the lldb path is the only one that sustains a debug session, and
-        // a too-short cap abandons attaches that would have succeeded.
-        final Duration timeout = _lldbAttachTimeout;
-        attached = await lldb
-            .attachAndStart(
-              deviceId: id,
-              appProcessId: pid,
-              lldbLogForwarder: lldbForwarder,
-              mode: debuggingOptions.buildInfo.mode,
-            )
-            .timeout(
-              timeout,
-              onTimeout: () {
-                logger.printTrace(
-                  'lldb attach timed out after ${timeout.inSeconds}s; falling back.',
-                );
-                return false;
-              },
-            );
+        attached = await attachLldb(
+          lldb: lldb,
+          lldbLogForwarder: lldbForwarder,
+          pid: pid,
+          mode: debuggingOptions.buildInfo.mode,
+          timeout: _lldbAttachTimeout,
+        );
       }
 
       if (!attached) {
@@ -1047,9 +1096,7 @@ class TvosDevice extends Device {
       null,
       const <String, Object?>{},
       interfaceType: DeviceConnectionInterface.wireless,
-    )..removeWhere(
-        (String a) => a == '--enable-checked-mode' || a == '--verify-entry-points',
-      );
+    )..removeWhere((String a) => a == '--enable-checked-mode' || a == '--verify-entry-points');
     // tvOS wireless essentials (same flags our lldb/devicectl launch forces):
     // - bind the VM on every interface so the Mac can reach it over the LAN.
     // - drop the VM Service auth token so a bare host:port from mDNS connects
@@ -1229,8 +1276,7 @@ class TvosDevice extends Device {
         // which can throw (full or read-only temp, xcrun missing from PATH),
         // and losing the VM Service host must not abort a run whose app is
         // already installed and running on the TV.
-        if (!probedDevicectl ||
-            elapsed.elapsed - lastDevicectlProbe >= _devicectlProbeInterval) {
+        if (!probedDevicectl || elapsed.elapsed - lastDevicectlProbe >= _devicectlProbeInterval) {
           probedDevicectl = true;
           lastDevicectlProbe = elapsed.elapsed;
           final String? deviceHost = await _resolveDeviceIp(deviceId);

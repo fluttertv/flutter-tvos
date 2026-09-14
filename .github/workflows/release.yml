@@ -82,6 +82,28 @@ jobs:
         # caller's branch under workflow_call, so the input wins when present.
         run: echo "version=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
 
+      - name: Collect release notes
+        # The tag is v<flutter>-tvos.<cli> and CHANGELOG.md is keyed by the CLI
+        # version, so the release page carries that entry's body verbatim and
+        # reads the same as the changelog. A tag whose entry is missing still
+        # gets a release, with a link instead of a body, rather than no release.
+        env:
+          TAG: ${{ steps.version.outputs.version }}
+        run: |
+          CLI_VERSION="${TAG##*-tvos.}"
+          FLUTTER_VERSION="${TAG#v}"; FLUTTER_VERSION="${FLUTTER_VERSION%-tvos.*}"
+          awk -v v="$CLI_VERSION" '
+            /^## \[/ { if (found) exit; found = (index($0, "## [" v "]") == 1); next }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::CHANGELOG.md has no [$CLI_VERSION] entry; the release links to the changelog instead."
+            echo "See [CHANGELOG.md](https://github.com/fluttertv/flutter-tvos/blob/main/CHANGELOG.md) for release notes." > release-notes.md
+          fi
+          printf '\n---\n\nFlutter `%s` · flutter-tvos `%s`. Update with `flutter-tvos upgrade`, or switch lines with `flutter-tvos use %s`.\n' \
+            "$FLUTTER_VERSION" "$CLI_VERSION" "$FLUTTER_VERSION" >> release-notes.md
+          cat release-notes.md
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -93,5 +115,5 @@ jobs:
 
           gh release create "${{ steps.version.outputs.version }}" \
             --title "flutter-tvos ${{ steps.version.outputs.version }}" \
-            --notes "See [CHANGELOG.md](https://github.com/fluttertv/flutter-tvos/blob/main/CHANGELOG.md) for release notes." \
+            --notes-file release-notes.md \
             --repo fluttertv/flutter-tvos

@@ -2,6 +2,54 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.10.3] - 2026-09-14
+
+### Changed
+
+- **GitHub releases now carry their changelog entry.** The release page used to say
+  "See CHANGELOG.md"; it now shows this file's entry for the released version,
+  with the Flutter and CLI versions underneath.
+
+- **Upgraded to Flutter 3.47.4** (`9584c6713b324636289d067944a46fd6b49df14b`).
+  The engine artifacts are unchanged: 3.47.4 changed only `flutter_tools`, so
+  `engine-87021d7a8cd67447b3e722a510bca8199d49f783` still describes them.
+
+  Ported by hand, not by the release train. 3.47.4 cherry-picked
+  [flutter/flutter#192301](https://github.com/flutter/flutter/pull/192301), which
+  made `LLDB.attachAndStart` take a required `IOSDeviceSupport`, so the CLI did
+  not compile against it. Verified with the full end-to-end matrix: debug on a
+  tvOS simulator, and debug, profile and release on an Apple TV 4K (tvOS 26.6,
+  Xcode 26.6), with hot reload and hot restart on the device.
+
+- **The lldb attach on an Apple TV follows 3.47.4, except for the symbol path.**
+  3.47.4 sends lldb `platform status` on every attach and prints a new message
+  when the attach passes one minute; both apply to an Apple TV. It also sends
+  `platform select remote-ios --sysroot <symbols>` when it finds iOS Device
+  Support symbols. flutter-tvos never sends that for an Apple TV, so lldb keeps
+  finding the tvOS symbols on its own, as it did on 3.47.3.
+
+### Added
+
+- **Messages that name the tvOS cause when a device debug attach is slow.**
+  3.47.4 looks for symbols only in `iOS DeviceSupport`, and when the attach
+  passes one minute with nothing to report it asks you to file a Flutter bug.
+  On an Apple TV the message now says which of these it is:
+  - Xcode has not prepared, or not finished preparing, debugger support for the
+    Apple TV, naming the directory it is expected in
+    (`~/Library/Developer/Xcode/tvOS DeviceSupport/AppleTV14,1 26.6 (23L773)`,
+    from the model, OS version and build devicectl reports). `.finalized` marks
+    a finished copy, since the lock files survive a successful one.
+  - Debugger support is in place, so the delay is most likely the wireless
+    connection, with how to restart the Apple TV or raise
+    `FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS`, or, if it is slow every time, a
+    stale copy, with the command to remove it.
+
+  When lldb reports during a debug session that it is reading system libraries
+  from the Apple TV (`libobjc.A.dylib is being read from process memory`), that
+  now reaches you as a warning too, instead of only the verbose log: a missing
+  copy, or a prepared copy that is probably stale, with the command to remove
+  it.
+
 ## [1.10.2] - 2026-09-10
 
 ### Changed

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and help
+    url: https://github.com/fluttertv/flutter-tvos/discussions
+    about: Ask how to do something, or show what you built.
+  - name: Documentation
+    url: https://fluttertv.dev
+    about: Getting started, commands, code signing and publishing.
+  - name: Security issue
+    url: https://github.com/fluttertv/flutter-tvos/security/advisories/new
+    about: Report it privately here rather than in a public issue.
