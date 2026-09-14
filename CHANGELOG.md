@@ -41,12 +41,14 @@ All notable changes to flutter-tvos will be documented here.
     a finished copy, since the lock files survive a successful one.
   - Debugger support is in place, so the delay is most likely the wireless
     connection, with how to restart the Apple TV or raise
-    `FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS`.
+    `FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS`, or, if it is slow every time, a
+    stale copy, with the command to remove it.
 
-  When lldb reports that it is reading system libraries from the Apple TV
-  (`libobjc.A.dylib is being read from process memory`), that now reaches you as
-  a warning too, instead of only the verbose log: a missing copy, or a prepared
-  copy that is probably stale, with the command to remove it.
+  When lldb reports during a debug session that it is reading system libraries
+  from the Apple TV (`libobjc.A.dylib is being read from process memory`), that
+  now reaches you as a warning too, instead of only the verbose log: a missing
+  copy, or a prepared copy that is probably stale, with the command to remove
+  it.
 
 ## [1.10.2] - 2026-09-10
 

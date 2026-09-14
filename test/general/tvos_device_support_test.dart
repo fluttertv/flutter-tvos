@@ -84,6 +84,10 @@ void main() {
       expect(warning, contains('most likely the wireless connection'));
       expect(warning, contains('FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS'));
       expect(warning, isNot(contains(upstreamBugReport)));
+      // LLDB drops the stale-copy warning's trigger once this has printed, so
+      // this message has to name that cause too.
+      expect(warning, contains('may be stale'));
+      expect(warning, contains('rm -rf "$_deviceDirPath"'));
     });
 
     testWithoutContext('calls a prepared copy stale when lldb still reads from the device', () {

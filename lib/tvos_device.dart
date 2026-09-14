@@ -445,8 +445,10 @@ class TvosDevice extends Device {
   /// is lldb reporting that it is reading system libraries from the device,
   /// which on an Apple TV means the tvOS Device Support copy is missing,
   /// unfinished or stale; [deviceSupport] turns that into a warning naming the
-  /// directory. [LLDB] lets that line through once per session, and not at all
-  /// if its slow-attach timer has already warned.
+  /// directory. [LLDB] forwards log lines only once it has attached, lets that
+  /// line through once per session, and not at all if its slow-attach timer
+  /// has already warned, so this covers symbol reads during the run, not
+  /// during a slow attach.
   @visibleForTesting
   Future<bool> attachLldb({
     required LLDB lldb,

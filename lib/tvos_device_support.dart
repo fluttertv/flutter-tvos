@@ -91,8 +91,10 @@ class TvosDeviceSupport implements IOSDeviceSupport {
   }
 
   /// Called with `warnWhenSymbolsExist: false` by [LLDB] when an attach passes
-  /// one minute, and with `true` when lldb logs that it is reading system
-  /// libraries from the device (see `TvosDevice.attachLldb`).
+  /// one minute, and with `true` when lldb logs, after attaching, that it is
+  /// reading system libraries from the device (see `TvosDevice.attachLldb`).
+  /// Once the first has printed, [LLDB] drops that log line, so the second
+  /// never follows a slow attach.
   @override
   String? missingSymbolsWarning({bool warnWhenSymbolsExist = false}) {
     const slowOverNetwork =
@@ -117,12 +119,20 @@ class TvosDeviceSupport implements IOSDeviceSupport {
             '  2. Open Xcode with the Apple TV connected (Window ▸ Devices and '
             'Simulators) and wait for it to finish preparing the device, then retry.';
       }
+      // This message is the only one a slow attach gets: printing it makes LLDB
+      // drop the "read from process memory" line that would otherwise produce
+      // the stale-copy warning above. So it names both causes.
       return 'Debugger support for this Apple TV is in place, so the delay is most '
           'likely the wireless connection: an Apple TV has no USB data port, and '
           'attaching over the network can take well over a minute.\n'
           'If it does not attach, restart the Apple TV (Settings ▸ System ▸ Restart) '
           'and run again. On a slow network, raise the limit with '
-          'FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS.';
+          'FLUTTER_TVOS_LLDB_ATTACH_TIMEOUT_SECONDS.\n'
+          'If it is slow every time, the prepared copy may be stale. Remove it and '
+          'let Xcode prepare the device again:\n'
+          '  1. rm -rf "${device.path}"\n'
+          '  2. Open Xcode with the Apple TV connected (Window ▸ Devices and '
+          'Simulators) and wait for it to finish preparing the device, then retry.';
     }
 
     final status = device.existsSync()
