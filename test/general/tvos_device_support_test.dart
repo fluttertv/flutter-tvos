@@ -8,6 +8,7 @@ import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/ios/device_support.dart';
 import 'package:flutter_tools/src/ios/lldb.dart';
@@ -175,6 +176,30 @@ void main() {
 
       expect(devices.single.modelCode, isNull);
       expect(devices.single.deviceSupportVersion, isNull);
+    });
+
+    testWithoutContext('reads the tvOS version lldb needs off the device', () {
+      // Not cosmetic: LLDB sets the JIT breakpoint differently on 27 and later,
+      // and a null version would take an Apple TV on 27 down the path that
+      // crashes the app.
+      final TvosDevice device = TvosEmulator.parseDevicectlOutput(
+        _devicectlAppleTv,
+        BufferLogger.test(),
+      ).single;
+
+      expect(device.tvosVersion, Version(26, 6, 0));
+    });
+
+    testWithoutContext('leaves the tvOS version null when the device reports none', () {
+      final TvosDevice device = TvosEmulator.parseDevicectlOutput('''
+{"result": {"devices": [{
+  "identifier": "00008110-000A1B2C3D4E5F60",
+  "deviceProperties": {"name": "Living Room"},
+  "hardwareProperties": {"platform": "tvOS", "reality": "physical"}
+}]}}
+''', BufferLogger.test()).single;
+
+      expect(device.tvosVersion, isNull);
     });
 
     testUsingContext("builds the device's support from its home directory, model and build", () {

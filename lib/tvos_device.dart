@@ -11,6 +11,7 @@ import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
+import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/device_port_forwarder.dart';
@@ -360,6 +361,21 @@ class TvosDevice extends Device {
   /// OS version and build as Xcode names its Device Support directories, such
   /// as `26.6 (23L773)`. Physical devices only.
   final String? deviceSupportVersion;
+
+  /// The device's tvOS version, parsed out of [osVersion] (`tvOS 26.6 23L773`)
+  /// or, on a device discovered without a build number, [deviceSupportVersion].
+  /// Null when neither carries one.
+  ///
+  /// Flutter 3.47.5 made [LLDB] take this. It decides one thing: on 27 and
+  /// later the JIT breakpoint is set without `auto-continue` and lldb is told
+  /// to continue by hand, because the automatic form crashes the app
+  /// (flutter/flutter#192810). tvOS version numbers track iOS, so the device's
+  /// own version is the right answer rather than null, which would leave an
+  /// Apple TV on tvOS 27 taking the path that crashes.
+  late final Version? tvosVersion = () {
+    final Match? match = RegExp(r'\d+(?:\.\d+)*').firstMatch(osVersion ?? deviceSupportVersion ?? '');
+    return match == null ? null : Version.parse(match[0]);
+  }();
 
   late final TvosDeviceSupport deviceSupport = TvosDeviceSupport(
     homeDirectory: globals.fsUtils.homeDirPath == null
@@ -830,6 +846,7 @@ class TvosDevice extends Device {
           logger: logger,
           processUtils: globals.processUtils,
           xcodeProjectInterpreter: interpreter,
+          deviceVersion: tvosVersion,
         );
         attached = await attachLldb(
           lldb: lldb,

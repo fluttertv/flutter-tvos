@@ -2,6 +2,40 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.10.4] - 2026-09-20
+
+### Changed
+
+- **Upgraded to Flutter 3.47.5** (`6a19cca56475dbfba1478ee68d7bd0c2ef891da1`) and to
+  engine artifacts
+  [`engine-e149d9fdc27ee15f0ebec71bc65ec278d5a1417c`](https://github.com/fluttertv/engine-artifacts/releases/tag/engine-e149d9fdc27ee15f0ebec71bc65ec278d5a1417c).
+
+  Ported by hand, not by the release train. 3.47.5 added a required
+  `deviceVersion` to `LLDB`, so the CLI did not compile against it.
+
+### Fixed
+
+- **Instanced drawing no longer aborts the app on an Apple TV HD.** Every
+  `flutter_gpu` draw with an instance count went through Metal calls that need
+  an A9 or later; the Apple TV HD is an A8, so the first instanced draw raised
+  an exception and the app died. That covers every `flutter_scene` app, and
+  App Review tests on an Apple TV HD. The engine now uses the plain instanced
+  calls, which every GPU family supports, whenever no base vertex or base
+  instance is set — which is every draw Dart can issue. Apps already shipping
+  need a rebuild against this release.
+
+- **The engine artifacts carry the right licence.** The four tvOS zips shipped
+  a C++ header comment naming Chromium, and the two host zips shipped nothing.
+  All six now carry Flutter's `LICENSE` and the `THIRD_PARTY_LICENSES` aggregate
+  that names Chromium, Skia, ICU and the rest, as BSD-3 clause 2 requires of a
+  binary redistribution.
+
+- **The device's tvOS version reaches lldb.** 3.47.5 sets the JIT breakpoint
+  differently on tvOS 27 and later, because the form used until now can crash
+  the app; it decides from the version the CLI hands it. flutter-tvos now passes
+  the version devicectl reports instead of nothing, which would have taken an
+  Apple TV on 27 down the crashing path.
+
 ## [1.10.3] - 2026-09-14
 
 ### Changed
