@@ -11,6 +11,7 @@ import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/process.dart';
+import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/device_port_forwarder.dart';
@@ -360,6 +361,58 @@ class TvosDevice extends Device {
   /// OS version and build as Xcode names its Device Support directories, such
   /// as `26.6 (23L773)`. Physical devices only.
   final String? deviceSupportVersion;
+
+  /// The device's tvOS version, taken from the version segment of [osVersion]
+  /// (`tvOS 26.6 23L773`, or a bare `26.6` from a simulator runtime).
+  ///
+  /// Null when the device reported no version at all. Deliberately anchored:
+  /// devicectl can report a build with no version, leaving [osVersion] as the
+  /// bare build (`23L773`), and reading a number out of the middle of that
+  /// would answer "below 27" for what might be a tvOS 27 device — the one
+  /// question this value is asked.
+  ///
+  /// Flutter 3.47.5 made [LLDB] take it. On 27 and later it sets the JIT
+  /// breakpoint without `auto-continue` and drives the stops by hand
+  /// (flutter/flutter#192810). What that changes for an Apple TV is the crash
+  /// path, not the JIT: upstream's breakpoint never fires on this engine (the
+  /// tvOS patch set maps JIT pages RWX up front and stubs the hook out), but
+  /// manual stops also drop the `detach` stop hook, moving crash handling into
+  /// lldb's stdout listener, which matches wording taken from an iOS
+  /// transcript. Whether that holds over the CoreDevice tunnel is untested —
+  /// see #84 — so this reports the device's real version, which is what
+  /// upstream asks for and what will be right when tvOS does take that path.
+  late final Version? tvosVersion = () {
+    // The trailing guard is what rejects a build number: `23L773` starts with
+    // digits, and `23` is not tvOS 23.
+    final Match? match = RegExp(
+      r'^(?:tvOS )?(\d+(?:\.\d+)*)(?![\dA-Za-z])',
+    ).firstMatch(osVersion ?? '');
+    return match == null ? null : Version.parse(match[1]);
+  }();
+
+  /// The [LLDB] a device debug session attaches with, created once per device.
+  ///
+  /// Split out of [startApp] and paired with [lldbFactory] so the version this
+  /// hands over is reachable from a test: it is the whole reason the call
+  /// exists, [LLDB] keeps it private, and nothing downstream reveals it.
+  @visibleForTesting
+  LLDB lldbForDebugSession(XcodeProjectInterpreter xcodeProjectInterpreter) =>
+      _lldb ??= lldbFactory(this, xcodeProjectInterpreter, tvosVersion);
+
+  /// How [lldbForDebugSession] builds one. Replaced in tests.
+  @visibleForTesting
+  LLDB Function(TvosDevice, XcodeProjectInterpreter, Version?) lldbFactory = _newLldb;
+
+  static LLDB _newLldb(
+    TvosDevice device,
+    XcodeProjectInterpreter xcodeProjectInterpreter,
+    Version? deviceVersion,
+  ) => LLDB(
+    logger: device.logger,
+    processUtils: globals.processUtils,
+    xcodeProjectInterpreter: xcodeProjectInterpreter,
+    deviceVersion: deviceVersion,
+  );
 
   late final TvosDeviceSupport deviceSupport = TvosDeviceSupport(
     homeDirectory: globals.fsUtils.homeDirPath == null
@@ -826,11 +879,7 @@ class TvosDevice extends Device {
             'command-line tools are not installed or not selected.',
           );
         }
-        final LLDB lldb = _lldb ??= LLDB(
-          logger: logger,
-          processUtils: globals.processUtils,
-          xcodeProjectInterpreter: interpreter,
-        );
+        final LLDB lldb = lldbForDebugSession(interpreter);
         attached = await attachLldb(
           lldb: lldb,
           lldbLogForwarder: lldbForwarder,

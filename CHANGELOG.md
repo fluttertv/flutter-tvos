@@ -2,6 +2,48 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.10.4] - 2026-09-20
+
+### Changed
+
+- **Upgraded to Flutter 3.47.5** (`6a19cca56475dbfba1478ee68d7bd0c2ef891da1`) and to
+  engine artifacts
+  [`engine-e149d9fdc27ee15f0ebec71bc65ec278d5a1417c`](https://github.com/fluttertv/engine-artifacts/releases/tag/engine-e149d9fdc27ee15f0ebec71bc65ec278d5a1417c).
+
+  Ported by hand, not by the release train. 3.47.5 added a required
+  `deviceVersion` to `LLDB`, so the CLI did not compile against it.
+
+- **lldb is told which tvOS version it is attached to.** 3.47.5 takes the
+  device's version and, from 27 on, sets the JIT breakpoint without
+  `auto-continue` and drives lldb's stops by hand. flutter-tvos now reports the
+  version devicectl gives it, where before the parameter did not exist.
+
+  On an Apple TV this does not change the JIT: upstream's breakpoint never
+  fires on this engine, which maps JIT pages RWX up front. What it changes is
+  crash handling, which moves from an lldb stop hook into the tool's own log
+  parsing. Nothing here runs tvOS 27 yet, so that path is unverified — see
+  [#84](https://github.com/fluttertv/flutter-tvos/issues/84) — and reporting
+  the real version is what upstream expects and what will be right when tvOS
+  takes it. A device that reports a build number and no version now yields no
+  version at all, rather than reading `23L773` as tvOS 23.
+
+### Fixed
+
+- **Instanced drawing no longer aborts the app on an Apple TV HD.** Every
+  `flutter_gpu` draw with an instance count went through Metal calls that need
+  an A9 or later; the Apple TV HD is an A8, so the first instanced draw raised
+  an exception and the app died. That covers every `flutter_scene` app, and
+  App Review tests on an Apple TV HD. The engine now uses the plain instanced
+  calls, which every GPU family supports, whenever no base vertex or base
+  instance is set — which is every draw Dart can issue. Apps already shipping
+  need a rebuild against this release.
+
+- **The engine artifacts carry the right licence.** The four tvOS zips shipped
+  a C++ header comment naming Chromium, and the two host zips shipped nothing.
+  All six now carry Flutter's `LICENSE` and the `THIRD_PARTY_LICENSES` aggregate
+  that names Chromium, Skia, ICU and the rest, as BSD-3 clause 2 requires of a
+  binary redistribution.
+
 ## [1.10.3] - 2026-09-14
 
 ### Changed

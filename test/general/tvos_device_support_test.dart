@@ -8,9 +8,11 @@ import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/ios/device_support.dart';
 import 'package:flutter_tools/src/ios/lldb.dart';
+import 'package:flutter_tools/src/ios/xcodeproj.dart';
 import 'package:flutter_tvos/tvos_device.dart';
 import 'package:flutter_tvos/tvos_device_support.dart';
 import 'package:flutter_tvos/tvos_emulator.dart';
@@ -177,6 +179,90 @@ void main() {
       expect(devices.single.deviceSupportVersion, isNull);
     });
 
+    testWithoutContext('reads the tvOS version lldb needs off the device', () {
+      // LLDB drives stops by hand from 27 on, so this is the value that picks
+      // the attach path.
+      final TvosDevice device = TvosEmulator.parseDevicectlOutput(
+        _devicectlAppleTv,
+        BufferLogger.test(),
+      ).single;
+
+      expect(device.tvosVersion, Version(26, 6, 0));
+    });
+
+    testWithoutContext('leaves the tvOS version null when the device reports none', () {
+      final TvosDevice device = TvosEmulator.parseDevicectlOutput('''
+{"result": {"devices": [{
+  "identifier": "00008110-000A1B2C3D4E5F60",
+  "deviceProperties": {"name": "Living Room"},
+  "hardwareProperties": {"platform": "tvOS", "reality": "physical"}
+}]}}
+''', BufferLogger.test()).single;
+
+      expect(device.tvosVersion, isNull);
+    });
+
+    testWithoutContext('does not read a version out of a bare build number', () {
+      // devicectl reported a build and no version. `23L773` is not tvOS 23:
+      // answering that would claim "below 27" for a device that may be on 27.
+      final TvosDevice device = TvosEmulator.parseDevicectlOutput('''
+{"result": {"devices": [{
+  "identifier": "00008110-000A1B2C3D4E5F60",
+  "deviceProperties": {"name": "Living Room", "osBuildUpdate": "23L773"},
+  "hardwareProperties": {"platform": "tvOS", "reality": "physical"}
+}]}}
+''', BufferLogger.test()).single;
+
+      expect(device.osVersion, '23L773');
+      expect(device.tvosVersion, isNull);
+    });
+
+    testWithoutContext('reads a simulator runtime version, and nothing from a nameless one', () {
+      expect(
+        TvosDevice(
+          'sim',
+          name: 'Apple TV',
+          logger: BufferLogger.test(),
+          isSimulator: true,
+          osVersion: 'tvOS 18.4',
+        ).tvosVersion,
+        Version(18, 4, 0),
+      );
+      expect(
+        TvosDevice(
+          'sim',
+          name: 'Apple TV',
+          logger: BufferLogger.test(),
+          isSimulator: true,
+          osVersion: 'tvOS',
+        ).tvosVersion,
+        isNull,
+      );
+    });
+
+    testWithoutContext('hands lldb the device version, not nothing', () {
+      // The reason this PR exists, and the only place the version is decided:
+      // LLDB keeps it private, so the factory is where it can be observed.
+      final TvosDevice device = TvosEmulator.parseDevicectlOutput(
+        _devicectlAppleTv,
+        BufferLogger.test(),
+      ).single;
+      Version? handedOver;
+      var called = false;
+      final fake = _FakeLLDB(LLDBLogForwarder());
+      device.lldbFactory = (TvosDevice d, XcodeProjectInterpreter i, Version? version) {
+        called = true;
+        handedOver = version;
+        return fake;
+      };
+
+      expect(device.lldbForDebugSession(_FakeXcodeProjectInterpreter()), fake);
+      expect(called, isTrue);
+      expect(handedOver, Version(26, 6, 0));
+      // Created once, then reused for the life of the device.
+      expect(device.lldbForDebugSession(_FakeXcodeProjectInterpreter()), fake);
+    });
+
     testUsingContext("builds the device's support from its home directory, model and build", () {
       final TvosDevice device = TvosEmulator.parseDevicectlOutput(
         _devicectlAppleTv,
@@ -237,6 +323,8 @@ void main() {
     }, overrides: overrides());
   });
 }
+
+class _FakeXcodeProjectInterpreter extends Fake implements XcodeProjectInterpreter {}
 
 class _FakeLLDB extends Fake implements LLDB {
   _FakeLLDB(this._forwarder, {this.never = false});
