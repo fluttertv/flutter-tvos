@@ -13,6 +13,20 @@ All notable changes to flutter-tvos will be documented here.
   Ported by hand, not by the release train. 3.47.5 added a required
   `deviceVersion` to `LLDB`, so the CLI did not compile against it.
 
+- **lldb is told which tvOS version it is attached to.** 3.47.5 takes the
+  device's version and, from 27 on, sets the JIT breakpoint without
+  `auto-continue` and drives lldb's stops by hand. flutter-tvos now reports the
+  version devicectl gives it, where before the parameter did not exist.
+
+  On an Apple TV this does not change the JIT: upstream's breakpoint never
+  fires on this engine, which maps JIT pages RWX up front. What it changes is
+  crash handling, which moves from an lldb stop hook into the tool's own log
+  parsing. Nothing here runs tvOS 27 yet, so that path is unverified — see
+  [#84](https://github.com/fluttertv/flutter-tvos/issues/84) — and reporting
+  the real version is what upstream expects and what will be right when tvOS
+  takes it. A device that reports a build number and no version now yields no
+  version at all, rather than reading `23L773` as tvOS 23.
+
 ### Fixed
 
 - **Instanced drawing no longer aborts the app on an Apple TV HD.** Every
@@ -29,12 +43,6 @@ All notable changes to flutter-tvos will be documented here.
   All six now carry Flutter's `LICENSE` and the `THIRD_PARTY_LICENSES` aggregate
   that names Chromium, Skia, ICU and the rest, as BSD-3 clause 2 requires of a
   binary redistribution.
-
-- **The device's tvOS version reaches lldb.** 3.47.5 sets the JIT breakpoint
-  differently on tvOS 27 and later, because the form used until now can crash
-  the app; it decides from the version the CLI hands it. flutter-tvos now passes
-  the version devicectl reports instead of nothing, which would have taken an
-  Apple TV on 27 down the crashing path.
 
 ## [1.10.3] - 2026-09-14
 
