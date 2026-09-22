@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/dart/language_version.dart';
+import 'package:flutter_tools/src/dart/package_map.dart' show findPackageConfigFile;
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/flutter_plugins.dart' show refreshPluginsList;
 import 'package:flutter_tools/src/globals.dart' as globals;
@@ -555,14 +556,21 @@ String _renderFfiForcedReferenceBody(List<String> symbols) {
 /// nothing of Flutter's reads the list then. A project created with
 /// `--platforms=tvos` is exactly that: `flutter pub get` stopped writing the
 /// file, discovery found nothing, and the generated registrants came out
-/// empty — every native plugin a `MissingPluginException`, every FFI plugin's
-/// symbols unreferenced. So write it here, as `flutter pub get` did before.
+/// empty — every native plugin a `MissingPluginException`, every Dart plugin
+/// unregistered, every FFI plugin's symbols unreferenced. So write it here, as
+/// `flutter pub get` did before.
 ///
 /// Only when Flutter skipped it, with the same conditions Flutter checks: a
-/// project with any of those platforms already gets it from `pub get`. A
-/// project that has not run `pub get` yet has no package graph to read; that
-/// is traced and discovery proceeds as it always did.
-Future<void> _refreshPluginsListWhereFlutterWillNot(FlutterProject project) async {
+/// project with any of those platforms already gets it from `pub get`. And
+/// only once there is a package config to read: before the first `pub get`
+/// there is none, and upstream's reader prints an error for it.
+///
+/// It has to run after `pub get` and before the Dart plugin registrant is
+/// generated, so `TvosBuilder.buildBundle` calls it there.
+/// [ensureReadyForTvosTooling] also calls it, but from `validateCommand`,
+/// which runs before `pub get`: on a fresh checkout, after `clean`, or with a
+/// plugin just added, the package config it reads is missing or stale.
+Future<void> refreshTvosPluginsList(FlutterProject project) async {
   final bool flutterRefreshesIt =
       project.android.existsSync() ||
       project.ios.existsSync() ||
@@ -570,14 +578,12 @@ Future<void> _refreshPluginsListWhereFlutterWillNot(FlutterProject project) asyn
       (featureFlags.isMacOSEnabled && project.macos.existsSync()) ||
       (featureFlags.isWindowsEnabled && project.windows.existsSync()) ||
       (featureFlags.isWebEnabled && project.web.existsSync());
-  if (flutterRefreshesIt || project.isPlugin) {
+  if (flutterRefreshesIt ||
+      project.isPlugin ||
+      findPackageConfigFile(project.directory) == null) {
     return;
   }
-  try {
-    await refreshPluginsList(project);
-  } on Exception catch (e) {
-    globals.logger.printTrace('Could not refresh .flutter-plugins-dependencies: $e');
-  }
+  await refreshPluginsList(project);
 }
 
 Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
@@ -586,7 +592,13 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
     return;
   }
 
-  await _refreshPluginsListWhereFlutterWillNot(project);
+  // Best effort: before `pub get` the package config can be stale, and
+  // `TvosBuilder.buildBundle` refreshes again once `pub get` has run.
+  try {
+    await refreshTvosPluginsList(project);
+  } on Exception catch (e) {
+    globals.logger.printTrace('Could not refresh .flutter-plugins-dependencies: $e');
+  }
 
   final List<TvosPlugin> plugins = _discoverTvosPlugins(project);
 
