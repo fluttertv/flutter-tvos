@@ -202,6 +202,50 @@ void main() {
       },
     );
 
+    testWithoutContext(
+      'falls back to plutil -insert when plutil cannot read the text it inserted',
+      () async {
+        plistParser.sceneManifestOverride = false;
+
+        await migrate();
+
+        expect(plistParser.insertedKeys, <String>['UIApplicationSceneManifest']);
+        // The text insertion was taken back before plutil inserted its own.
+        expect(infoPlist().readAsStringSync(), isNot(contains('UIApplicationSupportsMultipleScenes')));
+        expect(appDelegate().readAsStringSync(), TvosUISceneMigration.migratedAppDelegate);
+      },
+    );
+
+    testWithoutContext(
+      'is left alone when its storyboard does not open on a FlutterViewController',
+      () async {
+        // tvOS never showed this storyboard before scenes, so it can have
+        // drifted; a scene built from it would show a plain view controller.
+        final String drifted = _brokenStoryboard.replaceFirst(
+          'initialViewController="BYZ-38-t0r"',
+          'initialViewController="other"',
+        );
+        storyboard().writeAsStringSync(drifted);
+
+        await migrate();
+
+        expect(appDelegate().readAsStringSync(), TvosUISceneMigration.originalAppDelegate);
+        expect(infoPlist().readAsStringSync(), _preSceneInfoPlist);
+        expect(storyboard().readAsStringSync(), drifted);
+        expect(logger.errorText, contains('does not open on a FlutterViewController'));
+      },
+    );
+
+    testWithoutContext('is left alone when it has no Main.storyboard', () async {
+      storyboard().deleteSync();
+
+      await migrate();
+
+      expect(appDelegate().readAsStringSync(), TvosUISceneMigration.originalAppDelegate);
+      expect(infoPlist().readAsStringSync(), _preSceneInfoPlist);
+      expect(logger.errorText, contains('Main.storyboard does not exist'));
+    });
+
     testWithoutContext('says nothing and changes nothing on the next build', () async {
       await migrate();
       final String plist = infoPlist().readAsStringSync();
@@ -245,6 +289,18 @@ void main() {
       expect(storyboard().readAsStringSync(), isNot(contains('customModule="Flutter"')));
       expect(appDelegate().readAsStringSync(), TvosUISceneMigration.migratedAppDelegate);
       expect(plistParser.insertedKeys, isEmpty);
+    });
+
+    testWithoutContext('gets every storyboard fixed, localized ones included', () async {
+      goOnScenes();
+      final File localized = runner.childDirectory('en.lproj').childFile('Main.storyboard')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(_brokenStoryboard);
+
+      await migrate();
+
+      expect(storyboard().readAsStringSync(), isNot(contains('customModule="Flutter"')));
+      expect(localized.readAsStringSync(), isNot(contains('customModule="Flutter"')));
     });
 
     testWithoutContext('leaves other classes in the storyboard as they were', () async {
@@ -291,27 +347,48 @@ void main() {
     });
   });
 
-  testWithoutContext("does nothing with upstream's enable-uiscene-migration off", () async {
-    goOnScenes();
+  group("with upstream's enable-uiscene-migration off", () {
+    testWithoutContext('a project is not migrated, and nothing is said', () async {
+      await migrate(enabled: false);
 
-    await migrate(enabled: false);
+      expect(appDelegate().readAsStringSync(), TvosUISceneMigration.originalAppDelegate);
+      expect(infoPlist().readAsStringSync(), _preSceneInfoPlist);
+      expect(storyboard().readAsStringSync(), _brokenStoryboard);
+      expect(logger.statusText, isEmpty);
+      expect(logger.warningText, isEmpty);
+      expect(logger.errorText, isEmpty);
+    });
 
-    expect(storyboard().readAsStringSync(), _brokenStoryboard);
-    expect(appDelegate().readAsStringSync(), TvosUISceneMigration.originalAppDelegate);
-    expect(logger.statusText, isEmpty);
-    expect(logger.warningText, isEmpty);
-    expect(logger.errorText, isEmpty);
+    testWithoutContext('a project on scenes still gets its storyboard fixed (#87)', () async {
+      // Upstream points developers at this setting to hide its iOS warning,
+      // and the storyboard is a flutter-tvos defect, not a migration.
+      goOnScenes();
+
+      await migrate(enabled: false);
+
+      expect(storyboard().readAsStringSync(), isNot(contains('customModule="Flutter"')));
+      expect(appDelegate().readAsStringSync(), TvosUISceneMigration.originalAppDelegate);
+      expect(logger.statusText, contains('Fixed Base.lproj/Main.storyboard'));
+      expect(logger.warningText, isEmpty);
+    });
+
+    testWithoutContext('a missing runner Info.plist is not reported', () async {
+      infoPlist().deleteSync();
+
+      await migrate(enabled: false);
+
+      expect(logger.errorText, isEmpty);
+    });
   });
 
-  testWithoutContext('does nothing without a runner Info.plist', () async {
+  testWithoutContext('says it cannot tell without a runner Info.plist', () async {
     infoPlist().deleteSync();
 
     await migrate();
 
     expect(storyboard().readAsStringSync(), _brokenStoryboard);
-    expect(logger.statusText, isEmpty);
-    expect(logger.warningText, isEmpty);
-    expect(logger.errorText, isEmpty);
+    expect(logger.errorText, contains('could not find tvos/Runner/Info.plist'));
+    expect(logger.errorText, contains('#hide-migration-warning'));
   });
 }
 

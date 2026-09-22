@@ -131,7 +131,7 @@ void main() {
         runner,
         logger,
         isMigrationFeatureEnabled: true,
-        plistParser: _UnusedPlistParser(),
+        plistParser: _TemplatePlistParser(fileSystem),
       ).migrate();
 
       files.forEach((String path, String content) {
@@ -167,6 +167,19 @@ void main() {
   });
 }
 
-/// A template already on scenes is recognised from its text; reaching plutil
-/// would mean the migration took it for a project to migrate.
-class _UnusedPlistParser extends Fake implements PlistParser {}
+/// Answers whether the template declares a scene manifest, and nothing else:
+/// any other plutil call would mean the migration took it for a project to
+/// migrate.
+class _TemplatePlistParser extends Fake implements PlistParser {
+  _TemplatePlistParser(this._fileSystem);
+
+  final FileSystem _fileSystem;
+
+  @override
+  T? getValueFromFile<T>(String plistFilePath, String key) {
+    expect(key, 'UIApplicationSceneManifest');
+    final String plist = _fileSystem.file(plistFilePath).readAsStringSync();
+    return (plist.contains('<key>UIApplicationSceneManifest</key>') ? <String, Object>{} : null)
+        as T?;
+  }
+}

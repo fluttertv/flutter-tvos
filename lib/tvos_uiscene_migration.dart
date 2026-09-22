@@ -160,28 +160,43 @@ import UIKit
 
   @override
   Future<void> migrate() async {
-    if (!_isMigrationFeatureEnabled || !_infoPlist.existsSync()) {
+    if (!_infoPlist.existsSync()) {
+      // As upstream does for iOS: with no Info.plist where the template put
+      // it, there is no telling whether the app is on scenes.
+      if (_isMigrationFeatureEnabled) {
+        logger.printError(
+          'flutter-tvos could not find tvos/Runner/Info.plist, so it cannot tell whether this '
+          'tvOS app uses the UIScene lifecycle. Built with Xcode 27, an app without it will not '
+          'launch on tvOS 27. See $_guide\n'
+          'See $_guide/#hide-migration-warning for instructions to hide this warning.',
+        );
+      }
       return;
     }
 
-    // Null for a binary plist, which `defaults write` leaves behind: it is not
-    // UTF-8 text, and only plutil can read or edit it. xcodebuild takes either,
-    // so a build must not fail here over one.
-    final String? plistText = _readText(_infoPlist);
-    final bool onScenes = plistText != null
-        ? plistText.contains('UIApplicationSceneManifest')
-        : _plistParser.getValueFromFile<Object>(_infoPlist.path, 'UIApplicationSceneManifest') !=
-              null;
-    if (onScenes) {
+    // Read through plutil, as UIKit reads it: a binary plist, which
+    // `defaults write` leaves behind, is not text, and in an XML one the key
+    // can sit in a comment.
+    if (_plistParser.getValueFromFile<Object>(_infoPlist.path, 'UIApplicationSceneManifest') !=
+        null) {
+      // A repair, not a migration, so it runs whatever
+      // `enable-uiscene-migration` says: a scene built from this storyboard
+      // starts with no Flutter view, however the project got onto scenes, and
+      // upstream points developers at that setting to hide its iOS warning.
       _repairStoryboards();
-      _warnIfAppDelegateBuildsItsOwnWindow();
+      if (_isMigrationFeatureEnabled) {
+        _warnIfAppDelegateBuildsItsOwnWindow();
+      }
+      return;
+    }
+
+    if (!_isMigrationFeatureEnabled) {
       return;
     }
 
     String? notMigrated = _whyNotMigratedAutomatically();
     if (notMigrated == null) {
-      final List<int> originalPlist = _infoPlist.readAsBytesSync();
-      if (_insertSceneManifest(plistText)) {
+      if (_insertSceneManifest()) {
         _appDelegate.writeAsStringSync(migratedAppDelegate);
         // Part of the migration, not a separate repair: its own message would
         // describe a failed launch this project never had.
@@ -189,7 +204,6 @@ import UIKit
         logger.printStatus('Finished migration to UIScene lifecycle. See $_guide for details.');
         return;
       }
-      _infoPlist.writeAsBytesSync(originalPlist);
       notMigrated = 'tvos/Runner/Info.plist could not be edited';
     }
 
@@ -216,9 +230,6 @@ import UIKit
     if (!_appDelegate.existsSync()) {
       return 'tvos/Runner/AppDelegate.swift does not exist';
     }
-    if (!_mainStoryboard.existsSync()) {
-      return 'tvos/Runner/Base.lproj/Main.storyboard does not exist';
-    }
     if (_normalized(_appDelegate.readAsStringSync()) != _normalized(originalAppDelegate)) {
       return 'tvos/Runner/AppDelegate.swift has been changed from the one flutter-tvos generated';
     }
@@ -229,7 +240,37 @@ import UIKit
     if (storyboardName != 'Main') {
       return 'tvos/Runner/Info.plist does not name Main as its UIMainStoryboardFile';
     }
+    if (!_mainStoryboard.existsSync()) {
+      return 'tvos/Runner/Base.lproj/Main.storyboard does not exist';
+    }
+    // Before scenes tvOS never showed this storyboard, since the AppDelegate
+    // replaced its window, so it can have drifted from the template unnoticed.
+    // A scene shows it: one that does not open on a FlutterViewController
+    // starts with no Flutter view.
+    if (!_opensOnFlutterViewController(_mainStoryboard.readAsStringSync())) {
+      return 'tvos/Runner/Base.lproj/Main.storyboard does not open on a FlutterViewController';
+    }
     return null;
+  }
+
+  /// The opening tag of an element whose class is `FlutterViewController`,
+  /// with its attributes in any order and across lines.
+  static final _flutterViewControllerTag = RegExp(
+    r'<[A-Za-z]+\b[^>]*\bcustomClass="FlutterViewController"[^>]*>',
+  );
+
+  /// Whether [storyboard]'s initial view controller is a `FlutterViewController`.
+  static bool _opensOnFlutterViewController(String storyboard) {
+    final String? initial = RegExp(
+      r'<document\b[^>]*\binitialViewController="([^"]*)"',
+    ).firstMatch(storyboard)?.group(1);
+    if (initial == null) {
+      return false;
+    }
+    final id = RegExp('\\sid="${RegExp.escape(initial)}"');
+    return _flutterViewControllerTag
+        .allMatches(storyboard)
+        .any((Match tag) => id.hasMatch(tag[0]!));
   }
 
   /// [file] as text, or null when it is not UTF-8.
@@ -249,9 +290,10 @@ import UIKit
   /// the file's comments and layout — the tvOS template documents
   /// `FLTAssetsPath` in one, and `plutil -insert` rewrites the file without
   /// them. The result is read back through `plutil`, and a file it cannot
-  /// read, or one that is not text ([plistText] null), falls back to
-  /// upstream's `plutil -insert`.
-  bool _insertSceneManifest(String? plistText) {
+  /// read, or one that is not text, falls back to upstream's `plutil -insert`.
+  /// When both fail, the file is left as it was.
+  bool _insertSceneManifest() {
+    final String? plistText = _readText(_infoPlist);
     final Match? anchor = plistText == null
         ? null
         : RegExp(r'^([ \t]*)<key>UIMainStoryboardFile</key>', multiLine: true).firstMatch(plistText);
@@ -291,7 +333,7 @@ import UIKit
     }
     final String original = storyboard.readAsStringSync();
     final String repaired = original.replaceAllMapped(
-      RegExp(r'<[A-Za-z]+\b[^>]*\bcustomClass="FlutterViewController"[^>]*>'),
+      _flutterViewControllerTag,
       (Match element) =>
           element[0]!.replaceAll(RegExp(r'\s+customModule(?:Provider)?="[^"]*"'), ''),
     );
