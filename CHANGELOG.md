@@ -4,7 +4,30 @@ All notable changes to flutter-tvos will be documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **New projects use the UIScene lifecycle**, as Flutter's iOS template does:
+  `AppDelegate` adopts `FlutterImplicitEngineDelegate` and registers plugins in
+  `didInitializeImplicitFlutterEngine`, a `SceneDelegate.swift` is added, and
+  `Info.plist` declares the scene manifest. See
+  [Flutter's migration guide](https://flutter.dev/to/uiscene-migration).
+
+- **Existing projects are moved onto it when they build**, if their
+  `AppDelegate.swift` is the one flutter-tvos generated, unchanged — the same
+  rule Flutter applies to an unchanged iOS app. A changed `AppDelegate` is left
+  alone, with a pointer to the guide. Flutter's `enable-uiscene-migration`
+  setting turns this off.
+
 ### Fixed
+
+- **A project moved to the UIScene lifecycle starts its Flutter view**
+  ([#87](https://github.com/fluttertv/flutter-tvos/issues/87)). The runner's
+  `Main.storyboard` named `FlutterViewController` as a Swift class in the
+  `Flutter` module, which UIKit cannot find, so it put a plain view controller
+  there. Nothing noticed while `AppDelegate` built the window in code; with
+  scenes the storyboard is the only source of the window, and the app started
+  with no engine, no Dart output and no VM service. The template's storyboard is
+  fixed, and a project already on scenes has its storyboard fixed when it builds.
 
 - **Plugins work in a project created with `--platforms=tvos`.** Flutter 3.47
   stopped writing `.flutter-plugins-dependencies` for a project with none of its
