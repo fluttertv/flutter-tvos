@@ -248,19 +248,20 @@ void main() {
         BufferLogger.test(),
       ).single;
       Version? handedOver;
-      var called = false;
+      var created = 0;
       final fake = _FakeLLDB(LLDBLogForwarder());
       device.lldbFactory = (TvosDevice d, XcodeProjectInterpreter i, Version? version) {
-        called = true;
+        created++;
         handedOver = version;
         return fake;
       };
 
       expect(device.lldbForDebugSession(_FakeXcodeProjectInterpreter()), fake);
-      expect(called, isTrue);
       expect(handedOver, Version(26, 6, 0));
-      // Created once, then reused for the life of the device.
+      // Created once, then reused for the life of the device. Counted, because
+      // the factory returns the same instance either way.
       expect(device.lldbForDebugSession(_FakeXcodeProjectInterpreter()), fake);
+      expect(created, 1);
     });
 
     testUsingContext("builds the device's support from its home directory, model and build", () {
