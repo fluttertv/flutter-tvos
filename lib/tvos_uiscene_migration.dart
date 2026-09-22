@@ -164,15 +164,23 @@ import UIKit
       return;
     }
 
-    if (_infoPlist.readAsStringSync().contains('UIApplicationSceneManifest')) {
+    // Null for a binary plist, which `defaults write` leaves behind: it is not
+    // UTF-8 text, and only plutil can read or edit it. xcodebuild takes either,
+    // so a build must not fail here over one.
+    final String? plistText = _readText(_infoPlist);
+    final bool onScenes = plistText != null
+        ? plistText.contains('UIApplicationSceneManifest')
+        : _plistParser.getValueFromFile<Object>(_infoPlist.path, 'UIApplicationSceneManifest') !=
+              null;
+    if (onScenes) {
       _repairStoryboards();
       _warnIfAppDelegateBuildsItsOwnWindow();
       return;
     }
 
     if (_canMigrateAutomatically()) {
-      final String originalPlist = _infoPlist.readAsStringSync();
-      if (_insertSceneManifest()) {
+      final List<int> originalPlist = _infoPlist.readAsBytesSync();
+      if (_insertSceneManifest(plistText)) {
         _appDelegate.writeAsStringSync(migratedAppDelegate);
         // Part of the migration, not a separate repair: its own message would
         // describe a failed launch this project never had.
@@ -180,7 +188,7 @@ import UIKit
         logger.printStatus('Finished migration to UIScene lifecycle. See $_guide for details.');
         return;
       }
-      _infoPlist.writeAsStringSync(originalPlist);
+      _infoPlist.writeAsBytesSync(originalPlist);
     }
 
     // An error, as upstream prints it for iOS, and not a failed build: the app
@@ -215,6 +223,15 @@ import UIKit
     return true;
   }
 
+  /// [file] as text, or null when it is not UTF-8.
+  static String? _readText(File file) {
+    try {
+      return file.readAsStringSync();
+    } on FileSystemException {
+      return null;
+    }
+  }
+
   /// Whitespace-insensitive, so a template reindented or saved with CRLF line
   /// endings still counts as unchanged. Anything else does not.
   static String _normalized(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -223,22 +240,21 @@ import UIKit
   /// the file's comments and layout — the tvOS template documents
   /// `FLTAssetsPath` in one, and `plutil -insert` rewrites the file without
   /// them. The result is read back through `plutil`, and a file it cannot
-  /// read falls back to upstream's `plutil -insert`.
-  bool _insertSceneManifest() {
-    final String original = _infoPlist.readAsStringSync();
-    final Match? anchor = RegExp(
-      r'^([ \t]*)<key>UIMainStoryboardFile</key>',
-      multiLine: true,
-    ).firstMatch(original);
+  /// read, or one that is not text ([plistText] null), falls back to
+  /// upstream's `plutil -insert`.
+  bool _insertSceneManifest(String? plistText) {
+    final Match? anchor = plistText == null
+        ? null
+        : RegExp(r'^([ \t]*)<key>UIMainStoryboardFile</key>', multiLine: true).firstMatch(plistText);
     if (anchor != null) {
       _infoPlist.writeAsStringSync(
-        original.replaceRange(anchor.start, anchor.start, _sceneManifestXml(anchor.group(1)!)),
+        plistText!.replaceRange(anchor.start, anchor.start, _sceneManifestXml(anchor.group(1)!)),
       );
       if (_plistParser.getValueFromFile<Object>(_infoPlist.path, 'UIApplicationSceneManifest') !=
           null) {
         return true;
       }
-      _infoPlist.writeAsStringSync(original);
+      _infoPlist.writeAsStringSync(plistText);
     }
     return _plistParser.insertKeyWithJson(
       _infoPlist.path,

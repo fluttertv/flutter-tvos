@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert';
+
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
@@ -59,6 +61,10 @@ const _brokenStoryboard = '''
   </scenes>
 </document>
 ''';
+
+/// What `defaults write` leaves in place of the XML: a binary plist, which is
+/// not UTF-8 text.
+final List<int> _binaryInfoPlist = <int>[...utf8.encode('bplist00'), 0xd1, 0x01, 0xff, 0xfe, 0x00];
 
 void main() {
   late MemoryFileSystem fs;
@@ -163,6 +169,18 @@ void main() {
       expect(logger.errorText, contains('will not launch on tvOS 27'));
     });
 
+    testWithoutContext('is migrated through plutil when its Info.plist is binary', () async {
+      plistParser.storyboardNameOverride = 'Main';
+      infoPlist().writeAsBytesSync(_binaryInfoPlist);
+
+      await migrate();
+
+      expect(plistParser.insertedKeys, <String>['UIApplicationSceneManifest']);
+      expect(appDelegate().readAsStringSync(), TvosUISceneMigration.migratedAppDelegate);
+      expect(storyboard().readAsStringSync(), isNot(contains('customModule="Flutter"')));
+      expect(logger.errorText, isEmpty);
+    });
+
     testWithoutContext('says nothing and changes nothing on the next build', () async {
       await migrate();
       final String plist = infoPlist().readAsStringSync();
@@ -194,6 +212,18 @@ void main() {
       expect(appDelegate().readAsStringSync(), TvosUISceneMigration.migratedAppDelegate);
       expect(logger.statusText, contains('Fixed Base.lproj/Main.storyboard'));
       expect(logger.warningText, isEmpty);
+    });
+
+    testWithoutContext('is recognised from a binary Info.plist', () async {
+      infoPlist().writeAsBytesSync(_binaryInfoPlist);
+      plistParser.sceneManifestOverride = true;
+      appDelegate().writeAsStringSync(TvosUISceneMigration.migratedAppDelegate);
+
+      await migrate();
+
+      expect(storyboard().readAsStringSync(), isNot(contains('customModule="Flutter"')));
+      expect(appDelegate().readAsStringSync(), TvosUISceneMigration.migratedAppDelegate);
+      expect(plistParser.insertedKeys, isEmpty);
     });
 
     testWithoutContext('leaves other classes in the storyboard as they were', () async {
@@ -270,10 +300,14 @@ class _FakePlistParser extends Fake implements PlistParser {
   final List<String> insertedKeys = <String>[];
   bool insertSucceeds = true;
   String? storyboardNameOverride;
+  bool? sceneManifestOverride;
 
   @override
   T? getValueFromFile<T>(String plistFilePath, String key) {
-    final String text = _fs.file(plistFilePath).readAsStringSync();
+    final String text = utf8.decode(
+      _fs.file(plistFilePath).readAsBytesSync(),
+      allowMalformed: true,
+    );
     switch (key) {
       case 'UIMainStoryboardFile':
         return (storyboardNameOverride ??
@@ -282,7 +316,9 @@ class _FakePlistParser extends Fake implements PlistParser {
                 ).firstMatch(text)?.group(1))
             as T?;
       case 'UIApplicationSceneManifest':
-        return (text.contains('<key>UIApplicationSceneManifest</key>') ? <String, Object>{} : null)
+        return ((sceneManifestOverride ?? text.contains('<key>UIApplicationSceneManifest</key>'))
+                ? <String, Object>{}
+                : null)
             as T?;
     }
     return null;
@@ -292,8 +328,9 @@ class _FakePlistParser extends Fake implements PlistParser {
   bool insertKeyWithJson(String plistFilePath, {required String key, required String json}) {
     insertedKeys.add(key);
     if (insertSucceeds) {
-      final File file = _fs.file(plistFilePath);
-      file.writeAsStringSync('${file.readAsStringSync()}<key>$key</key>');
+      _fs
+          .file(plistFilePath)
+          .writeAsBytesSync(utf8.encode('<key>$key</key>'), mode: FileMode.append);
     }
     return insertSucceeds;
   }
