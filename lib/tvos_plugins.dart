@@ -7,6 +7,8 @@ import 'dart:convert';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/dart/language_version.dart';
+import 'package:flutter_tools/src/features.dart';
+import 'package:flutter_tools/src/flutter_plugins.dart' show refreshPluginsList;
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/platform_plugins.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -543,11 +545,48 @@ String _renderFfiForcedReferenceBody(List<String> symbols) {
       '  }\n';
 }
 
+/// Writes `.flutter-plugins-dependencies` for a project Flutter no longer
+/// writes it for.
+///
+/// Every tvOS plugin is found through that file's `dependencyGraph` (see
+/// [_walkPluginDependencies]). Flutter 3.47 made
+/// `FlutterProject.ensureReadyForPlatformSpecificTooling` return before
+/// `refreshPluginsList` when none of its own platforms is present, since
+/// nothing of Flutter's reads the list then. A project created with
+/// `--platforms=tvos` is exactly that: `flutter pub get` stopped writing the
+/// file, discovery found nothing, and the generated registrants came out
+/// empty — every native plugin a `MissingPluginException`, every FFI plugin's
+/// symbols unreferenced. So write it here, as `flutter pub get` did before.
+///
+/// Only when Flutter skipped it, with the same conditions Flutter checks: a
+/// project with any of those platforms already gets it from `pub get`. A
+/// project that has not run `pub get` yet has no package graph to read; that
+/// is traced and discovery proceeds as it always did.
+Future<void> _refreshPluginsListWhereFlutterWillNot(FlutterProject project) async {
+  final bool flutterRefreshesIt =
+      project.android.existsSync() ||
+      project.ios.existsSync() ||
+      (featureFlags.isLinuxEnabled && project.linux.existsSync()) ||
+      (featureFlags.isMacOSEnabled && project.macos.existsSync()) ||
+      (featureFlags.isWindowsEnabled && project.windows.existsSync()) ||
+      (featureFlags.isWebEnabled && project.web.existsSync());
+  if (flutterRefreshesIt || project.isPlugin) {
+    return;
+  }
+  try {
+    await refreshPluginsList(project);
+  } on Exception catch (e) {
+    globals.logger.printTrace('Could not refresh .flutter-plugins-dependencies: $e');
+  }
+}
+
 Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   final Directory tvosDir = project.directory.childDirectory('tvos');
   if (!tvosDir.existsSync()) {
     return;
   }
+
+  await _refreshPluginsListWhereFlutterWillNot(project);
 
   final List<TvosPlugin> plugins = _discoverTvosPlugins(project);
 

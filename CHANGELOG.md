@@ -2,6 +2,17 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- **Plugins work in a project created with `--platforms=tvos`.** Flutter 3.47
+  stopped writing `.flutter-plugins-dependencies` for a project with none of its
+  own platforms, and flutter-tvos finds tvOS plugins through that file. In a
+  tvOS-only project every native plugin threw `MissingPluginException`, and every
+  FFI plugin's symbols were left out of the binary, from 1.9.0 on. flutter-tvos
+  now writes the file itself when Flutter will not.
+
 ## [1.10.4] - 2026-09-20
 
 ### Changed
