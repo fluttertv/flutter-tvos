@@ -160,7 +160,7 @@ void main() {
       expect(appDelegate().readAsStringSync(), TvosUISceneMigration.originalAppDelegate);
       expect(infoPlist().readAsStringSync(), 'bplist00-not-text');
       expect(storyboard().readAsStringSync(), _brokenStoryboard);
-      expect(logger.warningText, contains('adopt the UIScene lifecycle'));
+      expect(logger.errorText, contains('will not launch on tvOS 27'));
     });
 
     testWithoutContext('says nothing and changes nothing on the next build', () async {
@@ -176,6 +176,7 @@ void main() {
       expect(appDelegate().readAsStringSync(), TvosUISceneMigration.migratedAppDelegate);
       expect(logger.statusText, isEmpty);
       expect(logger.warningText, isEmpty);
+      expect(logger.errorText, isEmpty);
     });
   });
 
@@ -231,7 +232,7 @@ void main() {
       // Fixed, the storyboard would make UIKit build a second, throwaway
       // FlutterViewController behind the one this AppDelegate creates.
       expect(storyboard().readAsStringSync(), _brokenStoryboard);
-      expect(logger.warningText, contains('adopt the UIScene lifecycle'));
+      expect(logger.errorText, contains('will not launch on tvOS 27'));
       expect(logger.statusText, isEmpty);
     });
   });
@@ -245,6 +246,7 @@ void main() {
     expect(appDelegate().readAsStringSync(), TvosUISceneMigration.originalAppDelegate);
     expect(logger.statusText, isEmpty);
     expect(logger.warningText, isEmpty);
+    expect(logger.errorText, isEmpty);
   });
 
   testWithoutContext('does nothing without a runner Info.plist', () async {
@@ -255,6 +257,7 @@ void main() {
     expect(storyboard().readAsStringSync(), _brokenStoryboard);
     expect(logger.statusText, isEmpty);
     expect(logger.warningText, isEmpty);
+    expect(logger.errorText, isEmpty);
   });
 }
 

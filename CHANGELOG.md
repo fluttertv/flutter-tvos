@@ -12,11 +12,17 @@ All notable changes to flutter-tvos will be documented here.
   `Info.plist` declares the scene manifest. See
   [Flutter's migration guide](https://flutter.dev/to/uiscene-migration).
 
+  This is required to run on tvOS 27 with Xcode 27. An app built with Xcode 27
+  that does not use scenes does not launch on tvOS 27: tvOS stops it with
+  *"UIScene life cycle is required for apps built with this SDK"*. tvOS 26 and
+  earlier still run it, and an app built with Xcode 26 is unaffected.
+
 - **Existing projects are moved onto it when they build**, if their
   `AppDelegate.swift` is the one flutter-tvos generated, unchanged — the same
   rule Flutter applies to an unchanged iOS app. A changed `AppDelegate` is left
-  alone, with a pointer to the guide. Flutter's `enable-uiscene-migration`
-  setting turns this off.
+  alone, and the build reports that the app will not launch on tvOS 27 until it
+  is migrated by hand. Flutter's `enable-uiscene-migration` setting turns this
+  off.
 
 ### Fixed
 

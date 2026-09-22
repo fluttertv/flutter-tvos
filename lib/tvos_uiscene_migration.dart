@@ -42,6 +42,11 @@ import 'package:meta/meta.dart';
 ///    `FlutterViewController` and engine behind the one the `AppDelegate`
 ///    creates.
 ///
+/// Why it is not optional: built with Xcode 27, an app without the UIScene
+/// lifecycle does not launch on tvOS 27 at all — UIKit stops it with "UIScene
+/// life cycle is required for apps built with this SDK". tvOS 26 and earlier
+/// still run it.
+///
 /// Off when upstream's own switch is off (`enable-uiscene-migration`).
 class TvosUISceneMigration extends ProjectMigrator {
   TvosUISceneMigration(
@@ -178,12 +183,16 @@ import UIKit
       _infoPlist.writeAsStringSync(originalPlist);
     }
 
-    logger.printWarning(
-      'To keep your tvOS app launching with newer SDKs, adopt the UIScene lifecycle: $_guide\n'
+    // An error, as upstream prints it for iOS, and not a failed build: the app
+    // still runs on tvOS 26 and earlier, and built with Xcode 26 it runs
+    // everywhere. Only the combination below refuses to start.
+    logger.printError(
+      'This tvOS app does not use the UIScene lifecycle. Built with Xcode 27, it will not launch on '
+      'tvOS 27: tvOS stops it with "UIScene life cycle is required for apps built with this SDK".\n'
       'flutter-tvos migrates an unchanged AppDelegate automatically; yours has been changed, so '
-      'migrate by hand. In tvos/Runner/AppDelegate.swift, remove the window and '
-      'FlutterViewController this template created: with scenes, the view controller comes from '
-      'Main.storyboard.',
+      'migrate by hand: $_guide\n'
+      'In tvos/Runner/AppDelegate.swift, also remove the window and FlutterViewController the '
+      'tvOS template created: with scenes, the view controller comes from Main.storyboard.',
     );
   }
 
