@@ -19,10 +19,11 @@ All notable changes to flutter-tvos will be documented here.
 
 - **Existing projects are moved onto it when they build**, if their
   `AppDelegate.swift` is the one flutter-tvos generated, unchanged — the same
-  rule Flutter applies to an unchanged iOS app. A changed `AppDelegate` is left
-  alone, and the build reports that the app will not launch on tvOS 27 until it
-  is migrated by hand. Flutter's `enable-uiscene-migration` setting turns this
-  off.
+  rule Flutter applies to an unchanged iOS app — and their `Main.storyboard`
+  still opens on `FlutterViewController`. Any other project is left alone, and
+  the build says why and that the app will not launch on tvOS 27 until it is
+  migrated by hand. Flutter's `enable-uiscene-migration` setting turns the
+  migration off.
 
 ### Fixed
 
@@ -33,14 +34,16 @@ All notable changes to flutter-tvos will be documented here.
   there. Nothing noticed while `AppDelegate` built the window in code; with
   scenes the storyboard is the only source of the window, and the app started
   with no engine, no Dart output and no VM service. The template's storyboard is
-  fixed, and a project already on scenes has its storyboard fixed when it builds.
+  fixed, and a project already on scenes has its storyboard fixed when it builds,
+  whatever `enable-uiscene-migration` says.
 
 - **Plugins work in a project created with `--platforms=tvos`.** Flutter 3.47
   stopped writing `.flutter-plugins-dependencies` for a project with none of its
-  own platforms, and flutter-tvos finds tvOS plugins through that file. In a
-  tvOS-only project every native plugin threw `MissingPluginException`, and every
-  FFI plugin's symbols were left out of the binary, from 1.9.0 on. flutter-tvos
-  now writes the file itself when Flutter will not.
+  own platforms, and flutter-tvos finds tvOS plugins through that file. From
+  1.6.0 on, in a tvOS-only project every native plugin threw
+  `MissingPluginException`, no Dart plugin registered, and every FFI plugin's
+  symbols were left out of the binary. flutter-tvos now writes the file itself
+  when Flutter will not, after `pub get` and before the build.
 
 ## [1.10.4] - 2026-09-20
 
