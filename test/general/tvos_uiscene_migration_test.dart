@@ -167,6 +167,8 @@ void main() {
       expect(infoPlist().readAsStringSync(), 'bplist00-not-text');
       expect(storyboard().readAsStringSync(), _brokenStoryboard);
       expect(logger.errorText, contains('will not launch on tvOS 27'));
+      expect(logger.errorText, contains('Info.plist could not be edited'));
+      expect(logger.errorText, isNot(contains('has been changed')));
     });
 
     testWithoutContext('is migrated through plutil when its Info.plist is binary', () async {
@@ -180,6 +182,25 @@ void main() {
       expect(storyboard().readAsStringSync(), isNot(contains('customModule="Flutter"')));
       expect(logger.errorText, isEmpty);
     });
+
+    testWithoutContext(
+      'is told why when its Info.plist names another storyboard, and nothing is touched',
+      () async {
+        final String otherStoryboard = _preSceneInfoPlist.replaceFirst(
+          '<string>Main</string>',
+          '<string>Other</string>',
+        );
+        infoPlist().writeAsStringSync(otherStoryboard);
+
+        await migrate();
+
+        expect(infoPlist().readAsStringSync(), otherStoryboard);
+        expect(appDelegate().readAsStringSync(), TvosUISceneMigration.originalAppDelegate);
+        expect(storyboard().readAsStringSync(), _brokenStoryboard);
+        expect(logger.errorText, contains('does not name Main as its UIMainStoryboardFile'));
+        expect(logger.errorText, isNot(contains('has been changed')));
+      },
+    );
 
     testWithoutContext('says nothing and changes nothing on the next build', () async {
       await migrate();
@@ -263,6 +284,9 @@ void main() {
       // FlutterViewController behind the one this AppDelegate creates.
       expect(storyboard().readAsStringSync(), _brokenStoryboard);
       expect(logger.errorText, contains('will not launch on tvOS 27'));
+      expect(logger.errorText, contains('AppDelegate.swift has been changed'));
+      // It still builds its own window, which scenes would never show.
+      expect(logger.errorText, contains('also remove the window and FlutterViewController'));
       expect(logger.statusText, isEmpty);
     });
   });

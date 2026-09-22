@@ -178,7 +178,8 @@ import UIKit
       return;
     }
 
-    if (_canMigrateAutomatically()) {
+    String? notMigrated = _whyNotMigratedAutomatically();
+    if (notMigrated == null) {
       final List<int> originalPlist = _infoPlist.readAsBytesSync();
       if (_insertSceneManifest(plistText)) {
         _appDelegate.writeAsStringSync(migratedAppDelegate);
@@ -189,38 +190,46 @@ import UIKit
         return;
       }
       _infoPlist.writeAsBytesSync(originalPlist);
+      notMigrated = 'tvos/Runner/Info.plist could not be edited';
     }
 
     // An error, as upstream prints it for iOS, and not a failed build: the app
     // still runs on tvOS 26 and earlier, and built with Xcode 26 it runs
     // everywhere. Only the combination below refuses to start.
-    logger.printError(
+    final message = StringBuffer(
       'This tvOS app does not use the UIScene lifecycle. Built with Xcode 27, it will not launch on '
       'tvOS 27: tvOS stops it with "UIScene life cycle is required for apps built with this SDK".\n'
-      'flutter-tvos migrates an unchanged AppDelegate automatically; yours has been changed, so '
-      'migrate by hand: $_guide\n'
-      'In tvos/Runner/AppDelegate.swift, also remove the window and FlutterViewController the '
-      'tvOS template created: with scenes, the view controller comes from Main.storyboard.',
+      'flutter-tvos could not migrate it automatically: $notMigrated. Migrate by hand: $_guide',
     );
+    if (_appDelegateBuildsItsOwnWindow()) {
+      message.write(
+        '\nIn tvos/Runner/AppDelegate.swift, also remove the window and FlutterViewController the '
+        'tvOS template created: with scenes, the view controller comes from Main.storyboard.',
+      );
+    }
+    logger.printError(message.toString());
   }
 
-  bool _canMigrateAutomatically() {
-    if (!_appDelegate.existsSync() || !_mainStoryboard.existsSync()) {
-      return false;
+  /// Null when the project is as the tvOS template generated it, and so can be
+  /// migrated automatically; otherwise what stops that, for the error.
+  String? _whyNotMigratedAutomatically() {
+    if (!_appDelegate.existsSync()) {
+      return 'tvos/Runner/AppDelegate.swift does not exist';
+    }
+    if (!_mainStoryboard.existsSync()) {
+      return 'tvos/Runner/Base.lproj/Main.storyboard does not exist';
     }
     if (_normalized(_appDelegate.readAsStringSync()) != _normalized(originalAppDelegate)) {
-      logger.printTrace('UIScene migration: AppDelegate.swift does not match the tvOS template.');
-      return false;
+      return 'tvos/Runner/AppDelegate.swift has been changed from the one flutter-tvos generated';
     }
     final String? storyboardName = _plistParser.getValueFromFile<String>(
       _infoPlist.path,
       'UIMainStoryboardFile',
     );
     if (storyboardName != 'Main') {
-      logger.printTrace('UIScene migration: UIMainStoryboardFile is not "Main".');
-      return false;
+      return 'tvos/Runner/Info.plist does not name Main as its UIMainStoryboardFile';
     }
-    return true;
+    return null;
   }
 
   /// [file] as text, or null when it is not UTF-8.
@@ -300,9 +309,11 @@ import UIKit
     );
   }
 
+  bool _appDelegateBuildsItsOwnWindow() =>
+      _appDelegate.existsSync() && _appDelegate.readAsStringSync().contains('FlutterViewController(');
+
   void _warnIfAppDelegateBuildsItsOwnWindow() {
-    if (!_appDelegate.existsSync() ||
-        !_appDelegate.readAsStringSync().contains('FlutterViewController(')) {
+    if (!_appDelegateBuildsItsOwnWindow()) {
       return;
     }
     logger.printWarning(
