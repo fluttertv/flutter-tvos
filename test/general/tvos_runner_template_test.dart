@@ -7,6 +7,7 @@
 // launch on tvOS 27. These read the files that ship, so reverting any part of
 // the scene setup fails here rather than on a device.
 
+import 'dart:io' as io;
 import 'dart:isolate';
 
 import 'package:file/file.dart';
@@ -28,6 +29,24 @@ const _example = 'packages/flutter_tvos/example/tvos';
 late Directory _root;
 
 String _read(String path) => _root.childFile(path).readAsStringSync();
+
+/// A value from a shipped plist, read by plutil as Xcode reads the file, so a
+/// key that only sits in a comment does not count.
+String _plutil(String path, String keyPath) {
+  final io.ProcessResult result = io.Process.runSync('plutil', <String>[
+    '-extract',
+    keyPath,
+    'raw',
+    '-o',
+    '-',
+    _root.childFile(path).path,
+  ]);
+  expect(result.exitCode, 0, reason: '$keyPath in $path: ${result.stderr}');
+  return (result.stdout as String).trim();
+}
+
+const _sceneConfiguration = 'UIApplicationSceneManifest.UISceneConfigurations.'
+    'UIWindowSceneSessionRoleApplication.0';
 
 /// The opening tag of the storyboard element whose class is
 /// `FlutterViewController`, attributes and line breaks included.
@@ -61,26 +80,14 @@ void main() {
     });
 
     testWithoutContext('declares its scene in Info.plist, with that SceneDelegate and Main', () {
-      final String plist = _read('$_template/Runner/Info.plist.tmpl');
+      const plist = '$_template/Runner/Info.plist.tmpl';
 
-      expect(plist, contains('<key>UIApplicationSceneManifest</key>'));
       expect(
-        plist,
-        matches(
-          RegExp(
-            r'<key>UISceneDelegateClassName</key>\s*'
-            r'<string>\$\(PRODUCT_MODULE_NAME\)\.SceneDelegate</string>',
-          ),
-        ),
+        _plutil(plist, '$_sceneConfiguration.UISceneDelegateClassName'),
+        r'$(PRODUCT_MODULE_NAME).SceneDelegate',
       );
-      expect(
-        plist,
-        matches(RegExp(r'<key>UISceneStoryboardFile</key>\s*<string>Main</string>')),
-      );
-      expect(
-        plist,
-        matches(RegExp(r'<key>UIMainStoryboardFile</key>\s*<string>Main</string>')),
-      );
+      expect(_plutil(plist, '$_sceneConfiguration.UISceneStoryboardFile'), 'Main');
+      expect(_plutil(plist, 'UIMainStoryboardFile'), 'Main');
     });
 
     testWithoutContext('names FlutterViewController as the Objective-C class it is (#87)', () {
@@ -131,7 +138,7 @@ void main() {
         runner,
         logger,
         isMigrationFeatureEnabled: true,
-        plistParser: _TemplatePlistParser(fileSystem),
+        plistParser: _NoPlutil(),
       ).migrate();
 
       files.forEach((String path, String content) {
@@ -156,8 +163,8 @@ void main() {
 
     testWithoutContext('declares its scene with the SceneDelegate it compiles', () {
       expect(
-        _read('$_example/Runner/Info.plist'),
-        contains(r'<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>'),
+        _plutil('$_example/Runner/Info.plist', '$_sceneConfiguration.UISceneDelegateClassName'),
+        r'$(PRODUCT_MODULE_NAME).SceneDelegate',
       );
       expect(
         _read('$_example/Runner.xcodeproj/project.pbxproj'),
@@ -167,19 +174,6 @@ void main() {
   });
 }
 
-/// Answers whether the template declares a scene manifest, and nothing else:
-/// any other plutil call would mean the migration took it for a project to
-/// migrate.
-class _TemplatePlistParser extends Fake implements PlistParser {
-  _TemplatePlistParser(this._fileSystem);
-
-  final FileSystem _fileSystem;
-
-  @override
-  T? getValueFromFile<T>(String plistFilePath, String key) {
-    expect(key, 'UIApplicationSceneManifest');
-    final String plist = _fileSystem.file(plistFilePath).readAsStringSync();
-    return (plist.contains('<key>UIApplicationSceneManifest</key>') ? <String, Object>{} : null)
-        as T?;
-  }
-}
+/// A text Info.plist is read as text, so the migration has no reason to call
+/// plutil on the template; any call would fail the test.
+class _NoPlutil extends Fake implements PlistParser {}
