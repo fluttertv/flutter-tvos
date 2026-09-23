@@ -62,6 +62,10 @@ const _brokenStoryboard = '''
 </document>
 ''';
 
+/// The pre-scene Info.plist written on one line, as some tools write XML:
+/// there is no `<key>UIMainStoryboardFile</key>` line to insert next to.
+final String _oneLineInfoPlist = _preSceneInfoPlist.trim().replaceAll(RegExp(r'\n\s*'), ' ');
+
 /// What `defaults write` leaves in place of the XML: a binary plist, which is
 /// not UTF-8 text.
 final List<int> _binaryInfoPlist = <int>[...utf8.encode('bplist00'), 0xd1, 0x01, 0xff, 0xfe, 0x00];
@@ -117,6 +121,8 @@ void main() {
       // The storyboard is part of the migration, not a separate repair.
       expect(logger.statusText, isNot(contains('Fixed ')));
       expect(logger.warningText, isEmpty);
+      // A text plist is read as text; plutil only checks the insertion.
+      expect(plistParser.readKeys, <String>['UIApplicationSceneManifest']);
     });
 
     testWithoutContext('keeps the Info.plist comments, which plutil -insert would drop', () async {
@@ -144,10 +150,7 @@ void main() {
     testWithoutContext(
       'falls back to plutil -insert when the manifest cannot go in as text',
       () async {
-        // A binary or reformatted plist: plutil still reads the storyboard name,
-        // but there is no `<key>UIMainStoryboardFile</key>` line to insert at.
-        plistParser.storyboardNameOverride = 'Main';
-        infoPlist().writeAsStringSync('bplist00-not-text');
+        infoPlist().writeAsStringSync(_oneLineInfoPlist);
 
         await migrate();
 
@@ -157,14 +160,13 @@ void main() {
     );
 
     testWithoutContext('is left alone when the manifest cannot be inserted either way', () async {
-      plistParser.storyboardNameOverride = 'Main';
       plistParser.insertSucceeds = false;
-      infoPlist().writeAsStringSync('bplist00-not-text');
+      infoPlist().writeAsStringSync(_oneLineInfoPlist);
 
       await migrate();
 
       expect(appDelegate().readAsStringSync(), TvosUISceneMigration.originalAppDelegate);
-      expect(infoPlist().readAsStringSync(), 'bplist00-not-text');
+      expect(infoPlist().readAsStringSync(), _oneLineInfoPlist);
       expect(storyboard().readAsStringSync(), _brokenStoryboard);
       expect(logger.errorText, contains('will not launch on tvOS 27'));
       expect(logger.errorText, contains('Info.plist could not be edited'));
@@ -236,6 +238,22 @@ void main() {
       },
     );
 
+    testWithoutContext('is migrated when a comment only mentions the manifest', () async {
+      // UIKit never reads a comment, so neither does the migration.
+      infoPlist().writeAsStringSync(
+        _preSceneInfoPlist.replaceFirst(
+          '  <key>UIMainStoryboardFile</key>',
+          '  <!-- <key>UIApplicationSceneManifest</key> comes with tvOS 27 -->\n'
+              '  <key>UIMainStoryboardFile</key>',
+        ),
+      );
+
+      await migrate();
+
+      expect(appDelegate().readAsStringSync(), TvosUISceneMigration.migratedAppDelegate);
+      expect(logger.statusText, contains('Finished migration to UIScene lifecycle'));
+    });
+
     testWithoutContext('is left alone when it has no Main.storyboard', () async {
       storyboard().deleteSync();
 
@@ -278,6 +296,27 @@ void main() {
       expect(logger.statusText, contains('Fixed Base.lproj/Main.storyboard'));
       expect(logger.warningText, isEmpty);
     });
+
+    testWithoutContext(
+      'is recognised without plutil when Xcode preprocesses its Info.plist',
+      () async {
+        // plutil cannot parse this, and every call on it prints plutil's
+        // errors. Text is read as text.
+        goOnScenes();
+        infoPlist().writeAsStringSync(
+          infoPlist().readAsStringSync().replaceFirst(
+            '  <key>UIMainStoryboardFile</key>',
+            '#if DEBUG\n  <key>UIFileSharingEnabled</key>\n  <true/>\n#endif\n'
+                '  <key>UIMainStoryboardFile</key>',
+          ),
+        );
+
+        await migrate();
+
+        expect(plistParser.readKeys, isEmpty);
+        expect(storyboard().readAsStringSync(), isNot(contains('customModule="Flutter"')));
+      },
+    );
 
     testWithoutContext('is recognised from a binary Info.plist', () async {
       infoPlist().writeAsBytesSync(_binaryInfoPlist);
@@ -399,12 +438,14 @@ class _FakePlistParser extends Fake implements PlistParser {
 
   final FileSystem _fs;
   final List<String> insertedKeys = <String>[];
+  final List<String> readKeys = <String>[];
   bool insertSucceeds = true;
   String? storyboardNameOverride;
   bool? sceneManifestOverride;
 
   @override
   T? getValueFromFile<T>(String plistFilePath, String key) {
+    readKeys.add(key);
     final String text = utf8.decode(
       _fs.file(plistFilePath).readAsBytesSync(),
       allowMalformed: true,

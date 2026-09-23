@@ -47,7 +47,10 @@ import 'package:meta/meta.dart';
 /// life cycle is required for apps built with this SDK". tvOS 26 and earlier
 /// still run it.
 ///
-/// Off when upstream's own switch is off (`enable-uiscene-migration`).
+/// Upstream's switch, `enable-uiscene-migration`, turns off the migration and
+/// its messages. The storyboard repair for a project already on scenes runs
+/// whatever it says: it fixes a flutter-tvos defect rather than migrating
+/// anything.
 class TvosUISceneMigration extends ProjectMigrator {
   TvosUISceneMigration(
     this._runnerDirectory,
@@ -174,11 +177,7 @@ import UIKit
       return;
     }
 
-    // Read through plutil, as UIKit reads it: a binary plist, which
-    // `defaults write` leaves behind, is not text, and in an XML one the key
-    // can sit in a comment.
-    if (_plistParser.getValueFromFile<Object>(_infoPlist.path, 'UIApplicationSceneManifest') !=
-        null) {
+    if (_declaresSceneManifest()) {
       // A repair, not a migration, so it runs whatever
       // `enable-uiscene-migration` says: a scene built from this storyboard
       // starts with no Flutter view, however the project got onto scenes, and
@@ -208,8 +207,8 @@ import UIKit
     }
 
     // An error, as upstream prints it for iOS, and not a failed build: the app
-    // still runs on tvOS 26 and earlier, and built with Xcode 26 it runs
-    // everywhere. Only the combination below refuses to start.
+    // still runs on tvOS 26 and earlier, and UIKit's message puts the
+    // requirement on apps built with the tvOS 27 SDK.
     final message = StringBuffer(
       'This tvOS app does not use the UIScene lifecycle. Built with Xcode 27, it will not launch on '
       'tvOS 27: tvOS stops it with "UIScene life cycle is required for apps built with this SDK".\n'
@@ -233,11 +232,7 @@ import UIKit
     if (_normalized(_appDelegate.readAsStringSync()) != _normalized(originalAppDelegate)) {
       return 'tvos/Runner/AppDelegate.swift has been changed from the one flutter-tvos generated';
     }
-    final String? storyboardName = _plistParser.getValueFromFile<String>(
-      _infoPlist.path,
-      'UIMainStoryboardFile',
-    );
-    if (storyboardName != 'Main') {
+    if (_mainStoryboardName() != 'Main') {
       return 'tvos/Runner/Info.plist does not name Main as its UIMainStoryboardFile';
     }
     if (!_mainStoryboard.existsSync()) {
@@ -271,6 +266,39 @@ import UIKit
     return _flutterViewControllerTag
         .allMatches(storyboard)
         .any((Match tag) => id.hasMatch(tag[0]!));
+  }
+
+  /// Info.plist as text without its comments, since UIKit never reads what a
+  /// comment holds. Null for a binary plist, which `defaults write` leaves
+  /// behind and only plutil can read.
+  String? _infoPlistWithoutComments() =>
+      _readText(_infoPlist)?.replaceAll(RegExp(r'<!--.*?-->', dotAll: true), '');
+
+  /// Whether Info.plist declares a scene manifest.
+  ///
+  /// Text is read as text, as upstream reads it, and only a binary plist goes
+  /// through plutil. plutil cannot parse a plist that Xcode preprocesses
+  /// (`INFOPLIST_PREPROCESS` with `#if` in it), and every call on one prints
+  /// its errors, on every build.
+  bool _declaresSceneManifest() {
+    final String? text = _infoPlistWithoutComments();
+    if (text != null) {
+      return text.contains('<key>UIApplicationSceneManifest</key>');
+    }
+    return _plistParser.getValueFromFile<Object>(_infoPlist.path, 'UIApplicationSceneManifest') !=
+        null;
+  }
+
+  /// Info.plist's `UIMainStoryboardFile`, read as [_declaresSceneManifest]
+  /// reads the manifest.
+  String? _mainStoryboardName() {
+    final String? text = _infoPlistWithoutComments();
+    if (text != null) {
+      return RegExp(
+        r'<key>UIMainStoryboardFile</key>\s*<string>([^<]*)</string>',
+      ).firstMatch(text)?.group(1);
+    }
+    return _plistParser.getValueFromFile<String>(_infoPlist.path, 'UIMainStoryboardFile');
   }
 
   /// [file] as text, or null when it is not UTF-8.
