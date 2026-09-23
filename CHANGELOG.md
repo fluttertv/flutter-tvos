@@ -15,7 +15,8 @@ All notable changes to flutter-tvos will be documented here.
   This is required to run on tvOS 27 with Xcode 27. An app built with Xcode 27
   that does not use scenes does not launch on tvOS 27: tvOS stops it with
   *"UIScene life cycle is required for apps built with this SDK"*. tvOS 26 and
-  earlier still run it, and an app built with Xcode 26 is unaffected.
+  earlier still run it, and by that message the requirement applies to apps
+  built with the tvOS 27 SDK.
 
 - **Existing projects are moved onto it when they build**, if their
   `AppDelegate.swift` is the one flutter-tvos generated, unchanged — the same
@@ -24,6 +25,12 @@ All notable changes to flutter-tvos will be documented here.
   the build says why and that the app will not launch on tvOS 27 until it is
   migrated by hand. Flutter's `enable-uiscene-migration` setting turns the
   migration off.
+
+- **A project on scenes no longer builds on the 3.32.8 line.** Its
+  `AppDelegate` uses `FlutterImplicitEngineDelegate` and its scene
+  `FlutterSceneDelegate`, which the 3.32.8 engine does not have. That covers
+  new projects and ones this release migrates, so going back with
+  `flutter-tvos use 3.32.8` needs the old `AppDelegate` and `Info.plist`.
 
 ### Fixed
 
@@ -40,7 +47,7 @@ All notable changes to flutter-tvos will be documented here.
 - **Plugins work in a project created with `--platforms=tvos`.** Flutter 3.47
   stopped writing `.flutter-plugins-dependencies` for a project with none of its
   own platforms, and flutter-tvos finds tvOS plugins through that file. From
-  1.6.0 on, in a tvOS-only project every native plugin threw
+  1.6.0 (Flutter 3.47.0) on, in a tvOS-only project every native plugin threw
   `MissingPluginException`, no Dart plugin registered, and every FFI plugin's
   symbols were left out of the binary. flutter-tvos now writes the file itself
   when Flutter will not, after `pub get` and before the build.
