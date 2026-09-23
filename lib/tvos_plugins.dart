@@ -583,7 +583,52 @@ Future<void> refreshTvosPluginsList(FlutterProject project) async {
       findPackageConfigFile(project.directory) == null) {
     return;
   }
+  // Upstream writes the file from scratch, without the `plugins.tvos` list
+  // that [ensureReadyForTvosTooling] adds and the tvOS Podfile reads. Keep the
+  // last one until the tooling writes it again, so a build that stops in
+  // between does not leave `pod install` with no tvOS plugins to install.
+  final Object? tvosPlugins = _pluginsListFor('tvos', project);
   await refreshPluginsList(project);
+  if (tvosPlugins != null) {
+    _restorePluginsListFor('tvos', tvosPlugins, project);
+  }
+}
+
+/// `plugins.<platform>` from `.flutter-plugins-dependencies`, or null.
+Object? _pluginsListFor(String platform, FlutterProject project) {
+  final File file = project.flutterPluginsDependenciesFile;
+  if (!file.existsSync()) {
+    return null;
+  }
+  try {
+    final Object? dependencies = json.decode(file.readAsStringSync());
+    if (dependencies is Map<String, Object?>) {
+      final Object? plugins = dependencies['plugins'];
+      if (plugins is Map<String, Object?>) {
+        return plugins[platform];
+      }
+    }
+  } on FormatException {
+    return null;
+  }
+  return null;
+}
+
+void _restorePluginsListFor(String platform, Object list, FlutterProject project) {
+  final File file = project.flutterPluginsDependenciesFile;
+  if (!file.existsSync()) {
+    return;
+  }
+  final Object? dependencies = json.decode(file.readAsStringSync());
+  if (dependencies is! Map<String, Object?>) {
+    return;
+  }
+  final Object? plugins = dependencies['plugins'];
+  dependencies['plugins'] = <String, Object?>{
+    if (plugins is Map<String, Object?>) ...plugins,
+    platform: list,
+  };
+  file.writeAsStringSync(json.encode(dependencies));
 }
 
 Future<void> ensureReadyForTvosTooling(FlutterProject project) async {

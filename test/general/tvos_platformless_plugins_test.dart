@@ -211,6 +211,24 @@ flutter:
   );
 
   testUsingContext(
+    'keeps the tvOS plugin list the Podfile reads while the build refreshes the file',
+    () async {
+      final FlutterProject project = seedApp();
+      // `validateCommand`, which writes `plugins.tvos`.
+      await ensureReadyForTvosTooling(project);
+
+      // `TvosBuilder.buildBundle`, before the kernel compile. The tooling only
+      // writes `plugins.tvos` again after it, and a build can stop in between.
+      await TvosBuilder.writeDartPluginRegistrant(project);
+
+      final Map<String, Object?> deps = pluginsDependencies();
+      expect(names((deps['plugins']! as Map<String, Object?>)['tvos']), <String>['gizmo_tvos']);
+      expect(names(deps['dependencyGraph']), contains('gizmo_tvos'));
+    },
+    overrides: overrides(),
+  );
+
+  testUsingContext(
     "writes nothing into a plugin package's own directory",
     () async {
       // What `flutter-tvos test` in a plugin's root ran into: its tvos/ holds
