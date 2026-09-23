@@ -254,6 +254,18 @@ void main() {
       expect(logger.statusText, contains('Finished migration to UIScene lifecycle'));
     });
 
+    testWithoutContext('gets its localized storyboards fixed with the rest', () async {
+      final File localized = runner.childDirectory('en.lproj').childFile('Main.storyboard')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(_brokenStoryboard);
+
+      await migrate();
+
+      expect(localized.readAsStringSync(), isNot(contains('customModule="Flutter"')));
+      // Part of the migration: no separate repair message.
+      expect(logger.statusText, isNot(contains('Fixed ')));
+    });
+
     testWithoutContext('is left alone when it has no Main.storyboard', () async {
       storyboard().deleteSync();
 

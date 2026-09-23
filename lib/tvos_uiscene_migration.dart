@@ -198,8 +198,9 @@ import UIKit
       if (_insertSceneManifest()) {
         _appDelegate.writeAsStringSync(migratedAppDelegate);
         // Part of the migration, not a separate repair: its own message would
-        // describe a failed launch this project never had.
-        _repairStoryboard(_mainStoryboard, quiet: true);
+        // describe a failed launch this project never had. Every storyboard,
+        // so a localized copy of Main is not left for the next build.
+        _repairStoryboards(quiet: true);
         logger.printStatus('Finished migration to UIScene lifecycle. See $_guide for details.');
         return;
       }
@@ -342,13 +343,13 @@ import UIKit
     );
   }
 
-  void _repairStoryboards() {
+  void _repairStoryboards({bool quiet = false}) {
     if (!_runnerDirectory.existsSync()) {
       return;
     }
     for (final FileSystemEntity entity in _runnerDirectory.listSync(recursive: true)) {
       if (entity is File && entity.basename.endsWith('.storyboard')) {
-        _repairStoryboard(entity);
+        _repairStoryboard(entity, quiet: quiet);
       }
     }
   }
