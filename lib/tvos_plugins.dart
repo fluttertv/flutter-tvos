@@ -588,7 +588,11 @@ Future<void> refreshTvosPluginsList(FlutterProject project) async {
 
 Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   final Directory tvosDir = project.directory.childDirectory('tvos');
-  if (!tvosDir.existsSync()) {
+  // A plugin's own tvos/ holds its native sources, not a runner. Registrants
+  // and plugin lists belong to the app that uses the plugin, such as its
+  // example/, and written here they land in the plugin's source tree, as
+  // `flutter-tvos test` in a plugin did. Upstream skips a plugin the same way.
+  if (!tvosDir.existsSync() || project.isPlugin) {
     return;
   }
 

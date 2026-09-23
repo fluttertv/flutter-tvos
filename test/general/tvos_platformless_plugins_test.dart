@@ -211,11 +211,25 @@ flutter:
   );
 
   testUsingContext(
-    'leaves a plugin package alone, as `flutter pub get` does',
+    "writes nothing into a plugin package's own directory",
     () async {
-      await ensureReadyForTvosTooling(seedApp(isPlugin: true));
+      // What `flutter-tvos test` in a plugin's root ran into: its tvos/ holds
+      // the plugin's native sources, and the registrants and plugin lists
+      // belong to an app that uses it, such as its example/.
+      final FlutterProject plugin = seedApp(isPlugin: true);
+      plugin.directory.childDirectory('tvos').childDirectory('Classes').createSync();
 
-      expect(names(pluginsDependencies()['dependencyGraph']), isEmpty);
+      await ensureReadyForTvosTooling(plugin);
+
+      for (final path in <String>[
+        '.flutter-plugins-dependencies',
+        '.flutter-plugins',
+        'tvos/Flutter/GeneratedPluginRegistrant.swift',
+        'tvos/Runner/GeneratedPluginRegistrant.m',
+        '.dart_tool/flutter_build/dart_plugin_registrant.dart',
+      ]) {
+        expect(plugin.directory.childFile(path).existsSync(), isFalse, reason: path);
+      }
     },
     overrides: overrides(),
   );

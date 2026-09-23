@@ -45,6 +45,13 @@ All notable changes to flutter-tvos will be documented here.
   symbols were left out of the binary. flutter-tvos now writes the file itself
   when Flutter will not, after `pub get` and before the build.
 
+- **A plugin package's own directory is left alone.** Run in a plugin's root,
+  `flutter-tvos test` and the other commands that prepare tvOS tooling wrote
+  `tvos/Flutter/GeneratedPluginRegistrant.swift`, `.flutter-plugins` and
+  `.flutter-plugins-dependencies` into the plugin's source tree, as if it were
+  an app. They belong to the app that uses the plugin, such as its example, and
+  flutter-tvos now skips a plugin package the way Flutter does.
+
 ## [1.10.4] - 2026-09-20
 
 ### Changed
