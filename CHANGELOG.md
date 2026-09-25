@@ -23,14 +23,18 @@ All notable changes to flutter-tvos will be documented here.
   rule Flutter applies to an unchanged iOS app — and their `Main.storyboard`
   still opens on `FlutterViewController`. Any other project is left alone, and
   the build says why and that the app will not launch on tvOS 27 until it is
-  migrated by hand. Flutter's `enable-uiscene-migration` setting turns the
-  migration off.
+  migrated by hand. A project already on scenes with that unchanged
+  `AppDelegate` has it replaced too. A file the build cannot write is reported
+  rather than failing it. With Flutter's `enable-uiscene-migration` setting off,
+  nothing is edited.
 
 - **A project on scenes no longer builds on the 3.32.8 line.** Its
   `AppDelegate` uses `FlutterImplicitEngineDelegate` and its scene
   `FlutterSceneDelegate`, which the 3.32.8 engine does not have. That covers
   new projects and ones this release migrates, so going back with
-  `flutter-tvos use 3.32.8` needs the old `AppDelegate` and `Info.plist`.
+  `flutter-tvos use 3.32.8` needs the old `AppDelegate` and `Info.plist`, and,
+  in a project this release created, `SceneDelegate.swift` taken out of the
+  Runner target.
 
 ### Fixed
 
@@ -41,8 +45,9 @@ All notable changes to flutter-tvos will be documented here.
   there. Nothing noticed while `AppDelegate` built the window in code; with
   scenes the storyboard is the only source of the window, and the app started
   with no engine, no Dart output and no VM service. The template's storyboard is
-  fixed, and a project already on scenes has its storyboard fixed when it builds,
-  whatever `enable-uiscene-migration` says.
+  fixed, and a project already on scenes has the storyboards its scene manifest
+  names fixed when it builds. With `enable-uiscene-migration` off, the build
+  says what to fix instead.
 
 - **Plugins work in a project created with `--platforms=tvos`.** Flutter 3.47
   stopped writing `.flutter-plugins-dependencies` for a project with none of its
