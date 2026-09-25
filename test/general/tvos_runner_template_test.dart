@@ -88,6 +88,11 @@ void main() {
       );
       expect(_plutil(plist, '$_sceneConfiguration.UISceneStoryboardFile'), 'Main');
       expect(_plutil(plist, 'UIMainStoryboardFile'), 'Main');
+      // One scene, as in Flutter's iOS template and the migrated manifest.
+      expect(
+        _plutil(plist, 'UIApplicationSceneManifest.UIApplicationSupportsMultipleScenes'),
+        'false',
+      );
     });
 
     testWithoutContext('names FlutterViewController as the Objective-C class it is (#87)', () {
