@@ -2,6 +2,68 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.11.0] - 2026-09-23
+
+### Changed
+
+- **New projects use the UIScene lifecycle**, as Flutter's iOS template does:
+  `AppDelegate` adopts `FlutterImplicitEngineDelegate` and registers plugins in
+  `didInitializeImplicitFlutterEngine`, a `SceneDelegate.swift` is added, and
+  `Info.plist` declares the scene manifest. See
+  [Flutter's migration guide](https://flutter.dev/to/uiscene-migration).
+
+  This is required to run on tvOS 27 with Xcode 27. An app built with Xcode 27
+  that does not use scenes does not launch on tvOS 27: tvOS stops it with
+  *"UIScene life cycle is required for apps built with this SDK"*. tvOS 26 and
+  earlier still run it, and by that message the requirement applies to apps
+  built with the tvOS 27 SDK.
+
+- **Existing projects are moved onto it when they build**, if their
+  `AppDelegate.swift` is the one flutter-tvos generated, unchanged — the same
+  rule Flutter applies to an unchanged iOS app — and their `Main.storyboard`
+  still opens on `FlutterViewController`. Any other project is left alone, and
+  the build says why and that the app will not launch on tvOS 27 until it is
+  migrated by hand. A project already on scenes with that unchanged
+  `AppDelegate` has it replaced too. A file the build cannot write is reported
+  rather than failing it. With Flutter's `enable-uiscene-migration` setting off,
+  nothing is edited.
+
+- **A project on scenes no longer builds on the 3.32.8 line.** Its
+  `AppDelegate` uses `FlutterImplicitEngineDelegate` and its scene
+  `FlutterSceneDelegate`, which the 3.32.8 engine does not have. That covers
+  new projects and ones this release migrates, so going back with
+  `flutter-tvos use 3.32.8` needs the old `AppDelegate` and `Info.plist`, and,
+  in a project this release created, `SceneDelegate.swift` taken out of the
+  Runner target.
+
+### Fixed
+
+- **A project moved to the UIScene lifecycle starts its Flutter view**
+  ([#87](https://github.com/fluttertv/flutter-tvos/issues/87)). The runner's
+  `Main.storyboard` named `FlutterViewController` as a Swift class in the
+  `Flutter` module, which UIKit cannot find, so it put a plain view controller
+  there. Nothing noticed while `AppDelegate` built the window in code; with
+  scenes the storyboard is the only source of the window, and the app started
+  with no engine, no Dart output and no VM service. The template's storyboard is
+  fixed, and a project already on scenes has the storyboards its scene manifest
+  names fixed when it builds. With `enable-uiscene-migration` off, the build
+  says what to fix instead.
+
+- **Plugins work in a project created with `--platforms=tvos`.** Flutter 3.47
+  stopped writing `.flutter-plugins-dependencies` for a project with none of its
+  own platforms, and flutter-tvos finds tvOS plugins through that file. From
+  1.6.0 (Flutter 3.47.0) on, in a tvOS-only project every native plugin threw
+  `MissingPluginException`, no Dart plugin registered, and every FFI plugin's
+  symbols were left out of the binary. flutter-tvos now writes the file itself
+  when Flutter will not, after `pub get` and before the build.
+
+- **A plugin package's own directory is left alone.** Run in a plugin's root,
+  `flutter-tvos test` and the other commands that prepare tvOS tooling wrote
+  `tvos/Flutter/GeneratedPluginRegistrant.swift`, `.flutter-plugins` and
+  `.flutter-plugins-dependencies` into the plugin's source tree, as if it were
+  an app. They belong to the app that uses the plugin, such as its example, and
+  flutter-tvos now skips a plugin package the way Flutter does.
+
 ## [1.10.4] - 2026-09-20
 
 ### Changed

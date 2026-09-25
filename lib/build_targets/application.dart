@@ -31,6 +31,7 @@ import '../tvos_build_info.dart';
 import '../tvos_engine_signing.dart';
 import '../tvos_plugins.dart';
 import '../tvos_swift_package_manager.dart';
+import '../tvos_uiscene_migration.dart';
 import 'tvos_hooks.dart';
 
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with tvOS-
@@ -570,6 +571,16 @@ class NativeTvosBundle extends Target {
       globals.logger.printError('tvOS project not found. Did you run flutter-tvos create?');
       throw Exception('Missing tvOS project directory');
     }
+
+    // Before xcodebuild compiles the runner's Info.plist and storyboard: a
+    // project on the UIScene lifecycle with the old storyboard launches with
+    // no Flutter view at all. See [TvosUISceneMigration].
+    await TvosUISceneMigration(
+      tvosProjectDir.childDirectory('Runner'),
+      globals.logger,
+      isMigrationFeatureEnabled: featureFlags.isUISceneMigrationEnabled,
+      plistParser: globals.plistParser,
+    ).migrate();
 
     // 0. Invalidate the staged-payload marker before anything is replaced.
     //    Everything from here to step 5 mutates tvos/Flutter; an exception or a

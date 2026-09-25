@@ -12,6 +12,7 @@ import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/dart/package_map.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/project.dart';
+import 'package:meta/meta.dart';
 
 import 'build_targets/application.dart';
 import 'tvos_build_info.dart';
@@ -22,6 +23,34 @@ import 'tvos_project.dart';
 const String kTargetBackendType = 'TargetBackendType';
 
 class TvosBuilder {
+  /// Writes the tvOS Dart plugin registrant that the kernel compile links in.
+  ///
+  /// Refreshes the plugin list first, now that `pub get` has run: it does not
+  /// write the list for a project with no platform but tvOS, and the refresh
+  /// in `validateCommand` ran before it. On a fresh checkout, after `clean`,
+  /// or with a plugin just added, that one read a missing or stale package
+  /// config, and the kernel was compiled without the tvOS plugins.
+  ///
+  /// Best effort, as in [ensureReadyForTvosTooling]: upstream's list rejects
+  /// some dependencies a tvOS-only app has always built with, such as one
+  /// declaring `flutter: plugin:` with no platforms. The build goes on with
+  /// the list it has, and says so, since a plugin missing from the
+  /// registrant is otherwise found only at runtime.
+  @visibleForTesting
+  static Future<void> writeDartPluginRegistrant(FlutterProject project) async {
+    try {
+      await refreshTvosPluginsList(project);
+    } on Object catch (error) {
+      // Not only an Exception: upstream's reader lets a TypeError through for
+      // a package_graph.json whose dependencies are not all strings.
+      globals.logger.printWarning(
+        'Could not refresh .flutter-plugins-dependencies, so this build may be missing tvOS '
+        'plugins, and calls to them would throw MissingPluginException.\n$error',
+      );
+    }
+    writeTvosDartPluginRegistrant(project);
+  }
+
   static Future<void> buildBundle({
     required FlutterProject project,
     required TvosBuildInfo tvosBuildInfo,
@@ -101,7 +130,7 @@ class TvosBuilder {
     // system would otherwise emit a registrant that routes to iOS plugins
     // (Platform.isIOS == true on tvOS). We disabled generateDartPluginRegistry
     // above so Flutter won't overwrite this file during the build.
-    writeTvosDartPluginRegistrant(project);
+    await writeDartPluginRegistrant(project);
 
     final Status status = globals.logger.startProgress(
       'Building a tvOS application in $buildModeName mode for ${tvosBuildInfo.targetArch} target...',

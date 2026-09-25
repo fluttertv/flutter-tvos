@@ -7,6 +7,9 @@ import 'dart:convert';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/dart/language_version.dart';
+import 'package:flutter_tools/src/dart/package_map.dart' show findPackageConfigFile;
+import 'package:flutter_tools/src/features.dart';
+import 'package:flutter_tools/src/flutter_plugins.dart' show refreshPluginsList;
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/platform_plugins.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -543,10 +546,102 @@ String _renderFfiForcedReferenceBody(List<String> symbols) {
       '  }\n';
 }
 
+/// Writes `.flutter-plugins-dependencies` for a project Flutter no longer
+/// writes it for.
+///
+/// Every tvOS plugin is found through that file's `dependencyGraph` (see
+/// [_walkPluginDependencies]). Flutter 3.47 made
+/// `FlutterProject.ensureReadyForPlatformSpecificTooling` return before
+/// `refreshPluginsList` when none of its own platforms is present, since
+/// nothing of Flutter's reads the list then. A project created with
+/// `--platforms=tvos` is exactly that: `flutter pub get` stopped writing the
+/// file, discovery found nothing, and the generated registrants came out
+/// empty — every native plugin a `MissingPluginException`, every Dart plugin
+/// unregistered, every FFI plugin's symbols unreferenced. So write it here, as
+/// `flutter pub get` did before.
+///
+/// Only when Flutter skipped it, with the same conditions Flutter checks: a
+/// project with any of those platforms already gets it from `pub get`. And
+/// only once there is a package config to read: before the first `pub get`
+/// there is none, and upstream's reader prints an error for it.
+///
+/// It has to run after `pub get` and before the Dart plugin registrant is
+/// generated, so `TvosBuilder.buildBundle` calls it there.
+/// [ensureReadyForTvosTooling] also calls it, but from `validateCommand`,
+/// which runs before `pub get`: on a fresh checkout, after `clean`, or with a
+/// plugin just added, the package config it reads is missing or stale.
+Future<void> refreshTvosPluginsList(FlutterProject project) async {
+  final bool flutterRefreshesIt =
+      project.android.existsSync() ||
+      project.ios.existsSync() ||
+      (featureFlags.isLinuxEnabled && project.linux.existsSync()) ||
+      (featureFlags.isMacOSEnabled && project.macos.existsSync()) ||
+      (featureFlags.isWindowsEnabled && project.windows.existsSync()) ||
+      (featureFlags.isWebEnabled && project.web.existsSync());
+  if (flutterRefreshesIt ||
+      project.isPlugin ||
+      findPackageConfigFile(project.directory) == null) {
+    return;
+  }
+  await refreshPluginsList(project);
+  // Upstream writes the file from scratch, without the `plugins.tvos` list
+  // that the tvOS Podfile reads. Write the current one straight away, from
+  // the list just refreshed, rather than leave it missing until
+  // [ensureReadyForTvosTooling] runs again: a build that stops in between,
+  // on a Dart error or Ctrl-C, would leave `pod install` with no tvOS plugins.
+  _writeTvosPluginsList(project, _tvosPluginEntries(_discoverTvosPlugins(project)));
+}
+
+/// The `plugins.tvos` entries of `.flutter-plugins-dependencies`, which the
+/// tvOS Podfile reads.
+List<Map<String, Object?>> _tvosPluginEntries(List<TvosPlugin> plugins) => <Map<String, Object?>>[
+  for (final plugin in plugins)
+    <String, Object?>{
+      'name': plugin.name,
+      'path': plugin.path,
+      'native_build': plugin.hasNativeBuild(),
+      'dependencies': <String>[],
+      'dev_dependency': false,
+    },
+];
+
+/// Sets `plugins.tvos` in the `.flutter-plugins-dependencies` upstream just
+/// wrote. Upstream deletes the file when there are no plugins at all, and
+/// then there is nothing for the Podfile to install either.
+void _writeTvosPluginsList(FlutterProject project, List<Map<String, Object?>> entries) {
+  final File file = project.flutterPluginsDependenciesFile;
+  if (!file.existsSync()) {
+    return;
+  }
+  final Object? dependencies = json.decode(file.readAsStringSync());
+  if (dependencies is! Map<String, Object?>) {
+    return;
+  }
+  final Object? plugins = dependencies['plugins'];
+  dependencies['plugins'] = <String, Object?>{
+    if (plugins is Map<String, Object?>) ...plugins,
+    'tvos': entries,
+  };
+  file.writeAsStringSync(json.encode(dependencies));
+}
+
 Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   final Directory tvosDir = project.directory.childDirectory('tvos');
-  if (!tvosDir.existsSync()) {
+  // A plugin's own tvos/ holds its native sources, not a runner. Registrants
+  // and plugin lists belong to the app that uses the plugin, such as its
+  // example/, and written here they land in the plugin's source tree, as
+  // `flutter-tvos test` in a plugin did. Upstream skips a plugin the same way.
+  if (!tvosDir.existsSync() || project.isPlugin) {
     return;
+  }
+
+  // Best effort: before `pub get` the package config can be stale, and
+  // `TvosBuilder.buildBundle` refreshes again once `pub get` has run. Whatever
+  // it throws, as there.
+  try {
+    await refreshTvosPluginsList(project);
+  } on Object catch (e) {
+    globals.logger.printTrace('Could not refresh .flutter-plugins-dependencies: $e');
   }
 
   final List<TvosPlugin> plugins = _discoverTvosPlugins(project);
@@ -564,8 +659,7 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   final methodChannelPlugins = <Map<String, Object?>>[];
   final ffiPlugins = <Map<String, Object?>>[];
 
-  // Tightly-typed inner list lets us avoid dynamic dispatch on `.add(...)`.
-  final tvosPluginEntries = <Map<String, dynamic>>[];
+  final List<Map<String, Object?>> tvosPluginEntries = _tvosPluginEntries(plugins);
 
   // CRITICAL: preserve the existing `.flutter-plugins-dependencies` rather
   // than overwriting it. Stock `flutter pub get` writes ios/android/...
@@ -629,13 +723,6 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
       ffiPlugins.add(plugin.toMap());
     }
 
-    tvosPluginEntries.add(<String, dynamic>{
-      'name': plugin.name,
-      'path': plugin.path,
-      'native_build': plugin.hasNativeBuild(),
-      'dependencies': <String>[],
-      'dev_dependency': false,
-    });
     pluginsBuffer.writeln('${plugin.name}=${plugin.path}');
   }
 
