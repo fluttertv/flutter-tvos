@@ -40,11 +40,12 @@ void main() {
     logger = BufferLogger.test();
   });
 
-  // What `flutter pub get` writes, and nothing else: no
+  // What `flutter pub get` writes for an app depending on [dependencies],
+  // each a package under /plugins, and nothing else: no
   // `.flutter-plugins-dependencies`, which Flutter 3.47 does not write for a
   // project without its own platforms.
-  void runPubGet(Directory app) {
-    final Directory dartTool = app.childDirectory('.dart_tool')..createSync();
+  void runPubGet(Directory app, {List<String> dependencies = const <String>['gizmo_tvos']}) {
+    final Directory dartTool = app.childDirectory('.dart_tool')..createSync(recursive: true);
     dartTool
         .childFile('package_config.json')
         .writeAsStringSync(
@@ -52,11 +53,12 @@ void main() {
             'configVersion': 2,
             'packages': <Map<String, String>>[
               <String, String>{'name': 'app', 'rootUri': '../', 'packageUri': 'lib/'},
-              <String, String>{
-                'name': 'gizmo_tvos',
-                'rootUri': '../../plugins/gizmo_tvos',
-                'packageUri': 'lib/',
-              },
+              for (final name in dependencies)
+                <String, String>{
+                  'name': name,
+                  'rootUri': '../../plugins/$name',
+                  'packageUri': 'lib/',
+                },
             ],
           }),
         );
@@ -69,24 +71,27 @@ void main() {
             'packages': <Map<String, Object>>[
               <String, Object>{
                 'name': 'app',
-                'dependencies': <String>['gizmo_tvos'],
+                'dependencies': dependencies,
                 'devDependencies': <String>[],
               },
-              <String, Object>{'name': 'gizmo_tvos', 'dependencies': <String>[]},
+              for (final name in dependencies)
+                <String, Object>{'name': name, 'dependencies': <String>[]},
             ],
           }),
         );
+  }
+
+  void writePackage(String name, String pubspec) {
+    fileSystem.directory('/plugins/$name').childFile('pubspec.yaml')
+      ..createSync(recursive: true)
+      ..writeAsStringSync(pubspec);
   }
 
   // Lays out:
   //   /app                  the app, with tvos/ and nothing else unless asked
   //   /plugins/gizmo_tvos   a tvOS plugin with a native and a Dart plugin class
   // and, unless asked otherwise, what `flutter pub get` leaves behind.
-  FlutterProject seedApp({
-    bool withIos = false,
-    bool pubGetRan = true,
-    bool isPlugin = false,
-  }) {
+  FlutterProject seedApp({bool withIos = false, bool pubGetRan = true, bool isPlugin = false}) {
     final Directory app = fileSystem.directory('/app')..createSync(recursive: true);
     app.childDirectory('tvos').childDirectory('Runner').createSync(recursive: true);
     if (withIos) {
@@ -177,18 +182,14 @@ flutter:
     },
   );
 
-  testUsingContext(
-    'says nothing before `pub get` has written a package config',
-    () async {
-      await ensureReadyForTvosTooling(seedApp(pubGetRan: false));
+  testUsingContext('says nothing before `pub get` has written a package config', () async {
+    await ensureReadyForTvosTooling(seedApp(pubGetRan: false));
 
-      expect(objcRegistrant(), isNot(contains('GizmoTvosPlugin')));
-      // Upstream's reader prints "package_config.json does not exist" for
-      // this, in red, on the first command after `clean` or a fresh clone.
-      expect(logger.errorText, isEmpty);
-    },
-    overrides: overrides(),
-  );
+    expect(objcRegistrant(), isNot(contains('GizmoTvosPlugin')));
+    // Upstream's reader prints "package_config.json does not exist" for
+    // this, in red, on the first command after `clean` or a fresh clone.
+    expect(logger.errorText, isEmpty);
+  }, overrides: overrides());
 
   testUsingContext(
     'registers Dart plugins on the first build after `clean` or a fresh clone',
@@ -211,7 +212,7 @@ flutter:
   );
 
   testUsingContext(
-    'keeps the tvOS plugin list the Podfile reads while the build refreshes the file',
+    'writes the tvOS plugin list the Podfile reads when the build refreshes the file',
     () async {
       final FlutterProject project = seedApp();
       // `validateCommand`, which writes `plugins.tvos`.
@@ -228,49 +229,119 @@ flutter:
     overrides: overrides(),
   );
 
-  testUsingContext(
-    "writes nothing into a plugin package's own directory",
-    () async {
-      // What `flutter-tvos test` in a plugin's root ran into: its tvos/ holds
-      // the plugin's native sources, and the registrants and plugin lists
-      // belong to an app that uses it, such as its example/.
-      final FlutterProject plugin = seedApp(isPlugin: true);
-      plugin.directory.childDirectory('tvos').childDirectory('Classes').createSync();
+  testUsingContext("writes nothing into a plugin package's own directory", () async {
+    // What `flutter-tvos test` in a plugin's root ran into: its tvos/ holds
+    // the plugin's native sources, and the registrants and plugin lists
+    // belong to an app that uses it, such as its example/.
+    final FlutterProject plugin = seedApp(isPlugin: true);
+    plugin.directory.childDirectory('tvos').childDirectory('Classes').createSync();
 
-      await ensureReadyForTvosTooling(plugin);
+    await ensureReadyForTvosTooling(plugin);
 
-      for (final path in <String>[
-        '.flutter-plugins-dependencies',
-        '.flutter-plugins',
-        'tvos/Flutter/GeneratedPluginRegistrant.swift',
-        'tvos/Runner/GeneratedPluginRegistrant.m',
-        '.dart_tool/flutter_build/dart_plugin_registrant.dart',
+    for (final path in <String>[
+      '.flutter-plugins-dependencies',
+      '.flutter-plugins',
+      'tvos/Flutter/GeneratedPluginRegistrant.swift',
+      'tvos/Runner/GeneratedPluginRegistrant.m',
+      '.dart_tool/flutter_build/dart_plugin_registrant.dart',
+    ]) {
+      expect(plugin.directory.childFile(path).existsSync(), isFalse, reason: path);
+    }
+  }, overrides: overrides());
+
+  for (final (String platform, List<String> files, TestFeatureFlags flags)
+      in <(String, List<String>, TestFeatureFlags)>[
+        ('android', <String>[], TestFeatureFlags()),
+        ('ios', <String>[], TestFeatureFlags()),
+        ('linux', <String>['CMakeLists.txt'], TestFeatureFlags(isLinuxEnabled: true)),
+        ('macos', <String>[], TestFeatureFlags(isMacOSEnabled: true)),
+        ('windows', <String>['CMakeLists.txt'], TestFeatureFlags(isWindowsEnabled: true)),
+        ('web', <String>['index.html'], TestFeatureFlags(isWebEnabled: true)),
       ]) {
-        expect(plugin.directory.childFile(path).existsSync(), isFalse, reason: path);
-      }
-    },
-    overrides: overrides(),
-  );
-
-  for (final macOSEnabled in <bool>[true, false]) {
     testUsingContext(
-      macOSEnabled
-          ? 'leaves the list to `flutter pub get` for a desktop platform it has enabled'
-          : 'writes the list for a desktop platform Flutter has not enabled',
+      'leaves the list to `flutter pub get` for a project with $platform/',
       () async {
         final FlutterProject project = seedApp();
-        project.directory.childDirectory('macos').createSync();
+        final Directory directory = project.directory.childDirectory(platform)..createSync();
+        for (final file in files) {
+          directory.childFile(file).createSync();
+        }
 
         await ensureReadyForTvosTooling(project);
 
-        expect(
-          names(pluginsDependencies()['dependencyGraph']),
-          macOSEnabled ? isEmpty : contains('gizmo_tvos'),
-        );
+        expect(names(pluginsDependencies()['dependencyGraph']), isEmpty);
       },
-      overrides: overrides(
-        featureFlags: () => TestFeatureFlags(isMacOSEnabled: macOSEnabled),
-      ),
+      overrides: overrides(featureFlags: () => flags),
     );
   }
+
+  testUsingContext('writes the list for a desktop platform Flutter has not enabled', () async {
+    final FlutterProject project = seedApp();
+    project.directory.childDirectory('macos').createSync();
+
+    await ensureReadyForTvosTooling(project);
+
+    expect(names(pluginsDependencies()['dependencyGraph']), contains('gizmo_tvos'));
+  }, overrides: overrides(featureFlags: () => TestFeatureFlags()));
+
+  group('on the build path, after `pub get`,', () {
+    testUsingContext('drops a removed plugin from the tvOS list the Podfile reads', () async {
+      writePackage('other_tvos', '''
+name: other_tvos
+flutter:
+  plugin:
+    platforms:
+      tvos:
+        pluginClass: OtherTvosPlugin
+''');
+      final FlutterProject project = seedApp();
+      runPubGet(project.directory, dependencies: <String>['gizmo_tvos', 'other_tvos']);
+      await ensureReadyForTvosTooling(project);
+
+      // gizmo_tvos removed from pubspec.yaml, then `pub get`.
+      runPubGet(project.directory, dependencies: <String>['other_tvos']);
+      await TvosBuilder.writeDartPluginRegistrant(project);
+
+      expect(names((pluginsDependencies()['plugins']! as Map<String, Object?>)['tvos']), <String>[
+        'other_tvos',
+      ]);
+    }, overrides: overrides());
+
+    testUsingContext(
+      'warns, rather than stops the build, on a dependency upstream rejects as a plugin',
+      () async {
+        // `flutter: plugin:` with neither platforms nor legacy keys: upstream's
+        // list refuses it, and a tvOS-only app has always built with it.
+        writePackage(
+          'odd_package',
+          'name: odd_package\nflutter:\n  plugin:\n    unexpected: true\n',
+        );
+        final FlutterProject project = seedApp();
+        runPubGet(project.directory, dependencies: <String>['gizmo_tvos', 'odd_package']);
+
+        await TvosBuilder.writeDartPluginRegistrant(project);
+
+        expect(logger.warningText, contains('Could not refresh .flutter-plugins-dependencies'));
+        expect(dartRegistrant(), contains('_PluginRegistrant'));
+      },
+      overrides: overrides(),
+    );
+
+    testUsingContext('warns, rather than stops the build, without a package graph', () async {
+      final FlutterProject project = seedApp();
+      fileSystem.file('/app/.dart_tool/package_graph.json').deleteSync();
+
+      await TvosBuilder.writeDartPluginRegistrant(project);
+
+      expect(logger.warningText, contains('Could not refresh .flutter-plugins-dependencies'));
+    }, overrides: overrides());
+
+    testUsingContext('writes no plugin list into a plugin package', () async {
+      // The build path reaches the refresh without ensureReadyForTvosTooling,
+      // so the refresh's own plugin check is what keeps upstream's writer out.
+      await TvosBuilder.writeDartPluginRegistrant(seedApp(isPlugin: true));
+
+      expect(fileSystem.file('/app/.flutter-plugins-dependencies').existsSync(), isFalse);
+    }, overrides: overrides());
+  });
 }

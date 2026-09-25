@@ -583,38 +583,32 @@ Future<void> refreshTvosPluginsList(FlutterProject project) async {
       findPackageConfigFile(project.directory) == null) {
     return;
   }
-  // Upstream writes the file from scratch, without the `plugins.tvos` list
-  // that [ensureReadyForTvosTooling] adds and the tvOS Podfile reads. Keep the
-  // last one until the tooling writes it again, so a build that stops in
-  // between does not leave `pod install` with no tvOS plugins to install.
-  final Object? tvosPlugins = _pluginsListFor('tvos', project);
   await refreshPluginsList(project);
-  if (tvosPlugins != null) {
-    _restorePluginsListFor('tvos', tvosPlugins, project);
-  }
+  // Upstream writes the file from scratch, without the `plugins.tvos` list
+  // that the tvOS Podfile reads. Write the current one straight away, from
+  // the list just refreshed, rather than leave it missing until
+  // [ensureReadyForTvosTooling] runs again: a build that stops in between,
+  // on a Dart error or Ctrl-C, would leave `pod install` with no tvOS plugins.
+  _writeTvosPluginsList(project, _tvosPluginEntries(_discoverTvosPlugins(project)));
 }
 
-/// `plugins.<platform>` from `.flutter-plugins-dependencies`, or null.
-Object? _pluginsListFor(String platform, FlutterProject project) {
-  final File file = project.flutterPluginsDependenciesFile;
-  if (!file.existsSync()) {
-    return null;
-  }
-  try {
-    final Object? dependencies = json.decode(file.readAsStringSync());
-    if (dependencies is Map<String, Object?>) {
-      final Object? plugins = dependencies['plugins'];
-      if (plugins is Map<String, Object?>) {
-        return plugins[platform];
-      }
-    }
-  } on FormatException {
-    return null;
-  }
-  return null;
-}
+/// The `plugins.tvos` entries of `.flutter-plugins-dependencies`, which the
+/// tvOS Podfile reads.
+List<Map<String, Object?>> _tvosPluginEntries(List<TvosPlugin> plugins) => <Map<String, Object?>>[
+  for (final plugin in plugins)
+    <String, Object?>{
+      'name': plugin.name,
+      'path': plugin.path,
+      'native_build': plugin.hasNativeBuild(),
+      'dependencies': <String>[],
+      'dev_dependency': false,
+    },
+];
 
-void _restorePluginsListFor(String platform, Object list, FlutterProject project) {
+/// Sets `plugins.tvos` in the `.flutter-plugins-dependencies` upstream just
+/// wrote. Upstream deletes the file when there are no plugins at all, and
+/// then there is nothing for the Podfile to install either.
+void _writeTvosPluginsList(FlutterProject project, List<Map<String, Object?>> entries) {
   final File file = project.flutterPluginsDependenciesFile;
   if (!file.existsSync()) {
     return;
@@ -626,7 +620,7 @@ void _restorePluginsListFor(String platform, Object list, FlutterProject project
   final Object? plugins = dependencies['plugins'];
   dependencies['plugins'] = <String, Object?>{
     if (plugins is Map<String, Object?>) ...plugins,
-    platform: list,
+    'tvos': entries,
   };
   file.writeAsStringSync(json.encode(dependencies));
 }
@@ -664,8 +658,7 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   final methodChannelPlugins = <Map<String, Object?>>[];
   final ffiPlugins = <Map<String, Object?>>[];
 
-  // Tightly-typed inner list lets us avoid dynamic dispatch on `.add(...)`.
-  final tvosPluginEntries = <Map<String, dynamic>>[];
+  final List<Map<String, Object?>> tvosPluginEntries = _tvosPluginEntries(plugins);
 
   // CRITICAL: preserve the existing `.flutter-plugins-dependencies` rather
   // than overwriting it. Stock `flutter pub get` writes ios/android/...
@@ -729,13 +722,6 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
       ffiPlugins.add(plugin.toMap());
     }
 
-    tvosPluginEntries.add(<String, dynamic>{
-      'name': plugin.name,
-      'path': plugin.path,
-      'native_build': plugin.hasNativeBuild(),
-      'dependencies': <String>[],
-      'dev_dependency': false,
-    });
     pluginsBuffer.writeln('${plugin.name}=${plugin.path}');
   }
 

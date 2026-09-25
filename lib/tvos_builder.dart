@@ -30,9 +30,22 @@ class TvosBuilder {
   /// in `validateCommand` ran before it. On a fresh checkout, after `clean`,
   /// or with a plugin just added, that one read a missing or stale package
   /// config, and the kernel was compiled without the tvOS plugins.
+  ///
+  /// Best effort, as in [ensureReadyForTvosTooling]: upstream's list rejects
+  /// some dependencies a tvOS-only app has always built with, such as one
+  /// declaring `flutter: plugin:` with no platforms. The build goes on with
+  /// the list it has, and says so, since a plugin missing from the
+  /// registrant is otherwise found only at runtime.
   @visibleForTesting
   static Future<void> writeDartPluginRegistrant(FlutterProject project) async {
-    await refreshTvosPluginsList(project);
+    try {
+      await refreshTvosPluginsList(project);
+    } on Exception catch (error) {
+      globals.logger.printWarning(
+        'Could not refresh .flutter-plugins-dependencies, so the tvOS plugins in this build '
+        'may be out of date: $error',
+      );
+    }
     writeTvosDartPluginRegistrant(project);
   }
 
