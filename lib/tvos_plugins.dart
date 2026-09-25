@@ -636,10 +636,11 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
   }
 
   // Best effort: before `pub get` the package config can be stale, and
-  // `TvosBuilder.buildBundle` refreshes again once `pub get` has run.
+  // `TvosBuilder.buildBundle` refreshes again once `pub get` has run. Whatever
+  // it throws, as there.
   try {
     await refreshTvosPluginsList(project);
-  } on Exception catch (e) {
+  } on Object catch (e) {
     globals.logger.printTrace('Could not refresh .flutter-plugins-dependencies: $e');
   }
 

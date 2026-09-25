@@ -40,10 +40,12 @@ class TvosBuilder {
   static Future<void> writeDartPluginRegistrant(FlutterProject project) async {
     try {
       await refreshTvosPluginsList(project);
-    } on Exception catch (error) {
+    } on Object catch (error) {
+      // Not only an Exception: upstream's reader lets a TypeError through for
+      // a package_graph.json whose dependencies are not all strings.
       globals.logger.printWarning(
-        'Could not refresh .flutter-plugins-dependencies, so the tvOS plugins in this build '
-        'may be out of date: $error',
+        'Could not refresh .flutter-plugins-dependencies, so this build may be missing tvOS '
+        'plugins, and calls to them would throw MissingPluginException.\n$error',
       );
     }
     writeTvosDartPluginRegistrant(project);

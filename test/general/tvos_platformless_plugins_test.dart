@@ -277,11 +277,14 @@ flutter:
 
   testUsingContext('writes the list for a desktop platform Flutter has not enabled', () async {
     final FlutterProject project = seedApp();
-    project.directory.childDirectory('macos').createSync();
+    final File podsManifest = project.directory.childFile('macos/Pods/Manifest.lock')
+      ..createSync(recursive: true);
 
     await ensureReadyForTvosTooling(project);
 
     expect(names(pluginsDependencies()['dependencyGraph']), contains('gizmo_tvos'));
+    // The list only: refreshed for macOS, it would invalidate macOS's pods.
+    expect(podsManifest.existsSync(), isTrue);
   }, overrides: overrides(featureFlags: () => TestFeatureFlags()));
 
   group('on the build path, after `pub get`,', () {
@@ -307,30 +310,85 @@ flutter:
       ]);
     }, overrides: overrides());
 
+    testUsingContext('empties the tvOS list once the last tvOS plugin is removed', () async {
+      writePackage('ios_only', '''
+name: ios_only
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: IosOnlyPlugin
+''');
+      final FlutterProject project = seedApp();
+      runPubGet(project.directory, dependencies: <String>['gizmo_tvos', 'ios_only']);
+      await ensureReadyForTvosTooling(project);
+
+      // gizmo_tvos removed from pubspec.yaml, then `pub get`. Upstream still
+      // writes the file for ios_only, with no tvOS list in it.
+      runPubGet(project.directory, dependencies: <String>['ios_only']);
+      await TvosBuilder.writeDartPluginRegistrant(project);
+
+      expect(pluginsDependencies()['plugins'], containsPair('tvos', isEmpty));
+    }, overrides: overrides());
+
+    // `flutter: plugin:` with neither platforms nor legacy keys: upstream's
+    // list refuses it, and a tvOS-only app has always built with it.
+    void writeOddPackage() => writePackage(
+      'odd_package',
+      'name: odd_package\nflutter:\n  plugin:\n    unexpected: true\n',
+    );
+
     testUsingContext(
       'warns, rather than stops the build, on a dependency upstream rejects as a plugin',
       () async {
-        // `flutter: plugin:` with neither platforms nor legacy keys: upstream's
-        // list refuses it, and a tvOS-only app has always built with it.
-        writePackage(
-          'odd_package',
-          'name: odd_package\nflutter:\n  plugin:\n    unexpected: true\n',
-        );
+        writeOddPackage();
         final FlutterProject project = seedApp();
         runPubGet(project.directory, dependencies: <String>['gizmo_tvos', 'odd_package']);
 
         await TvosBuilder.writeDartPluginRegistrant(project);
 
-        expect(logger.warningText, contains('Could not refresh .flutter-plugins-dependencies'));
-        expect(dartRegistrant(), contains('_PluginRegistrant'));
+        // What it costs, and what to fix.
+        expect(logger.warningText, contains('may be missing tvOS plugins'));
+        expect(logger.warningText, contains('odd_package'));
       },
       overrides: overrides(),
     );
+
+    testUsingContext('keeps the plugins it found before when such a dependency is added', () async {
+      writeOddPackage();
+      final FlutterProject project = seedApp();
+      await TvosBuilder.writeDartPluginRegistrant(project);
+
+      // odd_package added to pubspec.yaml, then `pub get`.
+      runPubGet(project.directory, dependencies: <String>['gizmo_tvos', 'odd_package']);
+      await TvosBuilder.writeDartPluginRegistrant(project);
+
+      expect(logger.warningText, contains('odd_package'));
+      expect(dartRegistrant(), contains('gizmo_tvos.GizmoTvos.registerWith()'));
+    }, overrides: overrides());
 
     testUsingContext('warns, rather than stops the build, without a package graph', () async {
       final FlutterProject project = seedApp();
       fileSystem.file('/app/.dart_tool/package_graph.json').deleteSync();
 
+      await TvosBuilder.writeDartPluginRegistrant(project);
+
+      expect(logger.warningText, contains('Could not refresh .flutter-plugins-dependencies'));
+    }, overrides: overrides());
+
+    testUsingContext('warns, rather than stops the build, on a malformed package graph', () async {
+      final FlutterProject project = seedApp();
+      // A dependency that is not a string: upstream's reader throws a
+      // TypeError for it, not an Exception.
+      final File graph = fileSystem.file('/app/.dart_tool/package_graph.json');
+      graph.writeAsStringSync(
+        graph.readAsStringSync().replaceFirst(
+          '"dependencies":["gizmo_tvos"]',
+          '"dependencies":["gizmo_tvos",1]',
+        ),
+      );
+
+      await ensureReadyForTvosTooling(project);
       await TvosBuilder.writeDartPluginRegistrant(project);
 
       expect(logger.warningText, contains('Could not refresh .flutter-plugins-dependencies'));
