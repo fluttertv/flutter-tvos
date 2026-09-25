@@ -3,14 +3,18 @@
 // found in the LICENSE file.
 
 // What an Apple TV's debug session actually sends lldb, end to end: the
-// tvOS version read from devicectl, through TvosDevice's LLDB factory, into a
-// real LLDB attaching to a fake lldb process.
+// tvOS version read from devicectl, through TvosDevice's LLDB factory and
+// `attachLldb`, the two calls `startApp` makes, into a real LLDB attaching to
+// a fake lldb process.
 //
 // Flutter 3.47.5's LLDB decides from that version whether to set the JIT
 // breakpoint with `--auto-continue` and a `detach` stop hook (below 27), or
 // without either, driving stops by hand (27 and later). Asserting the version
 // handed to a replaced factory stops one call short: a factory that dropped it
 // would pass. This asserts the commands.
+//
+// The fake answers as lldb does over an iOS device tunnel; how lldb words its
+// stops over a tvOS one is what a tvOS 27 Apple TV has yet to show (#84).
 
 import 'dart:async';
 import 'dart:convert';
@@ -57,8 +61,8 @@ void main() {
     Platform: () => FakePlatform(environment: <String, String>{'HOME': '/Users/dev'}),
   };
 
-  /// Attaches the way `startApp` does, through the device's own factory, and
-  /// returns every line lldb was sent.
+  /// Attaches a debug build the way `startApp` does, through the device's own
+  /// factory and `attachLldb`, and returns every line lldb was sent.
   Future<List<String>> attach(String osVersionNumber) async {
     final TvosDevice device = TvosEmulator.parseDevicectlOutput(
       _devicectl(osVersionNumber),
@@ -66,12 +70,13 @@ void main() {
     ).single;
     final LLDB lldb = device.lldbForDebugSession(_FakeXcodeProjectInterpreter());
 
-    final bool attached = await lldb.attachAndStart(
-      deviceId: device.id,
-      appProcessId: 568,
+    final bool attached = await device.attachLldb(
+      lldb: lldb,
       lldbLogForwarder: LLDBLogForwarder(),
+      pid: 568,
       mode: BuildMode.debug,
-      deviceSupport: device.deviceSupport,
+      // A wrong mode or a missing answer fails here, not in a hung test.
+      timeout: const Duration(seconds: 10),
     );
     lldb.exit();
 
@@ -79,7 +84,14 @@ void main() {
     expect(lldbProcess.started, <List<String>>[
       <String>['xcrun', 'lldb'],
     ]);
-    return lldbProcess.received;
+    final List<String> sent = lldbProcess.received;
+    expect(sent, contains('device select ${device.id}'));
+    expect(sent, contains('device process attach --pid 568'));
+    // Upstream gives lldb an iOS sysroot when Device Support has symbols;
+    // flutter-tvos gives it none, and lldb switches to remote-tvos and finds
+    // the symbols itself (#84).
+    expect(sent.where((String line) => line.startsWith('platform select')), isEmpty);
+    return sent;
   }
 
   testUsingContext(
