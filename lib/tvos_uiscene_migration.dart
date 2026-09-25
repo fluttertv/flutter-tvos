@@ -370,9 +370,7 @@ import UIKit
   /// Base.lproj, or in a localized .lproj. Never through a link, which can
   /// lead out of the project.
   List<File> _storyboardsNamed(String name) {
-    if (!_runnerDirectory.existsSync()) {
-      return const <File>[];
-    }
+    // No existence check: the runner holds the Info.plist that got us here.
     final List<Directory> localizations =
         _runnerDirectory
             .listSync(followLinks: false)
