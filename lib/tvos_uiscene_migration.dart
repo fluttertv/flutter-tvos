@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:convert';
+
 import 'package:flutter_tools/src/base/error_handling_io.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/project_migrator.dart';
@@ -47,8 +49,8 @@ import 'package:meta/meta.dart';
 ///
 /// It edits people's projects unasked, so it stays narrow: only the scene's
 /// storyboards, only a `FlutterViewController` in the `Flutter` module, never
-/// through a link out of the project, and a file it cannot write is reported
-/// rather than failing the build.
+/// through a link out of the project, and a file it cannot read or write is
+/// passed over or reported rather than failing the build.
 ///
 /// Why it is not optional: built with Xcode 27, an app without the UIScene
 /// lifecycle does not launch on tvOS 27 at all — UIKit stops it with "UIScene
@@ -177,6 +179,17 @@ import UIKit
       }
       return;
     }
+    final List<int>? infoPlist = _readBytes(_infoPlist);
+    if (infoPlist == null) {
+      if (_isMigrationFeatureEnabled) {
+        logger.printError(
+          'flutter-tvos could not read tvos/Runner/Info.plist, so it cannot tell whether this '
+          'tvOS app uses the UIScene lifecycle. Built with Xcode 27, an app without it will not '
+          'launch on tvOS 27. See $_guide',
+        );
+      }
+      return;
+    }
 
     final List<String>? sceneStoryboards = _sceneStoryboardNames();
     if (sceneStoryboards != null) {
@@ -184,7 +197,7 @@ import UIKit
       return;
     }
     if (_isMigrationFeatureEnabled) {
-      _migrate();
+      _migrate(infoPlist);
     }
   }
 
@@ -194,7 +207,7 @@ import UIKit
       for (final String name in storyboardNames)
         ..._storyboardsNamed(
           name,
-        ).where((File storyboard) => _namesFlutterModule(storyboard.readAsStringSync())),
+        ).where((File storyboard) => _namesFlutterModule(_read(storyboard) ?? '')),
     ];
     if (!_isMigrationFeatureEnabled) {
       // Upstream's switch: edit nothing, but say what keeps the app from
@@ -217,14 +230,16 @@ import UIKit
     // finish the job, as the migration would have, but only when the scene
     // shows a Flutter view without it: every storyboard the manifest names
     // opens on a FlutterViewController. Otherwise that window may be all the
-    // app has.
+    // app has. A FlutterViewController of the app's own, in the Runner module,
+    // counts too: it is taken to be a subclass of the engine's, which starts
+    // the implicit engine the new AppDelegate registers plugins on.
     final sceneStoryboards = <File>[
       for (final String name in storyboardNames) ..._storyboardsNamed(name),
     ];
     if (_appDelegateIsTemplate() &&
         sceneStoryboards.isNotEmpty &&
         sceneStoryboards.every(
-          (File storyboard) => _opensOnFlutterViewController(storyboard.readAsStringSync()),
+          (File storyboard) => _opensOnFlutterViewController(_read(storyboard) ?? ''),
         )) {
       if (_tryWrite(_appDelegate, migratedAppDelegate)) {
         logger.printStatus(
@@ -243,11 +258,11 @@ import UIKit
     _warnIfAppDelegateBuildsItsOwnWindow();
   }
 
-  /// A project not on scenes, with the setting on.
-  void _migrate() {
+  /// A project not on scenes, with the setting on. [originalPlist] is what
+  /// Info.plist holds, to put back if the migration cannot be finished.
+  void _migrate(List<int> originalPlist) {
     String? notMigrated = _whyNotMigratedAutomatically();
     if (notMigrated == null) {
-      final List<int> originalPlist = _infoPlist.readAsBytesSync();
       notMigrated = _insertSceneManifest();
       if (notMigrated == null) {
         if (_tryWrite(_appDelegate, migratedAppDelegate)) {
@@ -288,8 +303,17 @@ import UIKit
     if (!_appDelegate.existsSync()) {
       return 'tvos/Runner/AppDelegate.swift does not exist';
     }
+    if (_readBytes(_appDelegate) == null) {
+      return 'tvos/Runner/AppDelegate.swift could not be read';
+    }
     if (!_appDelegateIsTemplate()) {
       return 'tvos/Runner/AppDelegate.swift has been changed from the one flutter-tvos generated';
+    }
+    // Before the name: each branch can name a different storyboard, and the
+    // manifest cannot go in next to any of them.
+    if (_mainStoryboardIsConditional()) {
+      return 'tvos/Runner/Info.plist is preprocessed, and sets UIMainStoryboardFile only inside '
+          '#if blocks';
     }
     if (_mainStoryboardName() != 'Main') {
       return 'tvos/Runner/Info.plist does not name Main as its UIMainStoryboardFile';
@@ -303,7 +327,11 @@ import UIKit
     // A scene shows it: one that does not open on a FlutterViewController
     // starts with no Flutter view.
     for (final storyboard in storyboards) {
-      if (!_opensOnFlutterViewController(storyboard.readAsStringSync())) {
+      final String? text = _read(storyboard);
+      if (text == null) {
+        return '${_described(storyboard)} could not be read';
+      }
+      if (!_opensOnFlutterViewController(text)) {
         return '${_described(storyboard)} does not open on a FlutterViewController';
       }
     }
@@ -313,12 +341,16 @@ import UIKit
   /// The storyboards the scene manifest names, or null when Info.plist has no
   /// manifest and the app is not on scenes.
   ///
+  /// A manifest that names none gets no storyboard repaired: its scene is
+  /// built from none, not from `UIMainStoryboardFile`. On the tvOS 27
+  /// simulator such an app starts no engine, with a sound Main.storyboard.
+  ///
   /// A text plist is read as text, as upstream reads it, with its comments and
   /// CDATA masked, since UIKit never reads either as keys. Only a binary one
   /// goes through plutil: plutil cannot parse a plist Xcode preprocesses, and
   /// every call on one prints its errors, on every build.
   List<String>? _sceneStoryboardNames() {
-    final String? text = _readText(_infoPlist);
+    final String? text = _read(_infoPlist);
     if (text == null) {
       final Object? manifest = _plistParser.getValueFromFile<Object>(
         _infoPlist.path,
@@ -352,7 +384,7 @@ import UIKit
   /// Info.plist's `UIMainStoryboardFile`, read as [_sceneStoryboardNames] reads
   /// the manifest.
   String? _mainStoryboardName() {
-    final String? text = _readText(_infoPlist);
+    final String? text = _read(_infoPlist);
     if (text == null) {
       return _plistParser.getValueFromFile<String>(_infoPlist.path, 'UIMainStoryboardFile');
     }
@@ -364,6 +396,19 @@ import UIKit
     return RegExp(
       r'<key>UIMainStoryboardFile</key>\s*<string>([^<]*)</string>',
     ).matchAsPrefix(masked, key)?.group(1)?.trim();
+  }
+
+  /// Whether Info.plist is preprocessed and sets `UIMainStoryboardFile` only
+  /// inside `#if` blocks.
+  bool _mainStoryboardIsConditional() {
+    final String? text = _read(_infoPlist);
+    if (text == null) {
+      return false;
+    }
+    final String masked = _masked(text);
+    return _directive.hasMatch(masked) &&
+        _topLevelKey(masked, 'UIMainStoryboardFile') != null &&
+        _topLevelKey(masked, 'UIMainStoryboardFile', outsideConditionals: true) == null;
   }
 
   /// `<name>.storyboard` wherever the runner can hold it: directly, in
@@ -401,7 +446,7 @@ import UIKit
 
   bool _appDelegateIsTemplate() =>
       _appDelegate.existsSync() &&
-      _normalized(_appDelegate.readAsStringSync()) == _normalized(originalAppDelegate);
+      _normalized(_read(_appDelegate) ?? '') == _normalized(originalAppDelegate);
 
   /// The opening tag of an element whose class is `FlutterViewController`,
   /// with its attributes in any order and across lines.
@@ -432,14 +477,34 @@ import UIKit
         .any((Match tag) => id.hasMatch(tag[0]!));
   }
 
-  /// [file] as text, or null when it is not UTF-8: a binary plist, which
-  /// `defaults write` leaves behind.
-  static String? _readText(File file) {
-    try {
-      return file.readAsStringSync();
-    } on FileSystemException {
+  /// [file] as text, or null when it is not UTF-8 — a binary plist, which
+  /// `defaults write` leaves behind — or cannot be read.
+  String? _read(File file) {
+    final List<int>? bytes = _readBytes(file);
+    if (bytes == null) {
       return null;
     }
+    try {
+      return utf8.decode(bytes);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// [file]'s contents, or null when it cannot be read. Like a file it cannot
+  /// write, that must not stop the build here: Xcode reports the file when the
+  /// build reaches it.
+  List<int>? _readBytes(File file) {
+    List<int>? bytes;
+    // Flutter's file system turns a permission error into a ToolExit.
+    ErrorHandlingFileSystem.noExitOnFailure(() {
+      try {
+        bytes = file.readAsBytesSync();
+      } on FileSystemException catch (error) {
+        logger.printTrace('UIScene migration: could not read ${file.path}: $error');
+      }
+    });
+    return bytes;
   }
 
   /// [text] with its comments and CDATA blanked out, character for character,
@@ -490,7 +555,7 @@ import UIKit
   /// exception: plutil cannot parse it at all, so the insertion stands on its
   /// own — in the root dictionary, outside comments and `#if` blocks.
   String? _insertSceneManifest() {
-    final String? text = _readText(_infoPlist);
+    final String? text = _read(_infoPlist);
     if (text == null) {
       return _plutilInsert();
     }
@@ -545,7 +610,10 @@ import UIKit
   /// `FlutterViewController` in the `Flutter` module, leaving every other
   /// element as it was, and reports a storyboard it cannot write.
   void _repairStoryboard(File storyboard, {bool quiet = false}) {
-    final String original = storyboard.readAsStringSync();
+    final String? original = _read(storyboard);
+    if (original == null) {
+      return;
+    }
     final String repaired = original.replaceAllMapped(_flutterViewControllerTag, (Match element) {
       final String tag = element[0]!;
       if (!_flutterModule.hasMatch(tag)) {
@@ -601,7 +669,7 @@ import UIKit
 
   bool _appDelegateBuildsItsOwnWindow() =>
       _appDelegate.existsSync() &&
-      _appDelegate.readAsStringSync().contains('FlutterViewController(');
+      (_read(_appDelegate)?.contains('FlutterViewController(') ?? false);
 
   void _warnIfAppDelegateBuildsItsOwnWindow() {
     if (!_appDelegateBuildsItsOwnWindow()) {

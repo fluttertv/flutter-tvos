@@ -355,6 +355,25 @@ void main() {
     );
 
     testWithoutContext(
+      'is told its Info.plist is preprocessed when #if branches name different storyboards',
+      () async {
+        final String branches = _preSceneInfoPlist.replaceFirst(
+          '  <key>UIMainStoryboardFile</key>\n  <string>Main</string>\n',
+          '#if TV\n  <key>UIMainStoryboardFile</key>\n  <string>Other</string>\n'
+              '#else\n  <key>UIMainStoryboardFile</key>\n  <string>Main</string>\n#endif\n',
+        );
+        infoPlist().writeAsStringSync(branches);
+
+        await migrate();
+
+        expect(infoPlist().readAsStringSync(), branches);
+        expect(appDelegate().readAsStringSync(), TvosUISceneMigration.originalAppDelegate);
+        expect(logger.errorText, contains('sets UIMainStoryboardFile only inside #if blocks'));
+        expect(logger.errorText, isNot(contains('does not name Main')));
+      },
+    );
+
+    testWithoutContext(
       'is told why when its Info.plist names another storyboard, and nothing is touched',
       () async {
         final String otherStoryboard = _preSceneInfoPlist.replaceFirst(
@@ -606,8 +625,9 @@ void main() {
     testWithoutContext(
       'keeps the template AppDelegate when its scene names no storyboard to show',
       () async {
-        // The scene builds its window some other way; the AppDelegate's may
-        // be all the app shows.
+        // UIKit builds this scene from no storyboard, not from Main (seen on
+        // the tvOS 27 simulator), so its window comes from code if at all, and
+        // nothing shows the AppDelegate is safe to replace.
         infoPlist().writeAsStringSync(
           _withManifest(_preSceneInfoPlist).replaceFirst(
             '          <key>UISceneStoryboardFile</key>\n          <string>Main</string>\n',
@@ -731,13 +751,20 @@ void main() {
     });
 
     tearDown(() {
-      io.Process.runSync('chmod', <String>['-R', 'u+w', temp.path]);
+      io.Process.runSync('chmod', <String>['-R', 'u+rwX', temp.path]);
       temp.deleteSync(recursive: true);
     });
 
     void readOnly(String path) {
       expect(
         io.Process.runSync('chmod', <String>['444', diskRunner.childFile(path).path]).exitCode,
+        0,
+      );
+    }
+
+    void unreadable(String path) {
+      expect(
+        io.Process.runSync('chmod', <String>['000', diskRunner.childFile(path).path]).exitCode,
         0,
       );
     }
@@ -811,6 +838,50 @@ void main() {
 
         expect(logger.errorText, contains('AppDelegate.swift could not be written'));
         expect(diskRunner.childFile('Info.plist').readAsStringSync(), _preSceneInfoPlist);
+      },
+    );
+
+    testWithoutContext(
+      'reports an Info.plist it cannot read, rather than failing the build',
+      () async {
+        unreadable('Info.plist');
+
+        await migrateOnDisk();
+
+        expect(logger.errorText, contains('could not read tvos/Runner/Info.plist'));
+        expect(
+          diskRunner.childFile('AppDelegate.swift').readAsStringSync(),
+          TvosUISceneMigration.originalAppDelegate,
+        );
+      },
+    );
+
+    for (final path in <String>['AppDelegate.swift', 'Base.lproj/Main.storyboard']) {
+      testWithoutContext('reports $path when it cannot read it, and changes nothing', () async {
+        unreadable(path);
+
+        await migrateOnDisk();
+
+        expect(logger.errorText, contains('tvos/Runner/$path could not be read'));
+        expect(diskRunner.childFile('Info.plist').readAsStringSync(), _preSceneInfoPlist);
+      });
+    }
+
+    testWithoutContext(
+      "keeps the template AppDelegate when it cannot read the scene's storyboard",
+      () async {
+        diskRunner.childFile('Info.plist').writeAsStringSync(_withManifest(_preSceneInfoPlist));
+        unreadable('Base.lproj/Main.storyboard');
+
+        await migrateOnDisk();
+
+        // Nothing shows the scene opens on a Flutter view without it. Xcode
+        // reports the storyboard.
+        expect(
+          diskRunner.childFile('AppDelegate.swift').readAsStringSync(),
+          TvosUISceneMigration.originalAppDelegate,
+        );
+        expect(logger.warningText, contains('creates its own FlutterViewController'));
       },
     );
 
