@@ -85,8 +85,12 @@ jobs:
           # bin/internal/flutter.version alone produces a name no tag holds yet
           # and would publish a release for a CLI version nobody bumped and no
           # CHANGELOG entry describes. Ask whether this *version* has shipped
-          # under any pin, not whether this exact tag exists.
-          SHIPPED=$(git tag -l "*-tvos.$VERSION" | head -1 || true)
+          # under any pin, not whether this exact tag exists — on this line.
+          # --merged HEAD leaves out the tags of release/flutter-3.32.8, which
+          # are not in main's history but share CLI versions with it (1.5.0 and
+          # 1.7.0 are on both), and head -1 would otherwise pick theirs: a
+          # version shipped there first would read as released here.
+          SHIPPED=$(git tag -l --merged HEAD "*-tvos.$VERSION" | head -1 || true)
 
           # The normal case by a wide margin: most merges to main are not
           # releases, so this exits quietly rather than treating it as notable.
