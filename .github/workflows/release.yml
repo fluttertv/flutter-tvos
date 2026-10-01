@@ -9,7 +9,7 @@ jobs:
   release:
     runs-on: macos-latest
     permissions:
-      contents: write   # needed to create GitHub Releases and upload assets
+      contents: write   # needed to create GitHub Releases
 
     steps:
       - uses: actions/checkout@v4
@@ -60,16 +60,34 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: fluttertv/flutter-tvos
         run: |
-          if gh release view "${{ steps.version.outputs.version }}" --repo fluttertv/flutter-tvos >/dev/null 2>&1; then
-            echo "Release ${{ steps.version.outputs.version }} already exists; skipping creation."
+          set -euo pipefail
+          : "${VERSION:?the tag gave no version}"
+
+          if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
+            # Created before: by an earlier run, with the tag moved since, or by
+            # hand. Nothing to create, but a release made without the flag below
+            # can still hold Latest, and only a run here would notice.
+            latest=$(gh api "repos/$REPO/releases/latest" --jq .tag_name)
+            if [ "$latest" = "$VERSION" ]; then
+              echo "::error::$VERSION holds the Latest badge; this is a maintenance line."
+              echo "Repair: mark the current line's newest release Latest, e.g."
+              echo "  gh release edit <its tag> --latest --repo $REPO"
+              exit 1
+            fi
+            echo "Release $VERSION already exists; skipping creation."
             exit 0
           fi
 
-          # This line is maintenance: a release here must not take GitHub's
-          # "Latest" from the current line, which a new release does by default.
-          gh release create "${{ steps.version.outputs.version }}" \
-            --title "flutter-tvos ${{ steps.version.outputs.version }}" \
-            --notes "See [CHANGELOG.md](https://github.com/fluttertv/flutter-tvos/blob/main/CHANGELOG.md) for release notes." \
+          # This line is maintenance, so its releases must not take "Latest"
+          # from the current line. gh sends no make_latest unless --latest is
+          # given, and the API then defaults it to true. `gh release create
+          # --help` describes a date-and-version rule instead, which is not what
+          # gh sends, so --latest=false is not a no-op.
+          gh release create "$VERSION" \
+            --title "flutter-tvos $VERSION" \
+            --notes "See [CHANGELOG.md](https://github.com/$REPO/blob/$VERSION/CHANGELOG.md) for release notes." \
             --latest=false \
-            --repo fluttertv/flutter-tvos
+            --repo "$REPO"
