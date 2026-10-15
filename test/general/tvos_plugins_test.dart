@@ -920,6 +920,122 @@ flutter:
         ProcessManager: () => processManager,
       },
     );
+
+    // A plugin like wakelock_plus 1.8: it declares a tvOS platform in its
+    // pubspec and in its stock Flutter manifest (`<dir>/<name>/Package.swift`),
+    // but ships no tvos/ directory of its own.
+    FlutterProject seedSharedManifestProject({
+      String platformDir = 'ios',
+      bool declaresTvos = true,
+      bool hasTvosDir = false,
+    }) {
+      final Directory projectDir = fileSystem.directory('/p')..createSync();
+      projectDir.childDirectory('tvos').createSync();
+      projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
+      final Directory pkgDir = fileSystem.directory('/pubcache/wakeful')
+        ..createSync(recursive: true);
+      pkgDir.childFile('pubspec.yaml').writeAsStringSync('''
+name: wakeful
+flutter:
+  plugin:
+    platforms:
+      tvos:
+        pluginClass: WakefulPlugin
+''');
+      pkgDir.childDirectory(platformDir).childDirectory('wakeful')
+        ..createSync(recursive: true)
+        ..childFile('Package.swift').writeAsStringSync(
+          'let package = Package(\n'
+          '  name: "wakeful",\n'
+          '  platforms: [.iOS("15.0")${declaresTvos ? ', .tvOS("13.0")' : ''}],\n'
+          '  products: [.library(name: "wakeful", targets: ["wakeful"])]\n'
+          ')\n',
+        );
+      if (hasTvosDir) {
+        pkgDir.childDirectory('tvos')
+          ..createSync()
+          ..childFile('wakeful.podspec').writeAsStringSync('# podspec');
+      }
+      fileSystem
+          .directory('/p/.dart_tool')
+          .childFile('package_config.json')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          json.encode(<String, dynamic>{
+            'packages': <Map<String, String>>[
+              <String, String>{'name': 'wakeful', 'rootUri': 'file:///pubcache/wakeful'},
+            ],
+          }),
+        );
+      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+        json.encode(<String, dynamic>{
+          'dependencyGraph': <Map<String, String>>[
+            <String, String>{'name': 'wakeful'},
+          ],
+        }),
+      );
+      return FlutterProject.fromDirectory(projectDir);
+    }
+
+    testUsingContext(
+      'uses ios/<name>/Package.swift when it declares tvOS and there is no tvos/',
+      () {
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedSharedManifestProject(),
+        );
+        expect(spm.map((p) => p.name), <String>['wakeful']);
+        expect(spm.single.packagePath, '/pubcache/wakeful/ios/wakeful');
+        expect(spm.single.libraryName, 'wakeful');
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'uses darwin/<name>/Package.swift the same way',
+      () {
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedSharedManifestProject(platformDir: 'darwin'),
+        );
+        expect(spm.single.packagePath, '/pubcache/wakeful/darwin/wakeful');
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'ignores a shared manifest that does not declare tvOS',
+      () {
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedSharedManifestProject(declaresTvos: false),
+        );
+        expect(spm, isEmpty);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
+
+    testUsingContext(
+      'leaves a plugin with a tvos/ podspec to CocoaPods (no double link)',
+      () {
+        // The Podfile installs tvos/<name>.podspec; taking the shared manifest
+        // too would link the plugin twice.
+        final List<TvosSpmPlugin> spm = discoverTvosSpmPlugins(
+          seedSharedManifestProject(hasTvosDir: true),
+        );
+        expect(spm, isEmpty);
+      },
+      overrides: <Type, Generator>{
+        FileSystem: () => fileSystem,
+        ProcessManager: () => processManager,
+      },
+    );
   });
 
   group('FFI forced references in GeneratedPluginRegistrant.m', () {

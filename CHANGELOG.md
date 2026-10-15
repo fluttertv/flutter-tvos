@@ -2,6 +2,18 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Added
+
+- **A plugin that builds for tvOS from its stock Swift package now links
+  through Swift Package Manager.** When a plugin has no `tvos/` directory but
+  its `ios/<name>/Package.swift` or `darwin/<name>/Package.swift` lists a
+  `.tvOS(...)` platform (wakelock_plus 1.8 does), that package is added to
+  `FlutterGeneratedPluginSwiftPackage`. Such a plugin was neither in the
+  umbrella nor installed by the Podfile, which only installs pods from a
+  `tvos/` directory. A plugin with a `tvos/` directory keeps its current path.
+
 ## [1.11.3] - 2026-10-13
 
 ### Changed

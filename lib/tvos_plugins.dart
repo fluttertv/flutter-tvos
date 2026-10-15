@@ -287,8 +287,41 @@ List<String> _parseFfiSymbols(String pluginName, Object? raw) {
   return symbols;
 }
 
-/// Discovers the tvOS plugins in [project] that ship a Swift Package
-/// (`<plugin>/tvos/Package.swift`) and returns them as [TvosSpmPlugin]s for the
+/// The `Package.swift` that builds [pluginName] (at [pluginPath]) for tvOS, or
+/// null when it has none and resolves through CocoaPods, if at all.
+///
+/// A tvOS port's own `tvos/Package.swift` comes first. A plugin with no `tvos/`
+/// directory may instead declare tvOS in its stock Flutter manifest,
+/// `ios/<name>/Package.swift` or `darwin/<name>/Package.swift` (wakelock_plus
+/// 1.8 does): that manifest is used when it lists a `.tvOS(...)` platform. The
+/// Podfile only installs pods from a `tvos/` directory, so such a plugin is
+/// never linked through CocoaPods as well.
+File? tvosPackageManifest(String pluginPath, String pluginName) {
+  final FileSystem fs = globals.fs;
+  final Directory tvosDir = fs.directory(fs.path.join(pluginPath, 'tvos'));
+  final File own = tvosDir.childFile('Package.swift');
+  if (own.existsSync()) {
+    return own;
+  }
+  if (tvosDir.existsSync()) {
+    return null;
+  }
+  for (final platformDir in const <String>['ios', 'darwin']) {
+    final File shared = fs.file(
+      fs.path.join(pluginPath, platformDir, pluginName, 'Package.swift'),
+    );
+    if (shared.existsSync() && _kTvosPlatform.hasMatch(shared.readAsStringSync())) {
+      return shared;
+    }
+  }
+  return null;
+}
+
+/// A `.tvOS(...)` entry in a manifest's `platforms:` list.
+final RegExp _kTvosPlatform = RegExp(r'\.tvOS\s*\(');
+
+/// Discovers the tvOS plugins in [project] that ship a Swift Package (see
+/// [tvosPackageManifest]) and returns them as [TvosSpmPlugin]s for the
 /// generated SPM umbrella.
 ///
 /// A plugin is consumed via Swift Package Manager when it has a `Package.swift`;
@@ -298,13 +331,11 @@ List<String> _parseFfiSymbols(String pluginName, Object? raw) {
 List<TvosSpmPlugin> discoverTvosSpmPlugins(FlutterProject project) {
   final spmPlugins = <TvosSpmPlugin>[];
   for (final TvosPlugin plugin in _discoverTvosPlugins(project)) {
-    final Directory tvosDir = globals.fs.directory(
-      globals.fs.path.join(plugin.path, 'tvos'),
-    );
-    final File manifest = tvosDir.childFile('Package.swift');
-    if (!manifest.existsSync()) {
+    final File? manifest = tvosPackageManifest(plugin.path, plugin.name);
+    if (manifest == null) {
       continue;
     }
+    final Directory packageDir = manifest.parent;
     final _SwiftPackageNames names = _readSwiftPackageNames(manifest);
     // Prefer the package name declared in the manifest; fall back to the pub
     // package name (the porter sets them equal). The library name defaults to
@@ -313,12 +344,12 @@ List<TvosSpmPlugin> discoverTvosSpmPlugins(FlutterProject project) {
     spmPlugins.add(
       TvosSpmPlugin(
         name: packageName,
-        packagePath: tvosDir.path,
+        packagePath: packageDir.path,
         libraryName: names.library,
       ),
     );
     globals.logger.printTrace(
-      'tvOS SPM plugin: $packageName (product ${names.library ?? '${packageName.replaceAll('_', '-')} [derived]'}) at ${tvosDir.path}',
+      'tvOS SPM plugin: $packageName (product ${names.library ?? '${packageName.replaceAll('_', '-')} [derived]'}) at ${packageDir.path}',
     );
   }
   return spmPlugins;
@@ -453,7 +484,7 @@ List<String> recommendTvosPluginsToInstall({
 ///
 /// An FFI plugin's C symbols are resolved at runtime via `dlsym`, so nothing in
 /// the compiled app references them. When such a plugin is linked statically —
-/// which it is when it ships a `tvos/Package.swift` and is pulled into the
+/// which it is when it ships a Swift package ([tvosPackageManifest]) and is pulled into the
 /// generated `FlutterGeneratedPluginSwiftPackage` umbrella — the linker drops
 /// its unreferenced archive member and the symbols vanish from the binary. We
 /// only emit forced references for FFI plugins that **ship a Package.swift**:
@@ -467,10 +498,7 @@ List<String> _collectFfiForcedReferenceSymbols(List<TvosPlugin> plugins) {
     if (!plugin.hasFfi() || plugin.ffiSymbols.isEmpty) {
       continue;
     }
-    final File packageManifest = globals.fs.file(
-      globals.fs.path.join(plugin.path, 'tvos', 'Package.swift'),
-    );
-    if (!packageManifest.existsSync()) {
+    if (tvosPackageManifest(plugin.path, plugin.name) == null) {
       // CocoaPods-only FFI plugin: dynamic-framework exports already survive.
       continue;
     }
