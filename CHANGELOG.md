@@ -2,6 +2,19 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.11.5] - 2026-10-30
+
+### Changed
+
+- **Upgraded to Flutter 3.47.9** (`c197ca5199e9ee5661e865596c9c07294dfab51c`).
+  Engine artifacts rebuilt from the ported patch set and published as
+  [`engine-c3a30f612b02e477b990b54706c09a4efcdd1f62`](https://github.com/fluttertv/engine-artifacts/releases/tag/engine-c3a30f612b02e477b990b54706c09a4efcdd1f62).
+
+  Ported automatically by the release train: the patch set applied and the tvOS
+  engine unit tests passed, the CLI analyzes and tests clean against the new
+  SDK, and the end-to-end matrix ran on a tvOS simulator with the device
+  profile and release builds compiled.
+
 ## [1.11.4] - 2026-10-24
 
 ### Changed
