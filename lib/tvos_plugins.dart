@@ -109,7 +109,7 @@ class _DependencyPluginYaml {
 /// Walks the project's plugin dependency graph and yields each entry
 /// that declares a `flutter.plugin:` block, regardless of platform.
 ///
-/// Flutter's built-in [`findPlugins`](https://github.com/flutter/flutter/blob/master/packages/flutter_tools/lib/src/flutter_plugins.dart)
+/// Flutter's built-in [`findPlugins`](https://github.com/flutter/flutter/blob/main/packages/flutter_tools/lib/src/flutter_plugins.dart)
 /// ignores unknown platform keys like `tvos`, so we read the
 /// `dependencyGraph` from `.flutter-plugins-dependencies` (which
 /// Flutter does populate even for unrecognized platforms) to get

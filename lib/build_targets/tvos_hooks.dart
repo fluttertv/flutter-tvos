@@ -34,18 +34,17 @@ import 'package:meta/meta.dart' show visibleForTesting;
 /// tvOS's name in the Dart hooks protocol.
 ///
 /// The protocol's built-in operating systems are the ones `dart:ffi` can name,
-/// and tvOS is not among them: under the `package:code_assets` the Flutter
-/// SDK pins, `OS.fromString('tvos')` throws rather than minting a value.
-/// (2.0.0 opened that set up, but the tool cannot move to it — it gives `OS` a
-/// non-primitive `==`, which makes a `const` map inside flutter_tools fail to
-/// compile, and the SDK checkout is never patched.)
+/// and tvOS is not among them. Up to Flutter 3.47 the `package:code_assets`
+/// the tool pinned (1.x) could not name any other: `OS.fromString('tvos')`
+/// threw, so the name was written onto the input JSON by hand. From 3.50 the
+/// tool pins 2.x, which supports custom target operating systems, and
+/// `OS.fromString('tvos')` is an ordinary [OS].
 ///
-/// The wire format has no such restriction. `target_os` is a plain string on
-/// both sides of the protocol, and a hook resolving code_assets 2.0.0 — which
-/// an app is free to do, its dependencies being resolved separately from the
-/// tool's — reads an unfamiliar name back as an ordinary [OS]. So tvOS can
-/// introduce itself by name even while the tool's own copy of the library has
-/// no word for it.
+/// On the wire nothing changed: `target_os` is a plain string on both sides of
+/// the protocol. A hook resolving code_assets 2.x reads it back as an [OS]; one
+/// resolving 1.x — which an app is free to do, its dependencies being resolved
+/// separately from the tool's — throws on it when it reads it through
+/// `config.code`, which is what [runTvosHooks]' iOS-family retry is for.
 ///
 /// That distinction is the point. tvOS is an Apple platform and a close
 /// relative of iOS, but it is not iOS: different engine, different screen,
@@ -81,40 +80,29 @@ const String tvOSName = 'tvos';
 /// distinction.
 const Architecture tvOSArchitecture = Architecture.arm64;
 
-/// The `buildAssetTypes` name for code assets, which is not exported.
-const String _codeAssetType = 'code_assets';
-
-/// The protocol's key for the target operating system.
-const String _targetOSKey = 'target_os';
-
 /// The code-asset half of a tvOS hook input.
 ///
-/// This wraps `CodeAssetExtension` rather than being one, for a single reason:
-/// that class takes an [OS], and the tool's copy of `package:code_assets`
-/// cannot construct one that says tvOS. So the config is built by the real
-/// thing — which owns the layout, the C compiler block, and everything else —
-/// and then the one field its API cannot express is written directly onto the
-/// JSON it produced.
+/// This wraps `CodeAssetExtension` rather than being one. The config is built
+/// by the real thing — which owns the layout, the C compiler block, and
+/// everything else — with [tvOSName] as its target OS; the wrapper exists to
+/// leave its validation out.
 ///
-/// The `iOS` sub-config the wrapped extension would carry is deliberately not
-/// supplied. It describes an iPhone SDK and a deployment target that no tvOS
-/// hook should be reading, and leaving it out keeps the input from claiming
-/// something untrue alongside a target OS that is true.
+/// The `iOS` sub-config is deliberately not supplied. It describes an iPhone
+/// SDK and a deployment target that no tvOS hook should be reading, and
+/// leaving it out keeps the input from claiming something untrue alongside a
+/// target OS that is true.
 ///
 /// The validation callbacks are left at their defaults, which report nothing,
-/// instead of being forwarded. `CodeAssetExtension`'s implementations parse
-/// `target_os` back into an [OS] and would throw on a name this version does
-/// not know; and there is nothing here for them to check anyway, since no code
-/// asset produced under this extension is kept. Data assets are validated by
+/// instead of being forwarded. There is nothing here for them to check: no
+/// code asset produced under this extension is kept, and since code_assets 2.0
+/// they would also reject a hook's library on its Mach-O header, which would
+/// fail a build over a file that is discarded. Data assets are validated by
 /// `DataAssetsExtension`, which is untouched by any of this.
 final class TvosCodeAssetExtension extends ProtocolExtension {
   TvosCodeAssetExtension({required CCompilerConfig? cCompiler})
     : _codeAssets = CodeAssetExtension(
         targetArchitecture: tvOSArchitecture,
-        // Replaced by [tvOSName] as soon as it has been written; see
-        // [_nameTvOS]. Of the operating systems this library can name, the
-        // iOS family is the closest to the truth, but no hook ever reads it.
-        targetOS: OS.iOS,
+        targetOS: OS.fromString(tvOSName),
         linkModePreference: LinkModePreference.dynamic,
         // Best effort: a hook that knows about tvOS can use the host
         // toolchain, and one that does not will not get as far as reading it.
@@ -124,35 +112,10 @@ final class TvosCodeAssetExtension extends ProtocolExtension {
   final CodeAssetExtension _codeAssets;
 
   @override
-  void setupBuildInput(BuildInputBuilder input) {
-    _codeAssets.setupBuildInput(input);
-    _nameTvOS(input.config.json);
-  }
+  void setupBuildInput(BuildInputBuilder input) => _codeAssets.setupBuildInput(input);
 
   @override
-  void setupLinkInput(LinkInputBuilder input) {
-    _codeAssets.setupLinkInput(input);
-    _nameTvOS(input.config.json);
-  }
-
-  /// Replaces the target OS in the code-asset block with [tvOSName].
-  ///
-  /// `target_os` is a plain string in the protocol's syntax on both sides, so
-  /// this produces an input that is well-formed by the schema and reads back as
-  /// an ordinary [OS] wherever the library is new enough to mint one.
-  ///
-  /// The two casts below are load-bearing. They read the block `setupCode` has
-  /// just written, so they hold today by construction; if a future layout kept
-  /// the block but moved `target_os` elsewhere, this would write a key nothing
-  /// reads, raise nothing, and every build would quietly go back to announcing
-  /// iOS. `tells the hook what it is building for` in
-  /// `test/general/tvos_build_hooks_test.dart` is what stands between that and
-  /// a silent regression, so it asserts the wire and not this function.
-  static void _nameTvOS(Map<String, Object?> config) {
-    final extensions = config['extensions']! as Map<String, Object?>;
-    final code = extensions[_codeAssetType]! as Map<String, Object?>;
-    code[_targetOSKey] = tvOSName;
-  }
+  void setupLinkInput(LinkInputBuilder input) => _codeAssets.setupLinkInput(input);
 }
 
 /// The iOS-family code config the fallback needs.
@@ -258,7 +221,7 @@ Future<DartHooksResult> runTvosHooks({
   // Ask as tvOS first. Whether that works is a property of the app's
   // packages, not something this build can look up: the name is read on the
   // *hook's* side, by the `package:code_assets` the app resolved, and before
-  // 2.0.0 that library's set of operating systems was closed — `config.code`
+  // 2.0 that library's set of operating systems was closed — `config.code`
   // parses `target_os` eagerly and throws on a name it does not know. A hook as
   // ordinary as `objective_c`'s dies on its first line, not with "tvOS is
   // unsupported", which it would handle, but before it can look.

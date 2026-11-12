@@ -5,7 +5,8 @@
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
-import 'package:flutter_tools/src/doctor_validator.dart';
+import 'package:flutter_tools_core/flutter_tools_core.dart'
+    show ValidationMessage, ValidationResult, ValidationType;
 import 'package:flutter_tvos/tvos_doctor.dart';
 
 import '../src/common.dart';

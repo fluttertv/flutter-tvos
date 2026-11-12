@@ -2,6 +2,25 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Changed
+
+- **Moved to Flutter 3.50.0** (`ab2912035e160d9cad6306df307576da6128ebdb`).
+  The engine pin is unchanged until the 3.50.0 engine artifacts are published.
+  Stock commands keep their new 3.50 options and behaviour, among them
+  `clean --include-xcode-workspace` (plain `clean` no longer runs
+  `xcodebuild clean`), `precache --host-arch`, `test --preset`, and
+  `logs`/`run`/`drive`/`attach --adb-log-filtering`.
+- `flutter-tvos create --platforms=tvos` and the example app `plugin port`
+  writes now take Material from `package:material_ui`, as Flutter 3.50's own
+  app template does (`package:flutter/material.dart` is deprecated in 3.50).
+- `flutter-tvos devices --machine` and the daemon report `"cpuArch": "arm64"`
+  for Apple TVs and tvOS simulators, as Flutter 3.50 does for every device.
+- A build hook that reads its target OS through `package:code_assets` 2.x now
+  sees tvOS as a named OS (`OS.fromString('tvos')`); the wire value is
+  unchanged.
+
 ## [1.11.5] - 2026-10-30
 
 ### Changed

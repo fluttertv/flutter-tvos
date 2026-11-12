@@ -101,6 +101,35 @@ void main() {
       expect(device.supportsRuntimeMode(BuildMode.release), isTrue);
       expect(device.supportsRuntimeMode(BuildMode.jitRelease), isFalse);
     });
+
+    // `Device.cpuArch` became abstract in Flutter 3.50, and `devices
+    // --machine` and the daemon report it.
+    testWithoutContext('TvosDevice reports arm64 on the Simulator and on an Apple TV', () async {
+      for (final isSimulator in <bool>[true, false]) {
+        final device = TvosDevice(
+          'test-id',
+          name: 'Apple TV 4K',
+          logger: BufferLogger.test(),
+          isSimulator: isSimulator,
+        );
+
+        expect(await device.cpuArch, CpuArch.arm64, reason: 'isSimulator: $isSimulator');
+      }
+    });
+
+    testWithoutContext('TvosDevice JSON carries the CPU architecture', () async {
+      final device = TvosDevice(
+        'test-id',
+        name: 'Apple TV 4K',
+        logger: BufferLogger.test(),
+        isSimulator: true,
+      );
+
+      final Map<String, Object> json = await device.toJson();
+
+      expect(json['cpuArch'], 'arm64');
+      expect(json['targetPlatform'], 'ios');
+    });
   });
 
   // The on-device VM Service lookup polls mDNS up to this budget. It is the

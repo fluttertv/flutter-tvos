@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 import 'package:file/src/interface/directory.dart';
+import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/commands/precache.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
@@ -62,6 +64,23 @@ class TvosPrecacheCommand extends PrecacheCommand {
 
   @override
   Future<FlutterCommandResult> runCommand() async {
+    // Stock's `--host-arch` (Flutter 3.50): the host artifacts this run
+    // downloads are for that architecture. Set before the first download —
+    // the tvOS engine set below — as stock sets it before its own.
+    final String? hostArch = stringArg('host-arch');
+    if (hostArch != null) {
+      final HostPlatform? overridePlatform = HostPlatform.fromOsAndArch(
+        globals.platform.operatingSystem,
+        hostArch,
+      );
+      if (overridePlatform == null) {
+        throwToolExit(
+          'Unsupported host architecture "$hostArch" for OS "${globals.platform.operatingSystem}"',
+        );
+      }
+      globals.cache.osUtils.hostPlatformOverride = overridePlatform;
+    }
+
     if (boolArg('tvos')) {
       if (boolArg('force')) {
         final Directory artifactDir = tvosArtifactDirectory(globals.fs);

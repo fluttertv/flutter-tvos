@@ -7,7 +7,9 @@ import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/signals.dart';
 import 'package:flutter_tools/src/cache.dart';
+import 'package:flutter_tools/src/context/tool_dependencies.dart';
 import 'package:flutter_tools/src/dart/package_map.dart';
+import 'package:flutter_tools/src/isolated/mustache_template.dart';
 import 'package:flutter_tools/src/template.dart';
 import 'package:flutter_tvos/commands/create.dart';
 import 'package:package_config/package_config.dart';
@@ -15,6 +17,7 @@ import 'package:package_config/package_config.dart';
 import '../src/common.dart';
 import '../src/context.dart';
 import '../src/test_flutter_command_runner.dart';
+import '../src/tool_dependencies.dart';
 
 // NOTE: these tests spell the flag `--tvos-only`, never `--platforms=tvos`.
 // Users type the latter; `expandTvosPlatformArgs` (executable.dart) rewrites it
@@ -37,6 +40,30 @@ void main() {
     fileSystem.directory('/flutter').createSync(recursive: true);
   });
 
+  // Flutter 3.50's app template takes Material from `package:material_ui` and
+  // deprecates `package:flutter/material.dart`; the tvOS-only scaffold, which
+  // mirrors that template, follows it.
+  testUsingContext(
+    'the tvOS-only app imports Material from material_ui, as stock does',
+    () async {
+      await createTestCommandRunner(
+        _createCommand(),
+      ).run(<String>['create', '--tvos-only', '--no-pub', '/home/tv_app']);
+
+      final Directory project = fileSystem.directory('/home/tv_app');
+      expect(project.childFile('pubspec.yaml').readAsStringSync(), contains('material_ui: ^'));
+      for (final path in <String>['lib/main.dart', 'test/widget_test.dart']) {
+        final String source = project.childFile(path).readAsStringSync();
+        expect(source, contains("import 'package:material_ui/material_ui.dart';"), reason: path);
+        expect(source, isNot(contains('package:flutter/material.dart')), reason: path);
+      }
+    },
+    overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+    },
+  );
+
   group('TvosCreateCommand project name', () {
     testUsingContext(
       'derives the name from the current directory for `create .`',
@@ -46,7 +73,7 @@ void main() {
         fileSystem.currentDirectory = projectDir;
 
         await createTestCommandRunner(
-          TvosCreateCommand(verboseHelp: false),
+          _createCommand(),
         ).run(<String>['create', '--tvos-only', '--no-pub', '.']);
 
         expect(
@@ -68,7 +95,7 @@ void main() {
       'derives the name from the target directory basename',
       () async {
         await createTestCommandRunner(
-          TvosCreateCommand(verboseHelp: false),
+          _createCommand(),
         ).run(<String>['create', '--tvos-only', '--no-pub', '/home/other_app']);
 
         expect(
@@ -85,7 +112,7 @@ void main() {
     testUsingContext(
       '--project-name still wins over the directory name',
       () async {
-        await createTestCommandRunner(TvosCreateCommand(verboseHelp: false)).run(<String>[
+        await createTestCommandRunner(_createCommand()).run(<String>[
           'create',
           '--tvos-only',
           '--no-pub',
@@ -113,7 +140,7 @@ void main() {
 
         await expectLater(
           createTestCommandRunner(
-            TvosCreateCommand(verboseHelp: false),
+            _createCommand(),
           ).run(<String>['create', '--tvos-only', '--no-pub', '.']),
           throwsToolExit(message: 'is not a valid Dart package name'),
         );
@@ -174,7 +201,7 @@ void main() {
         localFileSystem.currentDirectory = projectDir;
 
         await createTestCommandRunner(
-          TvosCreateCommand(verboseHelp: false),
+          _createCommand(),
         ).run(<String>['create', '--no-pub', '--platforms=ios', '.']);
 
         // Upstream resolves this one correctly even without the fix.
@@ -231,4 +258,17 @@ class _LocalPackageConfigTemplatePathProvider extends TemplatePathProvider {
         .childDirectory('templates');
     return name == null ? templateDirectory : templateDirectory.childDirectory(name);
   }
+}
+
+/// The command as `flutter-tvos` registers it, given the services the tool
+/// builds from the test's context (Flutter 3.50 hands a command its services
+/// when it is made).
+TvosCreateCommand _createCommand() {
+  final ToolDependencies toolDependencies = contextToolDependencies();
+  return TvosCreateCommand(
+    androidContext: toolDependencies.androidContext,
+    appleContext: toolDependencies.appleContext,
+    templateRenderer: const MustacheTemplateRenderer(),
+    toolContext: toolDependencies.toolContext,
+  );
 }

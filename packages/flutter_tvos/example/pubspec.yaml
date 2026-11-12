@@ -10,6 +10,9 @@ dependencies:
     sdk: flutter
   flutter_tvos:
     path: ../
+  # As Flutter 3.50's app template: Material from its own package, which 3.50
+  # recommends over the deprecated `package:flutter/material.dart`.
+  material_ui: ^1.1.0
 
 dev_dependencies:
   flutter_test:

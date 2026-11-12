@@ -9,7 +9,12 @@ import 'package:flutter_tools/src/project.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
 
 class TvosCleanCommand extends CleanCommand {
-  TvosCleanCommand({required super.verbose});
+  TvosCleanCommand({
+    required super.toolContext,
+    required super.xcode,
+    required super.xcodeProjectInterpreter,
+    super.verbose,
+  });
 
   @override
   Future<FlutterCommandResult> runCommand() async {

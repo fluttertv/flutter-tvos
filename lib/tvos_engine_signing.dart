@@ -52,12 +52,13 @@ class TvosEngineSigner {
   /// Set to `1` to skip signing entirely.
   static const String kSkipEnvVar = 'TVOS_ENGINE_SKIP_SIGNING';
 
-  /// The certificate type used to sign the engine. See [resolveIdentity].
+  /// The certificate type used to sign the engine. See
+  /// [TvosEngineSigner.resolveIdentity].
   static const String kIdentityPrefix = 'Apple Distribution:';
 
   /// A codesigning identity in the login keychain.
   ///
-  /// [hash] is the SHA-1. Everything downstream signs by hash, never by name:
+  /// `hash` is the SHA-1. Everything downstream signs by hash, never by name:
   /// duplicate certificates sharing a display name are common (a renewed cert
   /// sits alongside the one it replaced), and `codesign --sign <name>` fails
   /// with "ambiguous (matches ... and ...)" when that happens.

@@ -14,7 +14,16 @@ import 'tvos_app_scaffold.dart';
 import 'tvos_runner.dart';
 
 class TvosCreateCommand extends CreateCommand {
-  TvosCreateCommand({required super.verboseHelp}) {
+  /// Takes what stock's `CreateCommand` takes, minus the tool-extension
+  /// template manager: `create` offers stock's templates and tvOS's own, no
+  /// extension templates.
+  TvosCreateCommand({
+    required super.androidContext,
+    required super.appleContext,
+    required super.templateRenderer,
+    required super.toolContext,
+    super.verboseHelp,
+  }) {
     // Internal only. Users say `--platforms=tvos`; the argv shim in
     // executable.dart rewrites that to this flag because upstream
     // Flutter's `--platforms` parser rejects `tvos`. Hidden so it never

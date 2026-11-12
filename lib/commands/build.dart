@@ -60,7 +60,27 @@ class TvosBuildCommand extends FlutterCommand {
 class BuildTvosCommand extends BuildSubCommand with TvosRequiredArtifacts {
   BuildTvosCommand({required super.logger, required bool verboseHelp})
     : super(verboseHelp: verboseHelp) {
-    addCommonDesktopBuildOptions(verboseHelp: verboseHelp);
+    // The options stock's desktop builds took up to Flutter 3.47, through
+    // `addCommonDesktopBuildOptions`. Flutter 3.50 removed that helper and
+    // moved the desktop builds to `DesktopBuildOptionsBundle`, which also adds
+    // --flavor and --config-only (neither of which a tvOS build implements)
+    // and shows --performance-measurement-file outside verbose help. Each call
+    // below is still a supported [FlutterCommand] method, so `build tvos`
+    // keeps exactly the options and help it had.
+    addBuildModeFlags(verboseHelp: verboseHelp);
+    addBuildPerformanceFile(hide: !verboseHelp);
+    addDartObfuscationOption();
+    addEnableExperimentation(hide: !verboseHelp);
+    addSplitDebugInfoOption();
+    addTreeShakeIconsFlag();
+    usesAnalyzeSizeFlag();
+    usesDartDefineOption();
+    usesExtraDartFlagOptions(verboseHelp: verboseHelp);
+    usesPubOption();
+    usesTargetOption();
+    usesTrackWidgetCreation(verboseHelp: verboseHelp);
+    usesBuildNumberOption();
+    usesBuildNameOption();
     argParser.addFlag(
       'simulator',
       help: 'Build for the tvOS Simulator instead of a physical device.',

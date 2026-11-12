@@ -5,5 +5,10 @@
 import 'package:flutter_tools/src/commands/devices.dart';
 
 class TvosDevicesCommand extends DevicesCommand {
-  TvosDevicesCommand({required super.verboseHelp});
+  TvosDevicesCommand({
+    required super.deviceManager,
+    required super.doctor,
+    required super.toolContext,
+    super.verboseHelp,
+  });
 }
