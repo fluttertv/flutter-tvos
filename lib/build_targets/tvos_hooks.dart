@@ -29,6 +29,7 @@ import 'package:flutter_tools/src/isolated/native_assets/native_assets.dart'
 import 'package:hooks/hooks.dart'
     show BuildInputBuilder, EncodedAsset, LinkInputBuilder, ProtocolExtension;
 import 'package:hooks_runner/hooks_runner.dart' show BuildResult;
+import 'package:logging/logging.dart' as logging;
 import 'package:meta/meta.dart' show visibleForTesting;
 
 /// tvOS's name in the Dart hooks protocol.
@@ -110,6 +111,19 @@ final class TvosCodeAssetExtension extends ProtocolExtension {
       );
 
   final CodeAssetExtension _codeAssets;
+
+  /// The wrapped extension, for tests.
+  @visibleForTesting
+  CodeAssetExtension get codeAssets => _codeAssets;
+
+  /// Forwarded, because the runner only calls this on the wrapper: the
+  /// protocol promises an extension its logger before any other call, and
+  /// the wrapped one is called through here.
+  @override
+  void setupLogger(logging.Logger logger) {
+    super.setupLogger(logger);
+    _codeAssets.setupLogger(logger);
+  }
 
   @override
   void setupBuildInput(BuildInputBuilder input) => _codeAssets.setupBuildInput(input);

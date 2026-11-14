@@ -10,8 +10,12 @@ All notable changes to flutter-tvos will be documented here.
   The engine pin is unchanged until the 3.50.0 engine artifacts are published.
   Stock commands keep their new 3.50 options and behaviour, among them
   `clean --include-xcode-workspace` (plain `clean` no longer runs
-  `xcodebuild clean`), `precache --host-arch`, `test --preset`, and
+  `xcodebuild clean`), `test --preset`, and
   `logs`/`run`/`drive`/`attach --adb-log-filtering`.
+- `flutter-tvos precache --host-arch` picks the architecture of the stock
+  Flutter host artifacts, as in Flutter 3.50. The tvOS engine artifacts have no
+  per-architecture variants, so it does not change what the tvOS step
+  downloads, and it now says so with a warning.
 - `flutter-tvos create --platforms=tvos` and the example app `plugin port`
   writes now take Material from `package:material_ui`, as Flutter 3.50's own
   app template does (`package:flutter/material.dart` is deprecated in 3.50).

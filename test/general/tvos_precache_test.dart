@@ -165,13 +165,15 @@ void main() {
 
   // Stock's --host-arch arrived with Flutter 3.50. The tvOS command replaces
   // stock's runCommand, so it has to take the flag itself, and set it before
-  // its first download (the tvOS engine set), as stock sets it before its own.
+  // any download, as stock does.
   group('TvosPrecacheCommand --host-arch', () {
     late _RecordingCache cache;
     late FakePlatform platform;
+    late BufferLogger logger;
 
     setUp(() {
       cache = _RecordingCache();
+      logger = BufferLogger.test();
       platform = FakePlatform(
         operatingSystem: 'macos',
         environment: <String, String>{'FLUTTER_ALREADY_LOCKED': 'true'},
@@ -182,7 +184,7 @@ void main() {
       TvosPrecacheCommand(
         verboseHelp: false,
         cache: cache,
-        logger: BufferLogger.test(),
+        logger: logger,
         platform: platform,
         featureFlags: TestFeatureFlags(),
       ),
@@ -193,12 +195,14 @@ void main() {
       ProcessManager: () => FakeProcessManager.any(),
       Platform: () => platform,
       Cache: () => cache,
+      Logger: () => logger,
     };
 
-    testUsingContext('picks the host artifacts before the tvOS engine is downloaded', () async {
+    testUsingContext('overrides the host platform before anything is downloaded', () async {
       await runPrecache(const <String>['--host-arch', 'x64']);
 
-      expect(cache.tvosUpdates, 1);
+      expect(cache.osUtils.hostPlatformOverride, HostPlatform.darwin_x64);
+      // The first download is the tvOS engine set; the override is already on.
       expect(cache.hostPlatformAtTvosUpdate, HostPlatform.darwin_x64);
     }, overrides: overrides);
 
@@ -207,6 +211,32 @@ void main() {
 
       expect(cache.tvosUpdates, 1);
       expect(cache.hostPlatformAtTvosUpdate, isNull);
+      expect(logger.warningText, isEmpty);
+    }, overrides: overrides);
+
+    // The tvOS engine release has one copy of each zip, whatever the host, so
+    // the flag cannot change what the tvOS step downloads. Say so rather than
+    // let it look as though it did.
+    testUsingContext('warns that the tvOS engine artifacts are not per-architecture', () async {
+      await runPrecache(const <String>['--host-arch', 'x64']);
+
+      expect(logger.warningText, contains(TvosPrecacheCommand.tvosHostArchWarning('x64')));
+    }, overrides: overrides);
+
+    testUsingContext('does not warn when --host-arch names the host itself', () async {
+      // The fake host is darwin_arm64.
+      await runPrecache(const <String>['--host-arch', 'arm64']);
+
+      expect(cache.osUtils.hostPlatformOverride, HostPlatform.darwin_arm64);
+      expect(logger.warningText, isEmpty);
+    }, overrides: overrides);
+
+    testUsingContext('applies the override but does not warn with --no-tvos', () async {
+      await runPrecache(const <String>['--host-arch', 'x64', '--no-tvos']);
+
+      expect(cache.tvosUpdates, 0);
+      expect(cache.osUtils.hostPlatformOverride, HostPlatform.darwin_x64);
+      expect(logger.warningText, isEmpty);
     }, overrides: overrides);
   });
 }

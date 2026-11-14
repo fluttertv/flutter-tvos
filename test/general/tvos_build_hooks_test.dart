@@ -37,6 +37,7 @@ import 'package:flutter_tools/src/macos/xcode.dart' show Xcode;
 import 'package:flutter_tvos/build_targets/tvos_hooks.dart';
 import 'package:hooks/hooks.dart';
 import 'package:hooks_runner/hooks_runner.dart';
+import 'package:logging/logging.dart' as logging;
 import 'package:test/fake.dart';
 
 import '../../flutter/packages/flutter_tools/test/general.shard/isolated/fake_native_assets_build_runner.dart'
@@ -416,6 +417,22 @@ void main() {
       FileSystem: () => fileSystem,
       ProcessManager: () => FakeProcessManager.any(),
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    });
+  });
+
+  group('TvosCodeAssetExtension', () {
+    // hooks_runner hands each extension its logger before calling anything
+    // else on it, and only ever calls the wrapper. The wrapped
+    // CodeAssetExtension reads its logger when validating, so it has to get
+    // the same one.
+    testWithoutContext("passes the runner's logger on to the wrapped extension", () {
+      final extension = TvosCodeAssetExtension(cCompiler: null);
+      final logger = logging.Logger('tvos_hooks_test');
+
+      extension.setupLogger(logger);
+
+      expect(extension.logger, same(logger));
+      expect(extension.codeAssets.logger, same(logger));
     });
   });
 }

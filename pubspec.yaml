@@ -34,6 +34,9 @@ dependencies:
     path: flutter/packages/flutter_tools/packages/flutter_tools_core
   file:
   http:
+  # The logger type the hooks protocol hands its extensions (see
+  # TvosCodeAssetExtension.setupLogger in lib/build_targets/tvos_hooks.dart).
+  logging:
   meta:
   package_config:
   path:
