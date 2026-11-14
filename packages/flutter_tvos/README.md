@@ -100,7 +100,7 @@ Call `TvRemoteController.instance.init()` once in `main()` when you use
 on tvOS, and is a no-op on other platforms.
 
 ```dart
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_tvos/flutter_tvos.dart';
 
 void main() {

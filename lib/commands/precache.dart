@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 import 'package:file/src/interface/directory.dart';
+import 'package:flutter_tools/src/base/common.dart';
+import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/commands/precache.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
@@ -60,8 +62,41 @@ class TvosPrecacheCommand extends PrecacheCommand {
     return requiredArtifacts;
   }
 
+  /// What `--host-arch` does and does not change, printed when it is given.
+  @visibleForTesting
+  static String tvosHostArchWarning(String hostArch) =>
+      '--host-arch $hostArch applies to the Flutter host artifacts only. The tvOS '
+      'engine artifacts are a single set with no per-architecture variants, and '
+      'are downloaded as they are.';
+
   @override
   Future<FlutterCommandResult> runCommand() async {
+    // Stock's `--host-arch` (Flutter 3.50): the stock host artifacts this run
+    // downloads are for that architecture. Set before any download, as stock
+    // does.
+    final String? hostArch = stringArg('host-arch');
+    if (hostArch != null) {
+      final HostPlatform? overridePlatform = HostPlatform.fromOsAndArch(
+        globals.platform.operatingSystem,
+        hostArch,
+      );
+      if (overridePlatform == null) {
+        throwToolExit(
+          'Unsupported host architecture "$hostArch" for OS "${globals.platform.operatingSystem}"',
+        );
+      }
+      final HostPlatform hostPlatform = globals.cache.osUtils.hostPlatform;
+      globals.cache.osUtils.hostPlatformOverride = overridePlatform;
+      // The tvOS engine set has no per-architecture variants: one release
+      // holds one copy of each zip, whatever the host. So the flag reaches
+      // only the stock host artifacts fetched below, and saying so beats
+      // letting it look as though the tvOS tools were swapped too. Naming the
+      // host's own architecture changes nothing, so that says nothing.
+      if (boolArg('tvos') && overridePlatform != hostPlatform) {
+        globals.logger.printWarning(tvosHostArchWarning(hostArch));
+      }
+    }
+
     if (boolArg('tvos')) {
       if (boolArg('force')) {
         final Directory artifactDir = tvosArtifactDirectory(globals.fs);

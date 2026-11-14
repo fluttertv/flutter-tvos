@@ -4,13 +4,16 @@
 
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/build_targets.dart';
+import 'package:flutter_tools/src/commands/doctor.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/isolated/build_targets.dart';
 import 'package:flutter_tools/src/runner/flutter_command.dart';
+import 'package:flutter_tvos/commands/create.dart';
 import 'package:flutter_tvos/executable.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
+import '../src/tool_dependencies.dart';
 
 /// What `flutter-tvos` does and does not expose.
 ///
@@ -31,7 +34,11 @@ void main() {
     BuildTargets: () => const BuildTargetsImpl(),
   };
 
-  List<FlutterCommand> build() => tvosCommands(verbose: false, verboseHelp: false);
+  List<FlutterCommand> build() => tvosCommands(
+    toolDependencies: contextToolDependencies(),
+    verbose: false,
+    verboseHelp: false,
+  );
 
   Set<String> buildNames() => build().map((FlutterCommand c) => c.name).toSet();
 
@@ -51,6 +58,17 @@ void main() {
   testUsingContext('upgrade is the tvOS override, not the stock command', () {
     final FlutterCommand upgrade = build().firstWhere((FlutterCommand c) => c.name == 'upgrade');
     expect(upgrade.runtimeType.toString(), 'TvosUpgradeCommand');
+  }, overrides: overrides);
+
+  // Since Flutter 3.50 stock hands `doctor`, `config` and `create` the tool's
+  // extension managers. A doctor given one builds stock's validator list,
+  // which has no tvOS entry, so flutter-tvos hands them none.
+  testUsingContext('gives doctor and create no tool-extension managers', () {
+    final List<FlutterCommand> commands = build();
+    final DoctorCommand doctor = commands.whereType<DoctorCommand>().single;
+    final TvosCreateCommand create = commands.whereType<TvosCreateCommand>().single;
+    expect(doctor.extensionManager, isNull);
+    expect(create.extensionTemplateManager, isNull);
   }, overrides: overrides);
 
   testUsingContext('registers no command twice', () {

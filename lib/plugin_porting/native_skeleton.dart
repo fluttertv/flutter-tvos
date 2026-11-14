@@ -111,6 +111,8 @@ dependencies:
   $base: any
   $out:
     path: ../
+  # As Flutter 3.50's app template: Material from its own package.
+  material_ui: ^1.1.0
 
 dev_dependencies:
   flutter_test:
@@ -123,7 +125,7 @@ flutter:
   }
 
   String _exampleMain(PluginSource source) => '''
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() => runApp(const ExampleApp());
 

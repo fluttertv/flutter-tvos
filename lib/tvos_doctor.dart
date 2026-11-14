@@ -11,6 +11,9 @@ import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/doctor.dart';
 import 'package:flutter_tools/src/doctor_validator.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+// The doctor's result types; flutter_tools moved them here in Flutter 3.50.
+import 'package:flutter_tools_core/flutter_tools_core.dart'
+    show ValidationMessage, ValidationResult, ValidationType;
 import 'package:process/process.dart';
 
 TvosWorkflow? get tvosWorkflow => context.get<TvosWorkflow>();

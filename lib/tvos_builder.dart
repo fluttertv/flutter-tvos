@@ -70,7 +70,7 @@ class TvosBuilder {
     final String buildModeName = buildInfo.mode.cliName;
 
     // Used by AotElfBase to generate an AOT snapshot.
-    final String targetPlatformName = getNameForTargetPlatform(TargetPlatform.ios);
+    final String targetPlatformName = TargetPlatform.ios.getName();
 
     // Read by the hooks target when it has to fall back to naming the iOS
     // family — see `runTvosHooks`. That fallback feeds an `IOSCodeConfig`,

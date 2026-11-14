@@ -145,10 +145,10 @@ buildSettings = {
 
     Map<String, String> env({String? path, String? id, String? issuer, String? home}) {
       return <String, String>{
-        if (path != null) 'APP_STORE_CONNECT_KEY_PATH': path,
-        if (id != null) 'APP_STORE_CONNECT_KEY_ID': id,
-        if (issuer != null) 'APP_STORE_CONNECT_ISSUER_ID': issuer,
-        if (home != null) 'HOME': home,
+        'APP_STORE_CONNECT_KEY_PATH': ?path,
+        'APP_STORE_CONNECT_KEY_ID': ?id,
+        'APP_STORE_CONNECT_ISSUER_ID': ?issuer,
+        'HOME': ?home,
       };
     }
 
