@@ -2,16 +2,22 @@
 
 All notable changes to flutter-tvos will be documented here.
 
-## [Unreleased]
+## [1.12.0] - 2026-11-14
 
 ### Changed
 
-- **Moved to Flutter 3.50.0** (`ab2912035e160d9cad6306df307576da6128ebdb`).
-  The engine pin is unchanged until the 3.50.0 engine artifacts are published.
+- **Upgraded to Flutter 3.50.0** (`ab2912035e160d9cad6306df307576da6128ebdb`).
+  Engine artifacts rebuilt from the ported patch set and published as
+  [`engine-ae4811426a243ec8d3591a1c34a4ffaa3f7d7f92`](https://github.com/fluttertv/engine-artifacts/releases/tag/engine-ae4811426a243ec8d3591a1c34a4ffaa3f7d7f92).
   Stock commands keep their new 3.50 options and behaviour, among them
   `clean --include-xcode-workspace` (plain `clean` no longer runs
   `xcodebuild clean`), `test --preset`, and
   `logs`/`run`/`drive`/`attach --adb-log-filtering`.
+
+  A Flutter minor, so the CLI was ported by hand rather than by the release
+  train: it analyzes and tests clean against the new SDK, and an app created
+  from the template, on the published artifacts, draws and hot reloads and
+  restarts on a tvOS simulator, and its device release build compiles unsigned.
 - `flutter-tvos precache --host-arch` picks the architecture of the stock
   Flutter host artifacts, as in Flutter 3.50. The tvOS engine artifacts have no
   per-architecture variants, so it does not change what the tvOS step
