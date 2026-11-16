@@ -10,13 +10,10 @@ import '../tvos_plugins.dart';
 
 class TvosDriveCommand extends DriveCommand with TvosRequiredArtifacts {
   TvosDriveCommand({
-    required super.verboseHelp,
-    required super.fileSystem,
-    required super.logger,
-    required super.platform,
-    required super.signals,
-    required super.terminal,
-    required super.outputPreferences,
+    required super.buildSystem,
+    required super.buildTargets,
+    required super.toolContext,
+    super.verboseHelp,
   });
 
   @override

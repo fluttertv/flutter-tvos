@@ -558,6 +558,13 @@ class TvosDevice extends Device {
   @override
   Future<TargetPlatform> get targetPlatform async => TargetPlatform.ios;
 
+  /// arm64 on an Apple TV and on the Simulator alike: the one architecture the
+  /// tvOS engine is built for (`tvos_debug_sim_arm64`, `tvos_<mode>_arm64`)
+  /// and the app is built as. Required by `Device` since Flutter 3.50, which
+  /// reports it in `devices --machine` and to the daemon.
+  @override
+  Future<CpuArch> get cpuArch async => CpuArch.arm64;
+
   // Override the display name so `flutter-tvos devices` shows `tvos` in the
   // platform column instead of the inherited `ios`. The build pipeline still
   // sees `TargetPlatform.ios` (we ride on the iOS toolchain), but at the user
@@ -1303,8 +1310,11 @@ class TvosDevice extends Device {
               // We retry, so a missing-Local-Network-permission ToolExit on an
               // early attempt would abort a run that the later attempts (or the
               // user granting permission) could still rescue. The warning at
-              // the call site names that permission explicitly.
-              throwOnMissingLocalNetworkPermissionsError: false,
+              // the call site names that permission explicitly. (Flutter 3.50
+              // renamed this from `throwOnMissingLocalNetworkPermissionsError`
+              // and stopped printing stock's own instructions on each failed
+              // attempt; they now go to the verbose log.)
+              throwOnError: false,
             );
         if (result?.ipAddress != null) {
           logger.printTrace(

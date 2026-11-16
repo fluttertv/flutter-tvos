@@ -9,14 +9,11 @@ import '../tvos_plugins.dart';
 
 class TvosAttachCommand extends AttachCommand {
   TvosAttachCommand({
-    required super.verboseHelp,
-    required super.stdio,
-    required super.logger,
-    required super.terminal,
-    required super.signals,
-    required super.platform,
-    required super.processInfo,
-    required super.fileSystem,
+    required super.buildSystem,
+    required super.buildTargets,
+    required super.toolContext,
+    required super.xcode,
+    super.verboseHelp,
   });
 
   @override

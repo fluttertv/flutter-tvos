@@ -11,6 +11,10 @@ import 'package:flutter_tools/src/base/file_system.dart';
 ///
 /// The caller renders `tvos/` on top of this. Nothing here references any
 /// other platform, so the result is tvOS-only by construction.
+///
+/// Where it mirrors stock's `app` template it follows it: since Flutter 3.50
+/// that template imports Material from `package:material_ui` and depends on
+/// it, and so does this.
 class TvosAppScaffold {
   TvosAppScaffold(this._fs);
 
@@ -49,6 +53,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Flutter 3.50's app template takes Material from this package rather than
+  # from `package:flutter/material.dart`, which 3.50 deprecates.
+  material_ui: ^1.1.0
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
@@ -61,7 +68,7 @@ flutter:
 ''';
 
   String _mainDart(String name) => '''
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() => runApp(const ${_pascal(name)}App());
 
@@ -83,8 +90,8 @@ class ${_pascal(name)}App extends StatelessWidget {
 ''';
 
   String _widgetTest(String name) => '''
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'package:$name/main.dart';
 

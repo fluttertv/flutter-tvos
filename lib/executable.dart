@@ -11,9 +11,9 @@ import 'package:flutter_tools/src/android/android_workflow.dart';
 import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/context.dart';
-import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/template.dart';
+import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/build_targets.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/assemble.dart';
@@ -31,8 +31,13 @@ import 'package:flutter_tools/src/commands/screenshot.dart';
 import 'package:flutter_tools/src/commands/shell_completion.dart';
 import 'package:flutter_tools/src/commands/symbolize.dart';
 import 'package:flutter_tools/src/commands/update_packages.dart';
+import 'package:flutter_tools/src/context/android_context.dart';
+import 'package:flutter_tools/src/context/apple_context.dart';
+import 'package:flutter_tools/src/context/tool_context.dart';
+import 'package:flutter_tools/src/context/tool_dependencies.dart';
 import 'package:flutter_tools/src/device.dart';
 import 'package:flutter_tools/src/doctor.dart';
+import 'package:flutter_tools/src/emulator.dart';
 import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/hook_runner.dart' show FlutterHookRunner;
@@ -73,80 +78,140 @@ import 'tvos_platform_args.dart';
 /// ChannelCommand resets --hard inside the vendored SDK and breaks the
 /// flutter.version to engine-artifact pin — and nothing else in the suite
 /// would notice it coming back.
+///
+/// Like stock `generateCommands` (Flutter 3.50 and later), it takes the
+/// tool's [ToolDependencies] and hands each command the contexts and services
+/// it uses. `runner.run` builds those dependencies from the tool's context, so
+/// they carry the tvOS overrides [main] installs (cache, artifacts, device
+/// manager, doctor validators, build targets, …).
+///
+/// No command is given the tool-extension managers stock passes (`doctor`,
+/// `config`, `create`): tool extensions are experimental in this release of
+/// Flutter, and a doctor given a manager builds stock's validator list, which
+/// has no tvOS entry.
 @visibleForTesting
-List<FlutterCommand> tvosCommands({required bool verbose, required bool verboseHelp}) {
+List<FlutterCommand> tvosCommands({
+  required ToolDependencies toolDependencies,
+  required bool verbose,
+  required bool verboseHelp,
+}) {
+  final ToolDependencies(
+    :AndroidContext androidContext,
+    :AppleContext appleContext,
+    :BuildSystem buildSystem,
+    :DeviceManager deviceManager,
+    :Doctor doctor,
+    :EmulatorManager emulatorManager,
+    :FeatureFlags featureFlags,
+    :ToolContext toolContext,
+  ) = toolDependencies;
+  // What the `BuildTargets` context override in [main] provides. Up to Flutter
+  // 3.47 attach, drive and the daemon read it from the context; since 3.50
+  // they are handed it, and stock hands them `const BuildTargetsImpl()`.
+  final BuildTargets buildTargets = toolDependencies.buildTargets ?? const BuildTargetsImpl();
   return <FlutterCommand>[
-      // Commands forwarded directly from flutter_tools — these have no
-      // tvOS-specific behaviour, so we register them as-is. Anything we
-      // do NOT register here would print "Could not find a command named
-      // X" on `flutter-tvos X`, even though plain `flutter X` works.
-      AssembleCommand(verboseHelp: verboseHelp, buildSystem: globals.buildSystem),
-      ConfigCommand(verboseHelp: verboseHelp),
-      DaemonCommand(hidden: !verboseHelp),
-      DebugAdapterCommand(verboseHelp: verboseHelp),
-      DoctorCommand(verbose: verbose),
-      EmulatorsCommand(),
-      GenerateCommand(),
-      GenerateLocalizationsCommand(
-        fileSystem: globals.fs,
-        logger: globals.logger,
-        artifacts: globals.artifacts!,
-        processManager: globals.processManager,
-      ),
-      InstallCommand(verboseHelp: verboseHelp),
-      LogsCommand(sigint: ProcessSignal.sigint, sigterm: ProcessSignal.sigterm),
-      // Upstream `pub` (and its alias `packages`) — registers `pub get`,
-      // `pub upgrade`, `pub add`, `pub remove`, `pub publish`, `pub
-      // outdated`, `pub deps`, `pub cache`, `pub run`, `pub global`,
-      // `pub token`. Without this, `flutter-tvos pub get` fails with
-      // "Could not find a command named 'pub'" — an invisible regression
-      // because the `flutter test` / `flutter run` pre-step runs pub-get
-      // internally, so users only notice when they invoke pub directly.
-      PackagesCommand(),
-      ScreenshotCommand(fs: globals.fs),
-      ShellCompletionCommand(),
-      SymbolizeCommand(stdio: globals.stdio, fileSystem: globals.fs),
-      UpdatePackagesCommand(verboseHelp: verboseHelp),
-      // Commands extended for tvOS.
-      // `upgrade` is overridden so it upgrades the flutter-tvos toolchain to its
-      // latest release tag instead of moving the pinned Flutter SDK upstream
-      // (which stock UpgradeCommand would do, breaking the engine-artifact pin).
-      TvosUpgradeCommand(verboseHelp: verboseHelp),
-      TvosAttachCommand(
-        verboseHelp: verboseHelp,
-        stdio: globals.stdio,
-        logger: globals.logger,
-        terminal: globals.terminal,
-        signals: globals.signals,
-        platform: globals.platform,
-        processInfo: globals.processInfo,
-        fileSystem: globals.fs,
-      ),
-      TvosBuildCommand(logger: globals.logger, verboseHelp: verboseHelp),
-      TvosCleanCommand(verbose: verbose),
-      TvosCreateCommand(verboseHelp: verboseHelp),
-      TvosDevicesCommand(verboseHelp: verboseHelp),
-      TvosDriveCommand(
-        verboseHelp: verboseHelp,
-        fileSystem: globals.fs,
-        logger: globals.logger,
-        platform: globals.platform,
-        signals: globals.signals,
-        terminal: globals.terminal,
-        outputPreferences: globals.outputPreferences,
-      ),
-      TvosPluginCommand(verboseHelp: verboseHelp),
-      TvosPrecacheCommand(
-        verboseHelp: verboseHelp,
-        cache: globals.cache,
-        logger: globals.logger,
-        platform: globals.platform,
-        featureFlags: featureFlags,
-      ),
-      TvosRunCommand(verboseHelp: verboseHelp),
-      TvosTestCommand(verboseHelp: verboseHelp),
-      TvosUseCommand(),
-      TvosVersionsCommand(),
+    // Commands forwarded directly from flutter_tools — these have no
+    // tvOS-specific behaviour, so we register them as-is. Anything we
+    // do NOT register here would print "Could not find a command named
+    // X" on `flutter-tvos X`, even though plain `flutter X` works.
+    AssembleCommand(
+      buildSystem: buildSystem,
+      featureFlags: featureFlags,
+      toolContext: toolContext,
+      verboseHelp: verboseHelp,
+    ),
+    ConfigCommand(
+      androidContext: androidContext,
+      featureFlags: featureFlags,
+      toolContext: toolContext,
+      verboseHelp: verboseHelp,
+    ),
+    DaemonCommand(
+      androidContext: androidContext,
+      androidWorkflow: androidWorkflow,
+      buildSystem: buildSystem,
+      buildTargets: buildTargets,
+      deviceManager: deviceManager,
+      hidden: !verboseHelp,
+      toolContext: toolContext,
+      xcode: appleContext.xcode,
+    ),
+    DebugAdapterCommand(toolContext: toolContext, verboseHelp: verboseHelp),
+    DoctorCommand(doctor: doctor, toolContext: toolContext, verbose: verbose),
+    EmulatorsCommand(
+      doctor: doctor,
+      emulatorManager: emulatorManager,
+      toolContext: toolContext,
+      verboseHelp: verboseHelp,
+    ),
+    GenerateCommand(toolContext: toolContext),
+    GenerateLocalizationsCommand(toolContext: toolContext),
+    InstallCommand(toolContext: toolContext, verboseHelp: verboseHelp),
+    LogsCommand(toolContext: toolContext),
+    // Upstream `pub` (and its alias `packages`) — registers `pub get`,
+    // `pub upgrade`, `pub add`, `pub remove`, `pub publish`, `pub
+    // outdated`, `pub deps`, `pub cache`, `pub run`, `pub global`,
+    // `pub token`. Without this, `flutter-tvos pub get` fails with
+    // "Could not find a command named 'pub'" — an invisible regression
+    // because the `flutter test` / `flutter run` pre-step runs pub-get
+    // internally, so users only notice when they invoke pub directly.
+    PackagesCommand(buildSystem: buildSystem, toolContext: toolContext, verboseHelp: verboseHelp),
+    ScreenshotCommand(toolContext: toolContext),
+    ShellCompletionCommand(toolContext: toolContext),
+    SymbolizeCommand(toolContext: toolContext),
+    UpdatePackagesCommand(toolContext: toolContext, verboseHelp: verboseHelp),
+    // Commands extended for tvOS.
+    // `upgrade` is overridden so it upgrades the flutter-tvos toolchain to its
+    // latest release tag instead of moving the pinned Flutter SDK upstream
+    // (which stock UpgradeCommand would do, breaking the engine-artifact pin).
+    TvosUpgradeCommand(toolContext: toolContext, verboseHelp: verboseHelp),
+    TvosAttachCommand(
+      buildSystem: buildSystem,
+      buildTargets: buildTargets,
+      toolContext: toolContext,
+      xcode: appleContext.xcode,
+      verboseHelp: verboseHelp,
+    ),
+    TvosBuildCommand(logger: toolContext.logger, verboseHelp: verboseHelp),
+    TvosCleanCommand(
+      toolContext: toolContext,
+      xcode: appleContext.xcode,
+      xcodeProjectInterpreter: appleContext.xcodeProjectInterpreter,
+      verbose: verbose,
+    ),
+    TvosCreateCommand(
+      androidContext: androidContext,
+      appleContext: appleContext,
+      templateRenderer: const MustacheTemplateRenderer(),
+      toolContext: toolContext,
+      verboseHelp: verboseHelp,
+    ),
+    TvosDevicesCommand(
+      deviceManager: deviceManager,
+      doctor: doctor,
+      toolContext: toolContext,
+      verboseHelp: verboseHelp,
+    ),
+    TvosDriveCommand(
+      buildSystem: buildSystem,
+      buildTargets: buildTargets,
+      toolContext: toolContext,
+      verboseHelp: verboseHelp,
+    ),
+    TvosPluginCommand(verboseHelp: verboseHelp),
+    TvosPrecacheCommand(
+      verboseHelp: verboseHelp,
+      cache: toolContext.cache,
+      logger: toolContext.logger,
+      platform: toolContext.platform,
+      featureFlags: featureFlags,
+    ),
+    TvosRunCommand(toolContext: toolContext, verboseHelp: verboseHelp),
+    // As in 1.11.x: no native-assets builder (a host test builds no code
+    // assets for tvOS) and stock's default verbosity.
+    TvosTestCommand(toolContext: toolContext, verboseHelp: verboseHelp),
+    TvosUseCommand(),
+    TvosVersionsCommand(),
   ];
 }
 
@@ -183,7 +248,11 @@ Future<void> main(List<String> args) async {
 
   await runner.run(
     args,
-      () => tvosCommands(verbose: verbose, verboseHelp: verboseHelp),
+    (ToolDependencies toolDependencies) => tvosCommands(
+      toolDependencies: toolDependencies,
+      verbose: verbose,
+      verboseHelp: verboseHelp,
+    ),
     verbose: verbose,
     verboseHelp: verboseHelp,
     muteCommandLogging: muteCommandLogging,

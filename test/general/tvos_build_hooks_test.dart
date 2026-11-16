@@ -37,6 +37,7 @@ import 'package:flutter_tools/src/macos/xcode.dart' show Xcode;
 import 'package:flutter_tvos/build_targets/tvos_hooks.dart';
 import 'package:hooks/hooks.dart';
 import 'package:hooks_runner/hooks_runner.dart';
+import 'package:logging/logging.dart' as logging;
 import 'package:test/fake.dart';
 
 import '../../flutter/packages/flutter_tools/test/general.shard/isolated/fake_native_assets_build_runner.dart'
@@ -157,9 +158,9 @@ void main() {
         // tvOS rides the iOS pipeline for everything downstream of here —
         // the AOT snapshot, the Xcode invocation. The hooks are the one place
         // it does not, which is what this file is about.
-        kTargetPlatform: getNameForTargetPlatform(TargetPlatform.ios),
+        kTargetPlatform: TargetPlatform.ios.getName(),
         // Only the fallback reads this, to build a faithful iOS input.
-        if (sdkRoot != null) kSdkRoot: sdkRoot,
+        kSdkRoot: ?sdkRoot,
       },
       inputs: <String, String>{},
       artifacts: Artifacts.test(),
@@ -187,10 +188,9 @@ void main() {
         reason: 'without code assets the input carries no target OS, and a '
             'package that reads one falls back to its OS-less default',
       );
-      // Read off the wire rather than through `config.code`, which parses the
-      // name back into an `OS` — and this version of the library throws on one
-      // it does not know, which is the whole reason the extension is hand-held.
-      // A hook resolving code_assets 2.0.0 reads the same bytes as an `OS`.
+      // Read off the wire rather than through `config.code`: the wire is what
+      // a hook sees, whichever code_assets it resolved. One on 1.x throws on
+      // the name when it parses it; one on 2.x reads it as an `OS`.
       final code = (seen.config.json['extensions']! as Map<String, Object?>)['code_assets']!
           as Map<String, Object?>;
       expect(
@@ -200,6 +200,8 @@ void main() {
             'tell the difference or ask',
       );
       expect(code['target_architecture'], Architecture.arm64.name);
+      // And through the typed accessor, as a hook on code_assets 2.x reads it.
+      expect(seen.config.code.targetOS, OS.fromString('tvos'));
       expect(
         code.containsKey('ios'),
         isFalse,
@@ -415,6 +417,22 @@ void main() {
       FileSystem: () => fileSystem,
       ProcessManager: () => FakeProcessManager.any(),
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    });
+  });
+
+  group('TvosCodeAssetExtension', () {
+    // hooks_runner hands each extension its logger before calling anything
+    // else on it, and only ever calls the wrapper. The wrapped
+    // CodeAssetExtension reads its logger when validating, so it has to get
+    // the same one.
+    testWithoutContext("passes the runner's logger on to the wrapped extension", () {
+      final extension = TvosCodeAssetExtension(cCompiler: null);
+      final logger = logging.Logger('tvos_hooks_test');
+
+      extension.setupLogger(logger);
+
+      expect(extension.logger, same(logger));
+      expect(extension.codeAssets.logger, same(logger));
     });
   });
 }

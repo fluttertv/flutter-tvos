@@ -975,9 +975,9 @@ void main() {
       return Process.runSync('/bin/sh', <String>[file.path], environment: <String, String>{
         'CONFIGURATION': configuration,
         'PROJECT_DIR': projectDir.path,
-        if (stagedMode != null) 'FLUTTER_STAGED_BUILD_MODE': stagedMode,
-        if (stagedSdk != null) 'FLUTTER_STAGED_SDK': stagedSdk,
-        if (platformName != null) 'PLATFORM_NAME': platformName,
+        'FLUTTER_STAGED_BUILD_MODE': ?stagedMode,
+        'FLUTTER_STAGED_SDK': ?stagedSdk,
+        'PLATFORM_NAME': ?platformName,
         if (optOut) 'FLUTTER_STAGED_BUILD_MODE_CHECK': 'off',
       });
     }

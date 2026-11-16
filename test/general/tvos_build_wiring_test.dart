@@ -176,7 +176,7 @@ flutter:
           app,
           defines: <String, String>{
             kBuildMode: BuildMode.debug.cliName,
-            kTargetPlatform: getNameForTargetPlatform(TargetPlatform.ios),
+            kTargetPlatform: TargetPlatform.ios.getName(),
           },
           artifacts: Artifacts.test(),
           processManager: FakeProcessManager.empty(),

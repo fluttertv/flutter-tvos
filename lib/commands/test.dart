@@ -8,7 +8,7 @@ import 'package:flutter_tools/src/project.dart';
 import '../tvos_plugins.dart';
 
 class TvosTestCommand extends TestCommand {
-  TvosTestCommand({required super.verboseHelp});
+  TvosTestCommand({required super.toolContext, super.verboseHelp});
 
   @override
   Future<void> validateCommand() async {

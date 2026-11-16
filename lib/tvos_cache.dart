@@ -175,6 +175,47 @@ class TvosEngineArtifacts extends EngineCachedArtifact {
   @override
   List<String> getPackageDirs() => const <String>[];
 
+  /// Stock's update, except that with no engine pin the engine is still
+  /// looked for.
+  ///
+  /// From Flutter 3.50 stock's [CachedArtifact.update] returns before
+  /// [updateInner] when an artifact has no version, with only a warning. With
+  /// no `bin/internal/engine.version` that dropped the two things
+  /// [updateInner] does without a pin: extract the monorepo's local
+  /// `artifacts/*.zip`, and otherwise stop with [releaseTag]'s hint to run
+  /// `precache`. So with no pin this runs [updateInner] first, as stock did up
+  /// to Flutter 3.47, and then gives stock's warning; with a pin it is stock's.
+  @override
+  Future<void> update(
+    ArtifactUpdater artifactUpdater,
+    Logger logger,
+    FileSystem fileSystem,
+    OperatingSystemUtils operatingSystemUtils, {
+    bool offline = false,
+  }) async {
+    if (version == null) {
+      if (!location.existsSync()) {
+        try {
+          location.createSync(recursive: true);
+        } on FileSystemException catch (err) {
+          logger.printError(err.toString());
+          throwToolExit(
+            'Failed to create directory for flutter cache at ${location.path}. '
+            'Flutter may be missing permissions in its cache directory.',
+          );
+        }
+      }
+      await updateInner(artifactUpdater, fileSystem, operatingSystemUtils);
+    }
+    return super.update(
+      artifactUpdater,
+      logger,
+      fileSystem,
+      operatingSystemUtils,
+      offline: offline,
+    );
+  }
+
   @override
   Future<void> updateInner(
     ArtifactUpdater artifactUpdater,

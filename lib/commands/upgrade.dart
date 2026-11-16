@@ -30,7 +30,7 @@ export '../tvos_releases.dart' show TvosVersion;
 ///
 /// Mirrors the structure of stock `UpgradeCommand` / `UpgradeCommandRunner`.
 class TvosUpgradeCommand extends UpgradeCommand {
-  TvosUpgradeCommand({required super.verboseHelp});
+  TvosUpgradeCommand({required super.toolContext, required super.verboseHelp});
 
   @override
   String get description => 'Upgrade the flutter-tvos toolchain to the latest released version.';

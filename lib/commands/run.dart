@@ -9,7 +9,7 @@ import '../tvos_cache.dart';
 import '../tvos_plugins.dart';
 
 class TvosRunCommand extends RunCommand with TvosRequiredArtifacts {
-  TvosRunCommand({required super.verboseHelp});
+  TvosRunCommand({required super.toolContext, super.verboseHelp});
 
   @override
   Future<void> validateCommand() async {
