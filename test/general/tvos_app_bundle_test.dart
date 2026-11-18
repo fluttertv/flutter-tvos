@@ -441,6 +441,20 @@ void main() {
         // ...and signs it with the app's own identity.
         expect(script, contains(r'codesign --force --sign'));
         expect(script, contains(r'EXPANDED_CODE_SIGN_IDENTITY'));
+
+        // The same phase embeds the code assets flutter-tvos staged, each a
+        // framework, and signs each with the app's identity. NativeTvosBundle
+        // keys its fallback for older projects on the staging path, so the
+        // phase has to name it.
+        expect(NativeTvosBundle.pbxprojEmbedsCodeAssets(script), isTrue);
+        final int codeAssets = script.indexOf(r'${PROJECT_DIR}/Flutter/native_assets');
+        expect(codeAssets, greaterThan(script.indexOf('Flutter.framework')),
+            reason: 'code assets are embedded after the engine');
+        final String codeAssetPart = script.substring(codeAssets);
+        expect(codeAssetPart, contains(r'/*.framework'));
+        expect(codeAssetPart, contains(r'\"${DEST_FRAMEWORKS}/\"'));
+        expect(codeAssetPart, contains(r'codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\"'));
+        expect(codeAssetPart, contains(r'CODE_SIGNING_REQUIRED'));
       });
     }
 

@@ -139,6 +139,29 @@ flutter:
 
 FFI plugins are distributed as CocoaPods and loaded via `DynamicLibrary.process()` — they are **not** added to the plugin registrant.
 
+## Code assets from build hooks
+
+A package can also ship its native library through a Dart build hook (`hook/build.dart`) and call it with `@Native`, as on other platforms. flutter-tvos runs the hooks when Dart data assets are enabled (`flutter config --enable-dart-data-assets`, off by default) and installs the code assets they return the way Flutter does for iOS: each dynamic library becomes `<name>.framework` in the app's `Frameworks/`, with the install name `@rpath/<name>.framework/<name>`, and is listed in `NativeAssetsManifest.json`.
+
+What a tvOS hook has to know:
+
+- **It is told `target_os: tvos` and `arm64`.** With `package:code_assets` 2.x, `input.config.code.targetOS == OS.fromString('tvos')`. There is no tvOS sub-config: no deployment target, and no device or simulator.
+- **It has to choose device or simulator itself.** A library is linked for `appletvos` or `appletvsimulator`, and dyld refuses the other. A device build and a simulator build give a hook the same input, and the hooks cache serves both the library it built first. Choose by a means of your own, for example a user-define the app sets in its `pubspec.yaml`, which reruns the hook when it changes:
+
+  ```yaml
+  hooks:
+    user_defines:
+      my_package:
+        tvos_sdk: appletvsimulator   # or appletvos
+  ```
+
+  The build reads the platform out of every library before installing it and fails, naming the library, if it is for the other SDK, rather than ship an app that fails at its first `@Native` call.
+- **`native_toolchain_c` cannot build for tvOS** (0.19): its `CBuilder` has no file-name rules or target flags for an OS it does not know. Invoke `xcrun clang -target arm64-apple-tvos15.0[-simulator] -isysroot $(xcrun --sdk <sdk> --show-sdk-path) -dynamiclib` yourself.
+- **Link hooks do not run.** A code asset has to be added for the app bundle by the build hook.
+- **A hook that cannot read `tvos`** (one resolving `code_assets` 1.x) is retried as the iOS family so its data assets still flow; the code assets of that retry are iPhone libraries and are not installed.
+
+Projects created with 1.12.0 or earlier have an "Embed Flutter.framework" phase without the code-asset step. `flutter-tvos build` and `run` embed the libraries after the Xcode build for them and warn; archiving such a project from Xcode leaves them out until the phase is updated (re-create `tvos/`, or copy the code-asset lines from the current template's phase).
+
 ## Run the example app
 
 ```sh

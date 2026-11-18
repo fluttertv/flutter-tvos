@@ -2,6 +2,44 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Added
+
+- **Code assets from Dart build hooks are installed into tvOS apps** (#95).
+  A package that ships a native library through `hook/build.dart` and calls
+  it with `@Native` now works on tvOS: each dynamic library is bundled as
+  `<name>.framework` in the app's `Frameworks/`, install-named
+  `@rpath/<name>.framework/<name>`, stripped with a dSYM outside debug, and
+  listed in `NativeAssetsManifest.json`, as Flutter does for iOS. Until now
+  the hooks ran and their code assets were discarded.
+
+  Still behind `flutter config --enable-dart-data-assets`, like the hook pass
+  itself: turning it on by default would start running every hook in every
+  tvOS app on upgrade. Only the pass that told the hooks `tvos` contributes;
+  the libraries of the iOS-family retry are iPhone libraries and stay
+  discarded.
+
+  The manifest key is `ios_arm64`, not `tvos_arm64`. The tvOS engine is the
+  iOS engine, and it picks the key at compile time from `FML_OS_IOS`, which
+  is set on tvOS too. An app whose manifest says `tvos_arm64` fails its first
+  `@Native` call with "No asset with id ... found"; checked on a simulator.
+
+  **A hook still cannot tell device from simulator** (see 1.8.0), and for a
+  native library that decides whether it loads at all. So the build reads the
+  Mach-O platform of every library before installing it, and fails, naming
+  the library, when it was built for the other SDK, instead of shipping an
+  app that fails at launch. A device and a simulator build share one hooks
+  cache entry, so a package has to choose the SDK by some means of its own,
+  such as a user-define in the app's `pubspec.yaml`. `native_toolchain_c`
+  cannot build for tvOS; see `doc/develop-plugin.md`.
+
+  New projects embed the libraries in the "Embed Flutter.framework" build
+  phase, which also covers archiving from Xcode. Projects created with 1.12.0
+  or earlier keep working: `build` and `run` embed the libraries after the
+  Xcode build and warn that an Xcode archive would leave them out until the
+  phase is updated.
+
 ## [1.12.0] - 2026-11-14
 
 ### Changed

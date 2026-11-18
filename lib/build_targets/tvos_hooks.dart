@@ -67,6 +67,15 @@ import 'package:meta/meta.dart' show visibleForTesting;
 /// such a hook produced first would serve both. The iOS-family fallback keeps
 /// the distinction — `targetSdk` comes from the SDK root — which leaves the
 /// degraded path better off in this one respect than the accurate one.
+///
+/// For a code asset the boundary is sharper. A native library is linked for
+/// one platform — `TVOS` or `TVOSSIMULATOR` in its `LC_BUILD_VERSION` — and
+/// dyld refuses the other, so even a hook that compiles from source has to
+/// pick, and a device build and a simulator build share whichever library the
+/// hooks cache produced first. That is not papered over: the install step
+/// reads the platform out of every library and fails the build on a mismatch,
+/// naming the library, rather than shipping one that cannot load. See
+/// `installTvosCodeAssets`.
 const String tvOSName = 'tvos';
 
 /// The architecture tvOS builds target.
@@ -94,10 +103,12 @@ const Architecture tvOSArchitecture = Architecture.arm64;
 /// target OS that is true.
 ///
 /// The validation callbacks are left at their defaults, which report nothing,
-/// instead of being forwarded. There is nothing here for them to check: no
-/// code asset produced under this extension is kept, and since code_assets 2.0
-/// they would also reject a hook's library on its Mach-O header, which would
-/// fail a build over a file that is discarded. Data assets are validated by
+/// instead of being forwarded. The protocol's own library check cannot judge a
+/// tvOS library: its Mach-O validator recognizes only `ios` and `macos`, and
+/// nothing in the input says device or simulator, which is the property that
+/// decides whether a library loads. The libraries this pass keeps are checked
+/// where that is known instead, when they are installed — see
+/// `installTvosCodeAssets`. Data assets are validated by
 /// `DataAssetsExtension`, which is untouched by any of this.
 final class TvosCodeAssetExtension extends ProtocolExtension {
   TvosCodeAssetExtension({required CCompilerConfig? cCompiler})
@@ -155,7 +166,7 @@ Future<IOSCodeConfig> _iosFamilyConfig(Environment environment) async {
       await globals.xcode!.sdkLocation(EnvironmentType.physical);
   return IOSCodeConfig(
     targetVersion: targetIOSVersion,
-    targetSdk: getIOSSdk(_environmentTypeOf(sdkRoot, environment.fileSystem)),
+    targetSdk: getIOSSdk(tvosEnvironmentTypeOf(sdkRoot, environment.fileSystem)),
   );
 }
 
@@ -168,13 +179,13 @@ Future<IOSCodeConfig> _iosFamilyConfig(Environment environment) async {
 /// being broken rather than as an SDK it did not expect. Asking only about the
 /// suffix answers the same question for every Apple SDK, this platform's
 /// included.
-EnvironmentType _environmentTypeOf(String sdkRoot, FileSystem fileSystem) {
+EnvironmentType tvosEnvironmentTypeOf(String sdkRoot, FileSystem fileSystem) {
   final String name = fileSystem.path.basename(sdkRoot).toLowerCase();
   return name.contains('simulator') ? EnvironmentType.simulator : EnvironmentType.physical;
 }
 
 /// Runs every package's Dart build hook for a tvOS app, and returns the
-/// data assets they produced.
+/// data assets they produced, and the code assets of a pass that named tvOS.
 ///
 /// This is tvOS driving the hooks protocol on its own behalf, rather than
 /// borrowing the iOS pipeline's driver. flutter_tools translates its own
@@ -184,15 +195,15 @@ EnvironmentType _environmentTypeOf(String sdkRoot, FileSystem fileSystem) {
 /// [tvOSName], which is the truth and is what a package needs in order to
 /// pick the right output for this platform.
 ///
-/// Code assets are requested and then dropped. Nothing built by a code-asset
-/// hook is installed into a tvOS app — its plugins are native and resolved
-/// by the package manager — but the protocol keeps the target OS *inside* the
-/// code-asset config, so a hook that is not asked for code assets is not told
-/// what it is building for at all. Asking is currently the only way to say
-/// `tvos`.
+/// Code assets are requested for two reasons. The protocol keeps the target OS
+/// *inside* the code-asset config, so a hook that is not asked for code assets
+/// is not told what it is building for at all; and a package that ships a
+/// `dart:ffi` library through its hook needs that library in the app, which
+/// `TvosInstallCodeAssets` does with what this returns.
 ///
-/// Whether the name lands is a property of the app's packages, so it is tried
-/// and not predicted; the fallback is inline below.
+/// Only a pass that told the hooks `tvos` contributes code assets — see
+/// [keepsCodeAssets]. Whether the name lands is a property of the app's
+/// packages, so it is tried and not predicted; the fallback is inline below.
 Future<DartHooksResult> runTvosHooks({
   required FlutterNativeAssetsBuildRunner buildRunner,
   required Environment environment,
@@ -205,11 +216,13 @@ Future<DartHooksResult> runTvosHooks({
     return DartHooksResult.empty();
   }
 
-  // Data assets are the entire product of this pass: the code assets it also
-  // asks for exist to carry a target OS and are dropped. So with the feature
-  // off there is nothing to collect, and running every package's hook to
-  // collect it would be pure cost — worse, it would be cost that also fails
-  // builds, since a hook can refuse the target OS.
+  // The pass stays behind the data-assets flag even though it now also
+  // installs code assets. Stock Flutter runs code-asset hooks whenever native
+  // assets are on, which they are by default; doing the same here would start
+  // running every hook in every tvOS app on upgrade — `objective_c`'s among
+  // them, which most plugin graphs inherit — and a hook can fail a build that
+  // passed before. Opting in stays a deliberate step, as it has been since the
+  // pass was introduced.
   //
   // The feature is off by default. `dartDataAssets` declares no
   // `enabledByDefault` on any channel, while `nativeAssets` declares it on all
@@ -249,10 +262,14 @@ Future<DartHooksResult> runTvosHooks({
       TvosCodeAssetExtension(cCompiler: cCompiler),
       dataAssets,
     ],
-    // Linking only ever concerns code assets, and none survive this function.
+    // No link phase: a hook puts its code assets straight into the app. Stock
+    // runs link hooks for AOT builds; the tvOS pass has never run them, so an
+    // asset a build hook routes to a link hook instead of the app is not
+    // installed.
     linkingEnabled: false,
   );
 
+  final fromIOSFamilyRetry = result == null;
   if (result == null) {
     // Fall back to what builds for this platform said before it could name
     // itself. The hooks just printed why they stopped, so say what happens now:
@@ -290,20 +307,37 @@ Future<DartHooksResult> runTvosHooks({
     _throwHookFailed(packagesWithHooks);
   }
 
-  final int droppedCodeAssets = result.encodedAssets.where((a) => a.isCodeAsset).length;
-  if (droppedCodeAssets > 0) {
+  final encodedCodeAssets = <EncodedAsset>[
+    for (final EncodedAsset asset in result.encodedAssets)
+      if (asset.isCodeAsset) asset,
+  ];
+  final bool keep = keepsCodeAssets(
+    fromIOSFamilyRetry: fromIOSFamilyRetry,
+    nativeAssetsEnabled: featureFlags.isNativeAssetsEnabled,
+  );
+  if (encodedCodeAssets.isNotEmpty && !keep) {
     // Otherwise "no code assets existed" and "code assets existed and were
     // discarded" look identical from the outside, including in a bug report.
     environment.logger.printTrace(
-      'Discarding $droppedCodeAssets code asset(s); a tvOS app installs none.',
+      'Discarding ${encodedCodeAssets.length} code asset(s) from '
+      '${fromIOSFamilyRetry ? 'the iOS-family retry, which built them for iOS' : 'a pass with native assets disabled'}.',
     );
   }
 
   return DartHooksResult(
     buildStart: buildStart,
     buildEnd: DateTime.now(),
-    // Deliberately empty; see the note on requesting code assets above.
-    codeAssets: const <FlutterCodeAsset>[],
+    codeAssets: <FlutterCodeAsset>[
+      if (keep)
+        for (final EncodedAsset asset in encodedCodeAssets)
+          FlutterCodeAsset(
+            codeAsset: CodeAsset.fromEncoded(asset),
+            // What the hook was told, not what the engine looks the asset up
+            // under; the manifest translates. See `tvosNativeAssetsManifestOS`.
+            os: OS.fromString(tvOSName),
+            architecture: tvOSArchitecture,
+          ),
+    ],
     dataAssets: <DataAsset>[
       for (final EncodedAsset asset in result.encodedAssets)
         if (asset.isDataAsset) DataAsset.fromEncoded(asset),
@@ -311,6 +345,21 @@ Future<DartHooksResult> runTvosHooks({
     dependencies: result.dependencies,
   );
 }
+
+/// Whether the code assets of a hook pass are installed into the app.
+///
+/// Only those of the pass that told the hooks `tvos`. The iOS-family retry
+/// tells them `ios` with an iPhone SDK, and a library built for that is an
+/// iPhone library: it does not load on tvOS, and a hook that could not read
+/// `tvos` has given no sign that it can build for it. That pass exists to keep
+/// data assets flowing, so its code assets stay discarded, as they were before
+/// tvOS installed any.
+///
+/// And only with native assets on, which is stock's own condition for asking
+/// hooks for code assets at all (`--no-enable-native-assets` turns it off).
+@visibleForTesting
+bool keepsCodeAssets({required bool fromIOSFamilyRetry, required bool nativeAssetsEnabled}) =>
+    !fromIOSFamilyRetry && nativeAssetsEnabled;
 
 /// Explains a hook failure in terms of what was actually asked for.
 ///
@@ -325,35 +374,32 @@ Never _throwHookFailed(List<String> packagesWithHooks) {
     '\n'
     'Packages with build hooks in this app: ${packagesWithHooks.join(', ')}.\n'
     '\n'
-    'The hooks run so that packages generating per-platform *data* — shader\n'
-    'bundles and the like — are told which platform. The protocol only carries\n'
-    'that alongside a code-asset request, which is why one was made. Nothing a\n'
-    'code-asset hook produces is installed into a tvOS app, whose plugins are\n'
-    'native and resolved by the package manager, so this failure does not mean\n'
-    'the app is missing something it needs.\n'
+    'The hooks run because Dart data assets are enabled: they generate\n'
+    'per-platform data — shader bundles and the like — and build the native\n'
+    'libraries a package ships for `dart:ffi`. They were first told they are\n'
+    'building for tvOS, then, as a fallback, for the iOS family.\n'
     '\n'
     'The second attempt built exactly what an iOS build of this app builds, so\n'
     'an iOS build is the quickest way to tell a missing toolchain (a Rust hook\n'
     'wants cargo, a C hook wants its compiler) from something specific to this\n'
     'platform. Either install the toolchain the hook wants, or drop the\n'
-    'dependency, whose native half this app cannot use anyway.',
+    'dependency if its hook cannot build for tvOS.',
   );
 }
 
 /// Runs the Dart build hooks as part of the tvOS build graph.
 ///
-/// The tvOS pipeline skips upstream's native-asset targets: their code-asset
-/// half is iOS/macOS-only and a tvOS app does not use those FFI
-/// implementations anyway (see `TvosCopyFlutterBundle`). Data assets were a
-/// different thing that happened to share the same pass — produced on the host
-/// by ordinary Dart, which is how a package compiles its GPU shader bundles for
-/// the platform it is going to run on.
+/// The tvOS pipeline skips upstream's native-asset targets: they translate the
+/// build's target platform into the hooks protocol through a closed set with
+/// no tvOS in it, so they would announce the build as `ios`. This target runs
+/// the hooks through [runTvosHooks] instead, and `TvosInstallCodeAssets` takes
+/// the place of upstream's `InstallCodeAssets`.
 ///
-/// Skipping them wholesale meant such a package silently shipped whatever its
-/// generated directory happened to contain — assets left behind by a macOS or
-/// simulator build of the same tree, or nothing at all. Neither failed the
-/// build; the app just rendered a black scene on device. So this target runs
-/// them, through [runTvosHooks].
+/// Data assets were the first reason: produced on the host by ordinary Dart,
+/// which is how a package compiles its GPU shader bundles for the platform it
+/// is going to run on. Skipping them wholesale meant such a package silently
+/// shipped whatever its generated directory happened to contain — assets left
+/// behind by a macOS or simulator build of the same tree, or nothing at all.
 class TvosBuildHooks extends Target {
   const TvosBuildHooks({@visibleForTesting FlutterNativeAssetsBuildRunner? buildRunner})
     : _buildRunner = buildRunner;
@@ -374,9 +420,9 @@ class TvosBuildHooks extends Target {
   ];
 
   /// Written where [LinkHooks] would have written it, because that is where
-  /// `CopyFlutterBundle` looks for the hooks' result. There is no link phase
-  /// here — linking only concerns code assets — so the build result is the
-  /// whole result.
+  /// `CopyFlutterBundle` and `TvosInstallCodeAssets` look for the hooks'
+  /// result. There is no link phase here (see [runTvosHooks]), so the build
+  /// result is the whole result.
   @override
   List<Source> get outputs => const <Source>[
     Source.pattern('{BUILD_DIR}/${LinkHooks.resultFilename}'),

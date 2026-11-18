@@ -90,10 +90,11 @@ What happens when you run `flutter-tvos build tvos --simulator --debug`:
 
 1. `BuildTvosCommand.runCommand()` creates a `TvosBuildInfo` capturing architecture, build mode, and the simulator flag. (`TvosBuildCommand` is only the `build` umbrella; it registers `build tvos` and does no work itself.)
 2. `TvosBuilder.buildBundle()` sets up the Flutter build environment.
-3. The `DebugTvosApplication` build target runs the kernel snapshot (Dart-to-bytecode compilation).
+3. The `DebugTvosApplication` build target runs the kernel snapshot (Dart-to-bytecode compilation) and `TvosCopyFlutterBundle`, which depends on `TvosInstallCodeAssets` → `TvosBuildHooks`. With Dart data assets enabled those run the packages' build hooks, told `target_os: tvos` (`runTvosHooks`), and install the code assets of that pass as one framework each under `.dart_tool/flutter_build/<hash>/native_assets/`, after checking each library's Mach-O platform against the SDK being built. They write `native_assets.json` under the key the engine reads, `ios_arm64` (the tvOS engine is the iOS engine; `FML_OS_IOS` decides the key), which is bundled as `NativeAssetsManifest.json`.
 4. `NativeTvosBundle.build()` orchestrates the native side:
    - **Copy Flutter.framework** — copies the pre-built framework from `engine_artifacts/`
    - **Copy Flutter assets** — places `kernel_blob.bin` and asset bundle into `tvos/Flutter/flutter_assets/`
+   - **Stage code assets** — mirrors the installed code-asset frameworks into `tvos/Flutter/native_assets/`, which the "Embed Flutter.framework" phase embeds and signs (projects whose phase predates it get them embedded after `xcodebuild`)
    - **Generate plugin registrant stubs** — creates initial Objective-C `.h`/`.m` stubs if not present
    - **AOT snapshot** (release/profile only) — runs `gen_snapshot` to produce `App.framework`
    - **Generate Xcode configs** — writes `Generated.xcconfig`, `Debug.xcconfig`, `Release.xcconfig`

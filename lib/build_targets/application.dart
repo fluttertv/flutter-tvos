@@ -32,7 +32,7 @@ import '../tvos_engine_signing.dart';
 import '../tvos_plugins.dart';
 import '../tvos_swift_package_manager.dart';
 import '../tvos_uiscene_migration.dart';
-import 'tvos_hooks.dart';
+import 'tvos_code_assets.dart';
 
 /// Writes `.dart_tool/flutter_build/dart_plugin_registrant.dart` with tvOS-
 /// aware plugin registrations, as a proper build target.
@@ -247,28 +247,18 @@ class TvosCopyFlutterBundle extends CopyFlutterBundle {
 
   @override
   List<Target> get dependencies => const <Target>[
-    // NOTE: deliberately NOT depending on DartBuildForNative() /
-    // InstallCodeAssets(). The flutter-tvos toolchain cannot build Dart
-    // native-assets / code-assets for tvOS (flutter_tools' code-asset
-    // path is iOS/macOS-only and we don't patch it). Pulling those
-    // targets in makes the build run the build hooks of every
-    // native-assets plugin in the graph — including iOS-endorsed FFI
-    // plugins like `path_provider_foundation` that an app drags in
-    // transitively via `path_provider` — which fails with
-    // "Target native_assets required define SdkRoot" (issue #3).
+    // tvOS's own hook targets in place of upstream's BuildHooks → LinkHooks →
+    // InstallCodeAssets chain. Upstream's translate the build's target
+    // platform into the hooks protocol through a closed set with no tvOS in
+    // it, so they would tell every hook it is building for iOS; and before
+    // there was a tvOS pass they failed on `objective_c`'s hook, which an app
+    // drags in through `path_provider`, with "Target native_assets required
+    // define SdkRoot" (issue #3).
     //
-    // On tvOS those FFI Dart implementations are never used anyway:
-    // TvosDartPluginRegistrantTarget routes federated plugins to their
-    // native `*_tvos` package instead. So skipping the native-assets
-    // step is correct here, not a workaround — tvOS plugins are plain
-    // Swift built via CocoaPods, never via Dart code-assets.
-    //
-    // Data assets are not in that boat: they are built on the host by ordinary
-    // Dart — a 3D or shader package compiling its GPU bundles for the
-    // target, say. Skipping them silently shipped whatever a package's
-    // generated directory happened to hold, so run that half on its own, and
-    // run it as tvOS rather than as iOS.
-    TvosBuildHooks(),
+    // TvosInstallCodeAssets runs the hooks (TvosBuildHooks), installs the code
+    // assets of the pass that named tvOS, and writes `native_assets.json`. The
+    // data assets reach the bundle through `copyAssets` below.
+    TvosInstallCodeAssets(),
     TvosKernelSnapshot(),
   ];
 
@@ -289,11 +279,10 @@ class TvosCopyFlutterBundle extends CopyFlutterBundle {
   /// change there on a Flutter upgrade.
   @override
   Future<void> build(Environment environment) async {
-    // We skip the native-assets targets for tvOS (see `dependencies`),
-    // so `native_assets.json` is never produced. The asset copy below
-    // bundles it as `NativeAssetsManifest.json` and throws PathNotFound
-    // without it. Write the canonical empty manifest first — tvOS genuinely
-    // has no Dart native assets — so the copy succeeds.
+    // TvosInstallCodeAssets writes `native_assets.json` in a full build. The
+    // asset copy below bundles it as `NativeAssetsManifest.json` and throws
+    // PathNotFound without it, so when this target runs on its own, write the
+    // canonical empty manifest: no code assets were installed.
     final File manifest = environment.buildDir.childFile('native_assets.json');
     if (!manifest.existsSync()) {
       manifest.parent.createSync(recursive: true);
@@ -535,6 +524,55 @@ String _expandTilde(String path, Map<String, String> environment) {
   return path == '~' ? home : '$home/${path.substring(2)}';
 }
 
+/// Where in `tvos/Flutter/` the code-asset frameworks are staged for Xcode.
+const String kStagedCodeAssetsDirectoryName = 'native_assets';
+
+/// The `*.framework` directories in [directory], sorted; none if it is absent.
+@visibleForTesting
+List<String> stagedCodeAssetFrameworks(Directory directory) {
+  if (!directory.existsSync()) {
+    return const <String>[];
+  }
+  return <String>[
+    for (final FileSystemEntity entity in directory.listSync())
+      if (entity is Directory && entity.basename.endsWith('.framework')) entity.basename,
+  ]..sort();
+}
+
+/// Mirrors the installed code-asset frameworks in [source] (with their dSYMs)
+/// into [target], the directory the Xcode embed phase reads.
+///
+/// [target] is emptied first and removed when there is nothing to stage, so a
+/// library a package stopped shipping, or one left by a build for the other
+/// SDK, is never embedded.
+@visibleForTesting
+Future<void> stageCodeAssetFrameworks({
+  required Directory source,
+  required Directory target,
+}) async {
+  if (target.existsSync()) {
+    target.deleteSync(recursive: true);
+  }
+  if (stagedCodeAssetFrameworks(source).isEmpty) {
+    return;
+  }
+  target.createSync(recursive: true);
+  // rsync rather than a Dart copy: a framework is signed, and the copy has to
+  // keep its contents byte for byte and its modes as they are.
+  final ProcessResult result = await globals.processManager.run(<String>[
+    'rsync',
+    '-a',
+    '${source.path}/',
+    '${target.path}/',
+  ]);
+  if (result.exitCode != 0) {
+    throwToolExit('Failed to stage code assets into ${target.path}: ${result.stderr}');
+  }
+  globals.logger.printTrace(
+    'Staged code assets ${stagedCodeAssetFrameworks(target).join(', ')} into ${target.path}',
+  );
+}
+
 /// Orchestrates the native tvOS build via xcodebuild.
 ///
 /// Build steps:
@@ -601,6 +639,14 @@ class NativeTvosBundle extends Target {
 
     // 2. Copy flutter_assets into tvos/Flutter/
     _copyFlutterAssets(project, tvosProjectDir);
+
+    // 2b. Stage the code assets the build hooks produced (frameworks installed
+    //     by TvosInstallCodeAssets) into tvos/Flutter/native_assets/, where the
+    //     "Embed Flutter.framework" phase embeds them from.
+    await stageCodeAssetFrameworks(
+      source: environment.buildDir.childDirectory(TvosInstallCodeAssets.directoryName),
+      target: tvosProjectDir.childDirectory('Flutter').childDirectory(kStagedCodeAssetsDirectoryName),
+    );
 
     // 3. Generate GeneratedPluginRegistrant
     _generatePluginRegistrant(tvosProjectDir);
@@ -759,6 +805,10 @@ class NativeTvosBundle extends Target {
       await _embedAppFrameworkFallback(tvosProjectDir, symroot, platformSuffix);
     }
 
+    // The same, for the code-asset frameworks of a project whose embed phase
+    // predates them.
+    await _embedCodeAssetsFallback(tvosProjectDir, symroot, platformSuffix);
+
     // The engine is the one payload the app cannot start without, and an
     // unsigned copy still installs from Xcode while being rejected at App Store
     // review (ITMS-91065) — a failure that otherwise surfaces days later.
@@ -825,23 +875,7 @@ class NativeTvosBundle extends Target {
     // "0xe8008014 The executable contains an invalid signature." Reuse the
     // identity xcodebuild already used for the embedded Flutter.framework.
     if (!buildInfo.simulator) {
-      final File flutterBinary = destFrameworks
-          .childDirectory('Flutter.framework')
-          .childFile('Flutter');
-      String? identity;
-      if (flutterBinary.existsSync()) {
-        final ProcessResult displayResult = await globals.processManager.run(<String>[
-          'codesign',
-          '-d',
-          '--verbose=2',
-          flutterBinary.path,
-        ]);
-        // codesign writes its display info to stderr.
-        final info = '${displayResult.stdout}\n${displayResult.stderr}';
-        final Match? authorityMatch = RegExp(r'Authority=(.+)').firstMatch(info);
-        identity = authorityMatch?.group(1)?.trim();
-      }
-      identity ??= 'Apple Development';
+      final String identity = await _embeddedEngineSigningIdentity(destFrameworks);
       final ProcessResult signResult = await globals.processManager.run(<String>[
         'codesign',
         '--force',
@@ -859,6 +893,121 @@ class NativeTvosBundle extends Target {
       }
     }
   }
+
+  /// The identity the embedded engine in [frameworksDir] was signed with, which
+  /// is the one xcodebuild used for this app; `Apple Development` when the
+  /// engine is missing or carries none.
+  Future<String> _embeddedEngineSigningIdentity(Directory frameworksDir) async {
+    final File flutterBinary = frameworksDir
+        .childDirectory('Flutter.framework')
+        .childFile('Flutter');
+    String? identity;
+    if (flutterBinary.existsSync()) {
+      final ProcessResult displayResult = await globals.processManager.run(<String>[
+        'codesign',
+        '-d',
+        '--verbose=2',
+        flutterBinary.path,
+      ]);
+      // codesign writes its display info to stderr.
+      final info = '${displayResult.stdout}\n${displayResult.stderr}';
+      final Match? authorityMatch = RegExp(r'Authority=(.+)').firstMatch(info);
+      identity = authorityMatch?.group(1)?.trim();
+    }
+    return identity ?? 'Apple Development';
+  }
+
+  /// Embeds the staged code-asset frameworks into the built `Runner.app` for a
+  /// project whose "Embed Flutter.framework" phase predates them.
+  ///
+  /// A backward-compatibility fallback, like [_embedAppFrameworkFallback]: the
+  /// current template's phase embeds and signs them itself (and so covers
+  /// `xcodebuild archive` too), and this does nothing there. An older project
+  /// keeps building and running with its code assets through this; archiving it
+  /// straight from Xcode does not include them, which is said once per build
+  /// that has any.
+  Future<void> _embedCodeAssetsFallback(
+    Directory tvosProjectDir,
+    String symroot,
+    String platformSuffix,
+  ) async {
+    final List<String> frameworks = stagedCodeAssetFrameworks(
+      tvosProjectDir.childDirectory('Flutter').childDirectory(kStagedCodeAssetsDirectoryName),
+    );
+    if (frameworks.isEmpty) {
+      return;
+    }
+    final File pbxproj = tvosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    if (!pbxproj.existsSync() || pbxprojEmbedsCodeAssets(pbxproj.readAsStringSync())) {
+      return;
+    }
+    final Directory builtApp = globals.fs
+        .directory(symroot)
+        .childDirectory(platformSuffix)
+        .childDirectory('Runner.app');
+    if (!builtApp.existsSync()) {
+      return;
+    }
+
+    globals.logger.printWarning(
+      'Warning: this project\'s "Embed Flutter.framework" build phase predates '
+      'code assets, so ${frameworks.join(', ')} ${frameworks.length == 1 ? 'was' : 'were'} '
+      'embedded by flutter-tvos after the Xcode build. Building and running '
+      'with flutter-tvos works; archiving from Xcode would leave '
+      '${frameworks.length == 1 ? 'it' : 'them'} out, and the app would fail at '
+      'its first call into ${frameworks.length == 1 ? 'it' : 'them'}.\n'
+      'Move tvos/ aside and re-create it with "flutter-tvos create ." (an '
+      'existing tvos/ is not rewritten), or add the code-asset lines of the '
+      'current template\'s "Embed Flutter.framework" phase to yours.',
+    );
+
+    final Directory destFrameworks = builtApp.childDirectory('Frameworks');
+    destFrameworks.createSync(recursive: true);
+    final Directory staged = tvosProjectDir
+        .childDirectory('Flutter')
+        .childDirectory(kStagedCodeAssetsDirectoryName);
+    // Signed ad hoc at install, which is all a simulator or an unsigned build
+    // needs; a signed device build gets the app's identity, as the phase does.
+    final String? identity = !buildInfo.simulator && buildInfo.codesign
+        ? await _embeddedEngineSigningIdentity(destFrameworks)
+        : null;
+    for (final framework in frameworks) {
+      final ProcessResult copy = await globals.processManager.run(<String>[
+        'rsync',
+        '-a',
+        '--delete',
+        staged.childDirectory(framework).path,
+        '${destFrameworks.path}/',
+      ]);
+      if (copy.exitCode != 0) {
+        throwToolExit('Failed to embed $framework into ${builtApp.path}: ${copy.stderr}');
+      }
+      if (identity != null) {
+        final ProcessResult sign = await globals.processManager.run(<String>[
+          'codesign',
+          '--force',
+          '--sign',
+          identity,
+          '--timestamp=none',
+          destFrameworks.childDirectory(framework).path,
+        ]);
+        if (sign.exitCode != 0) {
+          throwToolExit('Failed to codesign $framework (identity="$identity"): ${sign.stderr}');
+        }
+      }
+    }
+  }
+
+  /// Whether the Runner project's "Embed Flutter.framework" phase embeds the
+  /// code assets staged under `Flutter/native_assets`.
+  ///
+  /// Keys on the staging path, which only the phase that embeds from it has
+  /// any reason to name.
+  @visibleForTesting
+  static bool pbxprojEmbedsCodeAssets(String pbxprojContents) =>
+      pbxprojContents.contains('Flutter/$kStagedCodeAssetsDirectoryName');
 
   /// Resolves code signing arguments for xcodebuild.
   ///

@@ -252,23 +252,28 @@ void main() {
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
     });
 
-    testUsingContext('keeps the data assets and drops the code assets', () async {
+    final EncodedAsset dataAsset = DataAsset(
+      package: 'some_package',
+      name: 'shaders/bundle.bin',
+      file: Uri.file('/tmp/bundle.bin'),
+    ).encode();
+    final EncodedAsset codeAsset = CodeAsset(
+      package: 'some_package',
+      name: 'native.dylib',
+      linkMode: DynamicLoadingBundled(),
+      file: Uri.file('/tmp/native.dylib'),
+    ).encode();
+
+    Map<String, Object?> written(Environment env) =>
+        json.decode(env.buildDir.childFile(LinkHooks.resultFilename).readAsStringSync())
+            as Map<String, Object?>;
+
+    testUsingContext('keeps the data assets and the code assets of the tvOS pass', () async {
       // Every other test here drives a runner that produces nothing, so none of
       // them can see what this pass does with what a hook returns. Without an
       // asset in flight, inverting the `isDataAsset` filter — which is the
       // original bug, an app shipping no generated assets — leaves the suite
       // green.
-      final EncodedAsset dataAsset = DataAsset(
-        package: 'some_package',
-        name: 'shaders/bundle.bin',
-        file: Uri.file('/tmp/bundle.bin'),
-      ).encode();
-      final EncodedAsset codeAsset = CodeAsset(
-        package: 'some_package',
-        name: 'native.dylib',
-        linkMode: DynamicLoadingBundled(),
-        file: Uri.file('/tmp/native.dylib'),
-      ).encode();
       final runner = _RecordingBuildRunner(
         assets: <EncodedAsset>[dataAsset, codeAsset],
         dependencies: <Uri>[Uri.file('/tmp/shader.glsl')],
@@ -277,24 +282,69 @@ void main() {
 
       await TvosBuildHooks(buildRunner: runner).build(env);
 
-      final written =
-          json.decode(env.buildDir.childFile(LinkHooks.resultFilename).readAsStringSync())
-              as Map<String, Object?>;
       expect(
-        written['data_assets'],
+        written(env)['data_assets'],
         hasLength(1),
         reason: 'the data asset a hook produced has to reach CopyFlutterBundle',
       );
+      final codeAssets = written(env)['code_assets']! as List<Object?>;
       expect(
-        written['code_assets'],
-        isEmpty,
-        reason: 'nothing a code-asset hook produces is installed into a tvOS app',
+        codeAssets,
+        hasLength(1),
+        reason: 'a library a hook built for tvOS has to reach TvosInstallCodeAssets',
       );
-      expect(written['dependencies'], hasLength(1));
+      expect(
+        (codeAssets.single! as Map<String, Object?>)['os'],
+        'tvos',
+        reason: 'recorded as what the hook was told; only the manifest uses the '
+            "engine's key",
+      );
+      expect(written(env)['dependencies'], hasLength(1));
     }, overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => FakeProcessManager.any(),
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    });
+
+    testUsingContext('drops the code assets of the iOS-family retry', () async {
+      // The retry tells a hook `ios` with an iPhone SDK, so what it builds is an
+      // iPhone library. Its data assets are why it exists; its code assets
+      // would not load on tvOS.
+      final runner = _RecordingBuildRunner(
+        failuresBeforeSuccess: 1,
+        assets: <EncodedAsset>[dataAsset, codeAsset],
+      );
+      final logger = BufferLogger.test();
+      final Environment env = buildEnv(logger: logger);
+
+      await TvosBuildHooks(buildRunner: runner).build(env);
+
+      expect(runner.inputs, hasLength(2), reason: 'the pass was not retried');
+      expect(written(env)['code_assets'], isEmpty);
+      expect(written(env)['data_assets'], hasLength(1));
+      expect(
+        logger.traceText,
+        contains('Discarding 1 code asset(s) from the iOS-family retry'),
+        reason: '"none existed" and "dropped" must not look the same in a bug report',
+      );
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+      FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    });
+
+    testUsingContext('drops the code assets with native assets turned off', () async {
+      final runner = _RecordingBuildRunner(assets: <EncodedAsset>[dataAsset, codeAsset]);
+      final Environment env = buildEnv();
+
+      await TvosBuildHooks(buildRunner: runner).build(env);
+
+      expect(written(env)['code_assets'], isEmpty);
+      expect(written(env)['data_assets'], hasLength(1));
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+      FeatureFlags: () => TestFeatureFlags(isDartDataAssetsEnabled: true),
     });
 
     testUsingContext('does not run the hooks when data assets are off', () async {
@@ -417,6 +467,15 @@ void main() {
       FileSystem: () => fileSystem,
       ProcessManager: () => FakeProcessManager.any(),
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    });
+  });
+
+  group('keepsCodeAssets', () {
+    testWithoutContext('keeps only a tvOS pass with native assets on', () {
+      expect(keepsCodeAssets(fromIOSFamilyRetry: false, nativeAssetsEnabled: true), isTrue);
+      expect(keepsCodeAssets(fromIOSFamilyRetry: true, nativeAssetsEnabled: true), isFalse);
+      expect(keepsCodeAssets(fromIOSFamilyRetry: false, nativeAssetsEnabled: false), isFalse);
+      expect(keepsCodeAssets(fromIOSFamilyRetry: true, nativeAssetsEnabled: false), isFalse);
     });
   });
 
