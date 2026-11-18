@@ -693,6 +693,27 @@ void main() {
     TvosCodeAssetExtension extension() =>
         TvosCodeAssetExtension(cCompiler: null)..setupLogger(logging.Logger.detached('t'));
 
+    testWithoutContext('accepts a valid tvOS hook output', () async {
+      // The forwarded checks must not reject what a correct tvOS hook writes;
+      // code_assets cannot recognize a tvOS library, which is a warning only.
+      final dir = io.Directory(base)..createSync(recursive: true);
+      final file = io.File('${dir.path}/libok.dylib')..writeAsBytesSync(<int>[0xcf, 0xfa, 0xed, 0xfe]);
+      addTearDown(file.deleteSync);
+      final List<String> errors = await extension().validateBuildOutput(
+        input('foo'),
+        output(<CodeAsset>[
+          CodeAsset(
+            package: 'foo',
+            name: 'foo.dart',
+            linkMode: DynamicLoadingBundled(),
+            file: file.uri,
+          ),
+        ]),
+      );
+      expect(errors, isEmpty);
+      expect(await extension().validateBuildInput(input('foo')), isEmpty);
+    });
+
     testWithoutContext('reports a statically linked asset', () async {
       final List<String> errors = await extension().validateBuildOutput(
         input('foo'),

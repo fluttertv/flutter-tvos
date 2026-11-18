@@ -13,8 +13,10 @@
 // `@rpath/<name>.framework/<name>`.
 
 import 'dart:convert' show json;
+import 'dart:io' show Process;
 
 import 'package:code_assets/code_assets.dart';
+import 'package:file/local.dart' as local;
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
@@ -24,6 +26,7 @@ import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/exceptions.dart';
 import 'package:flutter_tools/src/build_system/targets/native_assets.dart' show LinkHooks;
+import 'package:flutter_tools/src/ios/plist_parser.dart';
 import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/isolated/native_assets/native_assets.dart';
 import 'package:flutter_tools/src/isolated/native_assets/native_assets_manifest.dart';
@@ -31,6 +34,7 @@ import 'package:flutter_tvos/build_targets/application.dart';
 import 'package:flutter_tvos/build_targets/tvos_code_assets.dart';
 import 'package:flutter_tvos/build_targets/tvos_hooks.dart';
 import 'package:flutter_tvos/tvos_embed_phase_migration.dart';
+import 'package:process/process.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -674,21 +678,6 @@ void main() {
       FileSystem: () => fileSystem,
       ProcessManager: () => processManager,
     });
-
-    testWithoutContext('tells a current embed phase from one that predates code assets', () {
-      expect(
-        NativeTvosBundle.pbxprojEmbedsCodeAssets(
-          r'NATIVE_ASSETS_SRC=\"${PROJECT_DIR}/Flutter/native_assets\"',
-        ),
-        isTrue,
-      );
-      expect(
-        NativeTvosBundle.pbxprojEmbedsCodeAssets(
-          r'FRAMEWORK_SRC=\"${PROJECT_DIR}/Flutter/Flutter.framework\"',
-        ),
-        isFalse,
-      );
-    });
   });
 
   group('TvosEmbedPhaseMigration', () {
@@ -708,11 +697,11 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
 ''';
 
     for (final MapEntry<String, String> generated
-        in embedFlutterFrameworkScriptsBeforeCodeAssets.entries) {
+        in earlierEmbedFlutterFrameworkScripts.entries) {
       testWithoutContext('updates the phase ${generated.key} generated', () {
         final String? migrated = TvosEmbedPhaseMigration.migrateEmbedPhase(project(generated.value));
         expect(migrated, project(currentEmbedFlutterFrameworkScript, withInput: true));
-        expect(NativeTvosBundle.pbxprojEmbedsCodeAssets(migrated!), isTrue);
+        expect(pbxprojEmbedsCodeAssets(migrated!), isTrue);
         // And it is then left alone.
         expect(TvosEmbedPhaseMigration.migrateEmbedPhase(migrated), isNull);
       });
@@ -720,7 +709,7 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
 
     testWithoutContext('leaves an edited phase alone', () {
       final edited =
-          '${embedFlutterFrameworkScriptsBeforeCodeAssets['1.9.0-1.12.0']!}echo mine\\n';
+          '${earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!}echo mine\\n';
       expect(TvosEmbedPhaseMigration.migrateEmbedPhase(project(edited)), isNull);
     });
 
@@ -728,11 +717,119 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
       expect(TvosEmbedPhaseMigration.migrateEmbedPhase('// !\$*UTF8*\$!\n{}'), isNull);
     });
 
+    // Two native targets, each with its own "Embed Flutter.framework" phase,
+    // and the other target's listed first in the file. The build runs Runner.
+    String twoTargets({required String runnerScript, required String otherScript}) => '''
+		AAF50000000000000000BEEF /* Embed Flutter.framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			inputPaths = (
+				"\$(PROJECT_DIR)/Flutter/Flutter.framework",
+			);
+			name = "Embed Flutter.framework";
+			shellScript = "$otherScript";
+		};
+		AAF50000000000000000F00D /* Embed Flutter.framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			inputPaths = (
+				"\$(PROJECT_DIR)/Flutter/Flutter.framework",
+			);
+			name = "Embed Flutter.framework";
+			shellScript = "$runnerScript";
+		};
+		1111111111111111111111AA /* Other */ = {
+			isa = PBXNativeTarget;
+			buildPhases = (
+				AAF50000000000000000BEEF /* Embed Flutter.framework */,
+			);
+			name = Other;
+		};
+		97C146ED1CF9000F007C117D /* Runner */ = {
+			isa = PBXNativeTarget;
+			buildPhases = (
+				AAF50000000000000000F00D /* Embed Flutter.framework */,
+			);
+			name = Runner;
+		};
+''';
+
+    testWithoutContext('migrates every generated phase, not only the first', () {
+      final String old = earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!;
+      final String? migrated = TvosEmbedPhaseMigration.migrateEmbedPhase(
+        twoTargets(runnerScript: old, otherScript: old),
+      );
+      expect(
+        RegExp(RegExp.escape('shellScript = "$currentEmbedFlutterFrameworkScript";'))
+            .allMatches(migrated!),
+        hasLength(2),
+      );
+      expect(RegExp(RegExp.escape('Flutter/native_assets",')).allMatches(migrated), hasLength(2));
+    });
+
+    testWithoutContext("judges the Runner target's phase, not the first in the file", () {
+      final edited = '${earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!}echo mine\\n';
+      // The other target embeds code assets, the Runner target does not: a
+      // whole-file search said "embeds", so a signed build shipped without them.
+      expect(
+        pbxprojEmbedsCodeAssets(
+          twoTargets(runnerScript: edited, otherScript: currentEmbedFlutterFrameworkScript),
+        ),
+        isFalse,
+      );
+      expect(
+        pbxprojEmbedsCodeAssets(
+          twoTargets(runnerScript: currentEmbedFlutterFrameworkScript, otherScript: edited),
+        ),
+        isTrue,
+      );
+      expect(
+        runnerEmbedFlutterFrameworkScripts(
+          twoTargets(runnerScript: 'runner', otherScript: 'other'),
+        ),
+        <String>['runner'],
+      );
+    });
+
+    testWithoutContext('a phase updated by hand with the printed lines counts', () {
+      final String byHand = earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']! +
+          pbxprojEscapeScript(kCodeAssetEmbedScript);
+      expect(byHand, currentEmbedFlutterFrameworkScript);
+      expect(pbxprojEmbedsCodeAssets(project('${byHand}echo mine\\n')), isTrue);
+      expect(pbxprojEmbedsCodeAssets(project(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!)),
+          isFalse);
+      expect(pbxprojEmbedsCodeAssets('{}'), isFalse, reason: 'no phase embeds nothing');
+    });
+
+    testWithoutContext('the embed lines fail the phase when a step fails', () {
+      expect(kCodeAssetEmbedScript, contains(r': "${DEST_FRAMEWORKS:?}"'));
+      for (final String line in kCodeAssetEmbedScript.split('\n')) {
+        if (RegExp(r'^\s*(rsync|codesign|rm) ').hasMatch(line)) {
+          expect(line, endsWith('|| exit 1'), reason: line);
+        }
+      }
+    });
+
+    test('reports a project it cannot write and carries on', () async {
+      final Directory dir = const local.LocalFileSystem().systemTempDirectory.createTempSync('tvos_ro.');
+      addTearDown(() {
+        Process.runSync('chmod', <String>['-R', 'u+w', dir.path]);
+        dir.deleteSync(recursive: true);
+      });
+      final File pbxproj = dir.childFile('project.pbxproj')
+        ..writeAsStringSync(project(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!));
+      Process.runSync('chmod', <String>['a-w', pbxproj.path]);
+      final logger = BufferLogger.test();
+
+      await TvosEmbedPhaseMigration(pbxproj, logger).migrate();
+
+      expect(logger.errorText, contains('Could not update the "Embed Flutter.framework" build phase'));
+      expect(pbxproj.readAsStringSync(), isNot(contains('Flutter/native_assets')));
+    });
+
     testUsingContext('writes the project and says so', () async {
       final fs = MemoryFileSystem.test();
       final File pbxproj = fs.file('/tvos/Runner.xcodeproj/project.pbxproj')
         ..createSync(recursive: true)
-        ..writeAsStringSync(project(embedFlutterFrameworkScriptsBeforeCodeAssets['1.9.0-1.12.0']!));
+        ..writeAsStringSync(project(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!));
       final logger = BufferLogger.test();
 
       await TvosEmbedPhaseMigration(pbxproj, logger).migrate();
@@ -774,26 +871,79 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
       }
     });
 
-    testWithoutContext('removes only code-asset frameworks that are no longer staged', () {
-      final fs = MemoryFileSystem.test();
-      final Directory frameworks = fs.directory('/Runner.app/Frameworks')..createSync(recursive: true);
-      void framework(String name, String id) => frameworks
-          .childDirectory(name)
-          .childFile('Info.plist')
-        ..createSync(recursive: true)
-        ..writeAsStringSync('<key>CFBundleIdentifier</key>\n\t<string>$id</string>');
+    test('removes only code-asset frameworks that are no longer staged', () {
+      // Real files and the real plutil: a framework Xcode built — a CocoaPods
+      // plugin's under use_frameworks! — has a binary Info.plist, which a text
+      // read cannot decode.
+      const fs = local.LocalFileSystem();
+      final Directory root = fs.systemTempDirectory.createTempSync('tvos_stale.');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final Directory frameworks = root.childDirectory('Runner.app').childDirectory('Frameworks');
+      void framework(String name, String id, {bool binary = false}) {
+        final File plist = frameworks.childDirectory(name).childFile('Info.plist')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(
+            codeAssetInfoPlist(name: name, bundleIdentifier: id, minimumOSVersion: '15.0', simulator: true),
+          );
+        if (binary) {
+          expect(Process.runSync('plutil', <String>['-convert', 'binary1', plist.path]).exitCode, 0);
+          expect(() => plist.readAsStringSync(), throwsA(isA<FileSystemException>()));
+        }
+      }
       framework('Flutter.framework', 'io.flutter.flutter');
       framework('App.framework', 'io.flutter.flutter.app');
+      framework('SomePod.framework', 'org.cocoapods.SomePod', binary: true);
       framework('kept.framework', '${kCodeAssetBundleIdentifierPrefix}kept');
-      framework('gone.framework', '${kCodeAssetBundleIdentifierPrefix}gone');
+      framework('gone.framework', '${kCodeAssetBundleIdentifierPrefix}gone', binary: true);
+      frameworks.childDirectory('Garbage.framework').childFile('Info.plist')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(<int>[0xff, 0xfe, 0x00, 0x01]);
+      final parser = PlistParser(
+        fileSystem: fs,
+        processManager: const LocalProcessManager(),
+        logger: BufferLogger.test(),
+      );
 
       expect(
-        NativeTvosBundle.removeStaleCodeAssetFrameworks(frameworks, <String>{'kept.framework'}),
+        NativeTvosBundle.removeStaleCodeAssetFrameworks(frameworks, <String>{'kept.framework'}, parser),
         <String>['gone.framework'],
       );
       expect(
         frameworks.listSync().map((FileSystemEntity e) => e.basename).toSet(),
-        <String>{'Flutter.framework', 'App.framework', 'kept.framework'},
+        <String>{
+          'Flutter.framework',
+          'App.framework',
+          'SomePod.framework',
+          'kept.framework',
+          'Garbage.framework',
+        },
+      );
+
+      // An app with no code assets at all and a pod framework: what every
+      // build of a project with an edited phase now goes through.
+      expect(NativeTvosBundle.removeStaleCodeAssetFrameworks(frameworks, <String>{}, parser),
+          <String>['kept.framework']);
+      expect(frameworks.childDirectory('SomePod.framework').existsSync(), isTrue);
+    });
+
+    testWithoutContext('removes before Xcode, and embeds after it only when unsigned', () {
+      expect(
+        NativeTvosBundle.codeAssetFallbackPlan(projectEmbedsCodeAssets: true, simulator: false, codesign: true),
+        (removeStaleBeforeXcode: false, embedAfterXcode: false),
+      );
+      // Signed device: anything left in the app must go before Xcode seals it,
+      // and nothing may be added after.
+      expect(
+        NativeTvosBundle.codeAssetFallbackPlan(projectEmbedsCodeAssets: false, simulator: false, codesign: true),
+        (removeStaleBeforeXcode: true, embedAfterXcode: false),
+      );
+      expect(
+        NativeTvosBundle.codeAssetFallbackPlan(projectEmbedsCodeAssets: false, simulator: true, codesign: true),
+        (removeStaleBeforeXcode: true, embedAfterXcode: true),
+      );
+      expect(
+        NativeTvosBundle.codeAssetFallbackPlan(projectEmbedsCodeAssets: false, simulator: false, codesign: false),
+        (removeStaleBeforeXcode: true, embedAfterXcode: true),
       );
     });
   });

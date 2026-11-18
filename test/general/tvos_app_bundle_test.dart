@@ -448,7 +448,7 @@ void main() {
         // framework, and signs each with the app's identity. NativeTvosBundle
         // keys its fallback for older projects on the staging path, so the
         // phase has to name it.
-        expect(NativeTvosBundle.pbxprojEmbedsCodeAssets(script), isTrue);
+        expect(pbxprojEmbedsCodeAssets(pbxproj), isTrue);
         final int codeAssets = script.indexOf(r'${PROJECT_DIR}/Flutter/native_assets');
         expect(codeAssets, greaterThan(script.indexOf('Flutter.framework')),
             reason: 'code assets are embedded after the engine');
