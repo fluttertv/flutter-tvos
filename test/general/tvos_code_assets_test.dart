@@ -30,6 +30,7 @@ import 'package:flutter_tools/src/isolated/native_assets/native_assets_manifest.
 import 'package:flutter_tvos/build_targets/application.dart';
 import 'package:flutter_tvos/build_targets/tvos_code_assets.dart';
 import 'package:flutter_tvos/build_targets/tvos_hooks.dart';
+import 'package:flutter_tvos/tvos_embed_phase_migration.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
@@ -95,6 +96,17 @@ void main() {
       expect(parseVtoolBuildVersions(output), <MachOBuildVersion>[
         const MachOBuildVersion(platform: 'TVOS', minos: '12.0'),
       ]);
+    });
+
+    testWithoutContext('reads an old iPhone library as IOS, so it is refused', () {
+      const output = '/a.dylib:\n'
+          '      cmd LC_VERSION_MIN_IPHONEOS\n'
+          '  cmdsize 16\n'
+          '  version 9.0\n'
+          '      sdk 10.0\n';
+      final List<MachOBuildVersion> versions = parseVtoolBuildVersions(output);
+      expect(versions, <MachOBuildVersion>[const MachOBuildVersion(platform: 'IOS', minos: '9.0')]);
+      expect(tvosPlatformMismatch(versions, simulator: false), contains('built for IOS'));
     });
 
     testWithoutContext('finds nothing in output without a build version', () {
@@ -183,6 +195,75 @@ void main() {
     });
   });
 
+  group('framework names and Info.plist', () {
+    testWithoutContext('a library named like the engine or the app is refused', () {
+      for (final file in <String>['/hooks/libFlutter.dylib', '/hooks/App.dylib', '/hooks/libflutter.dylib']) {
+        expect(
+          () => checkReservedFrameworkNames(
+            tvosCodeAssetTargetLocations(<FlutterCodeAsset>[_asset('src/foo.dart', file)]),
+          ),
+          throwsToolExit(message: 'package:foo/src/foo.dart'),
+          reason: "$file would overwrite one of the app's own frameworks",
+        );
+      }
+      checkReservedFrameworkNames(
+        tvosCodeAssetTargetLocations(<FlutterCodeAsset>[_asset('src/foo.dart', '/hooks/libfoo.dylib')]),
+      );
+    });
+
+    testWithoutContext('bundle identifiers stay unique', () {
+      final Map<Uri, String> ids = codeAssetBundleIdentifiers(<Uri>[
+        Uri(path: 'foo_bar.framework/foo_bar'),
+        Uri(path: 'foo-bar.framework/foo-bar'),
+        Uri(path: 'baz.framework/baz'),
+      ]);
+      expect(ids.values, <String>[
+        'io.flutter.flutter.native-assets.foo-bar',
+        'io.flutter.flutter.native-assets.foo-bar-1',
+        'io.flutter.flutter.native-assets.baz',
+      ]);
+    });
+
+    testWithoutContext('the Info.plist declares tvOS', () {
+      final String device = codeAssetInfoPlist(
+        name: 'foo',
+        bundleIdentifier: 'io.flutter.flutter.native-assets.foo',
+        minimumOSVersion: '16.0',
+        simulator: false,
+      );
+      expect(device, contains('<key>CFBundleSupportedPlatforms</key>\n\t<array>\n\t\t<string>AppleTVOS</string>'));
+      expect(device, contains('<key>DTPlatformName</key>\n\t<string>appletvos</string>'));
+      expect(device, contains('<key>UIDeviceFamily</key>\n\t<array>\n\t\t<integer>3</integer>'));
+      expect(device, contains('<key>MinimumOSVersion</key>\n\t<string>16.0</string>'));
+      expect(device, contains('<key>CFBundlePackageType</key>\n\t<string>FMWK</string>'));
+      final String simulator = codeAssetInfoPlist(
+        name: 'foo',
+        bundleIdentifier: 'io.flutter.flutter.native-assets.foo',
+        minimumOSVersion: '16.0',
+        simulator: true,
+      );
+      expect(simulator, contains('<string>AppleTVSimulator</string>'));
+      expect(simulator, contains('<string>appletvsimulator</string>'));
+    });
+
+    testWithoutContext('compares versions by component', () {
+      expect(isVersionAbove('16.0', '15.0'), isTrue);
+      expect(isVersionAbove('15.10', '15.9'), isTrue);
+      expect(isVersionAbove('15', '15.0'), isFalse);
+      expect(isVersionAbove('14.4', '15.0'), isFalse);
+    });
+
+    testWithoutContext('reads the deployment target of the Runner project', () {
+      final fs = MemoryFileSystem.test();
+      final Directory tvos = fs.directory('/app/tvos');
+      expect(readTvosDeploymentTarget(tvos), isNull);
+      tvos.childDirectory('Runner.xcodeproj').childFile('project.pbxproj')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('\t\t\t\tTVOS_DEPLOYMENT_TARGET = 15.0;\n');
+      expect(readTvosDeploymentTarget(tvos), '15.0');
+    });
+  });
+
   group('installTvosCodeAssets', () {
     late MemoryFileSystem fileSystem;
     late FakeProcessManager processManager;
@@ -192,16 +273,87 @@ void main() {
       processManager = FakeProcessManager.empty();
     });
 
-    Future<List<File>> install({required bool simulator, BuildMode mode = BuildMode.debug}) {
+    Future<List<File>> install({
+      required bool simulator,
+      BuildMode mode = BuildMode.debug,
+      String? deploymentTarget,
+      List<FlutterCodeAsset>? assets,
+    }) {
       return installTvosCodeAssets(
-        codeAssets: <FlutterCodeAsset>[_asset('src/foo.dart', '/hooks/libfoo.dylib')],
+        codeAssets: assets ?? <FlutterCodeAsset>[_asset('src/foo.dart', '/hooks/libfoo.dylib')],
         targetDirectory: fileSystem.directory('/build/native_assets'),
         manifestFile: fileSystem.file('/build/native_assets.json'),
         buildMode: mode,
         simulator: simulator,
         fileSystem: fileSystem,
+        deploymentTarget: deploymentTarget,
       );
     }
+
+    testUsingContext('refuses a statically linked asset as a tool error', () async {
+      await expectLater(
+        install(
+          simulator: true,
+          assets: <FlutterCodeAsset>[
+            _asset('src/foo.dart', '/hooks/libfoo.a', linkMode: StaticLinking()),
+          ],
+        ),
+        throwsToolExit(message: 'statically linked code asset'),
+      );
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+    });
+
+    testUsingContext('warns when a library needs a newer tvOS than the app', () async {
+      processManager.addCommand(
+        FakeCommand(
+          command: const <String>['xcrun', 'vtool', '-show-build', '/hooks/libfoo.dylib'],
+          stdout: _vtool('/hooks/libfoo.dylib', 'TVOSSIMULATOR', minos: '17.0'),
+        ),
+      );
+      const dylib = '/build/native_assets/foo.framework/foo';
+      processManager.addCommands(const <FakeCommand>[
+        FakeCommand(
+          command: <String>['xcrun', 'lipo', '-create', '-output', dylib, '/hooks/libfoo.dylib'],
+        ),
+        FakeCommand(
+          command: <String>['xcrun', 'otool', '-D', dylib],
+          stdout: '$dylib:\n@rpath/libfoo.dylib',
+        ),
+        FakeCommand(
+          command: <String>[
+            'xcrun',
+            'install_name_tool',
+            '-id',
+            '@rpath/foo.framework/foo',
+            '-change',
+            '@rpath/libfoo.dylib',
+            '@rpath/foo.framework/foo',
+            dylib,
+          ],
+        ),
+        FakeCommand(
+          command: <String>[
+            'xcrun',
+            'codesign',
+            '--force',
+            '--sign',
+            '-',
+            '--timestamp=none',
+            '/build/native_assets/foo.framework',
+          ],
+        ),
+      ]);
+
+      await install(simulator: true, deploymentTarget: '15.0');
+
+      expect(testLogger.warningText, contains('requires tvOS 17.0'));
+      expect(testLogger.warningText, contains('deploys to tvOS 15.0'));
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => processManager,
+    });
 
     testUsingContext('installs a framework the way iOS does, and the manifest', () async {
       // A library from an earlier build that is no longer produced.
@@ -535,6 +687,113 @@ void main() {
           r'FRAMEWORK_SRC=\"${PROJECT_DIR}/Flutter/Flutter.framework\"',
         ),
         isFalse,
+      );
+    });
+  });
+
+  group('TvosEmbedPhaseMigration', () {
+    String project(String script, {bool withInput = false}) => '''
+		AAF50000000000000000F00D /* Embed Flutter.framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"\$(PROJECT_DIR)/Flutter/Flutter.framework",
+${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
+			name = "Embed Flutter.framework";
+			shellScript = "$script";
+		};
+''';
+
+    for (final MapEntry<String, String> generated
+        in embedFlutterFrameworkScriptsBeforeCodeAssets.entries) {
+      testWithoutContext('updates the phase ${generated.key} generated', () {
+        final String? migrated = TvosEmbedPhaseMigration.migrateEmbedPhase(project(generated.value));
+        expect(migrated, project(currentEmbedFlutterFrameworkScript, withInput: true));
+        expect(NativeTvosBundle.pbxprojEmbedsCodeAssets(migrated!), isTrue);
+        // And it is then left alone.
+        expect(TvosEmbedPhaseMigration.migrateEmbedPhase(migrated), isNull);
+      });
+    }
+
+    testWithoutContext('leaves an edited phase alone', () {
+      final edited =
+          '${embedFlutterFrameworkScriptsBeforeCodeAssets['1.9.0-1.12.0']!}echo mine\\n';
+      expect(TvosEmbedPhaseMigration.migrateEmbedPhase(project(edited)), isNull);
+    });
+
+    testWithoutContext('leaves a project without the phase alone', () {
+      expect(TvosEmbedPhaseMigration.migrateEmbedPhase('// !\$*UTF8*\$!\n{}'), isNull);
+    });
+
+    testUsingContext('writes the project and says so', () async {
+      final fs = MemoryFileSystem.test();
+      final File pbxproj = fs.file('/tvos/Runner.xcodeproj/project.pbxproj')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(project(embedFlutterFrameworkScriptsBeforeCodeAssets['1.9.0-1.12.0']!));
+      final logger = BufferLogger.test();
+
+      await TvosEmbedPhaseMigration(pbxproj, logger).migrate();
+
+      expect(pbxproj.readAsStringSync(), contains('Flutter/native_assets'));
+      expect(logger.statusText, contains('Updated the "Embed Flutter.framework" build phase'));
+    });
+  });
+
+  group('older projects', () {
+    testWithoutContext('a signed device build stops when the phase cannot embed', () {
+      final String? blocker = NativeTvosBundle.codeAssetsEmbedBlocker(
+        projectEmbedsCodeAssets: false,
+        stagedFrameworks: <String>['foo.framework'],
+        simulator: false,
+        codesign: true,
+      );
+      expect(blocker, contains('foo.framework'));
+      expect(blocker, contains('refuse to install'));
+      expect(blocker, contains(kCodeAssetEmbedScript), reason: 'it has to name the lines to add');
+    });
+
+    testWithoutContext('anything else builds', () {
+      for (final (bool embeds, List<String> staged, bool simulator, bool codesign) in <(bool, List<String>, bool, bool)>[
+        (true, <String>['foo.framework'], false, true),
+        (false, <String>[], false, true),
+        (false, <String>['foo.framework'], true, true),
+        (false, <String>['foo.framework'], false, false),
+      ]) {
+        expect(
+          NativeTvosBundle.codeAssetsEmbedBlocker(
+            projectEmbedsCodeAssets: embeds,
+            stagedFrameworks: staged,
+            simulator: simulator,
+            codesign: codesign,
+          ),
+          isNull,
+        );
+      }
+    });
+
+    testWithoutContext('removes only code-asset frameworks that are no longer staged', () {
+      final fs = MemoryFileSystem.test();
+      final Directory frameworks = fs.directory('/Runner.app/Frameworks')..createSync(recursive: true);
+      void framework(String name, String id) => frameworks
+          .childDirectory(name)
+          .childFile('Info.plist')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('<key>CFBundleIdentifier</key>\n\t<string>$id</string>');
+      framework('Flutter.framework', 'io.flutter.flutter');
+      framework('App.framework', 'io.flutter.flutter.app');
+      framework('kept.framework', '${kCodeAssetBundleIdentifierPrefix}kept');
+      framework('gone.framework', '${kCodeAssetBundleIdentifierPrefix}gone');
+
+      expect(
+        NativeTvosBundle.removeStaleCodeAssetFrameworks(frameworks, <String>{'kept.framework'}),
+        <String>['gone.framework'],
+      );
+      expect(
+        frameworks.listSync().map((FileSystemEntity e) => e.basename).toSet(),
+        <String>{'Flutter.framework', 'App.framework', 'kept.framework'},
       );
     });
   });

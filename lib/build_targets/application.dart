@@ -28,6 +28,7 @@ import 'package:package_config/package_config.dart';
 
 import '../tvos_artifacts.dart';
 import '../tvos_build_info.dart';
+import '../tvos_embed_phase_migration.dart';
 import '../tvos_engine_signing.dart';
 import '../tvos_plugins.dart';
 import '../tvos_swift_package_manager.dart';
@@ -648,6 +649,26 @@ class NativeTvosBundle extends Target {
       target: tvosProjectDir.childDirectory('Flutter').childDirectory(kStagedCodeAssetsDirectoryName),
     );
 
+    // 2c. Bring a generated "Embed Flutter.framework" phase that predates code
+    //     assets up to date, then make sure this build can embed what it
+    //     staged (see [codeAssetsEmbedBlocker]).
+    final File pbxproj = tvosProjectDir
+        .childDirectory('Runner.xcodeproj')
+        .childFile('project.pbxproj');
+    await TvosEmbedPhaseMigration(pbxproj, globals.logger).migrate();
+    final String? blocker = codeAssetsEmbedBlocker(
+      projectEmbedsCodeAssets:
+          !pbxproj.existsSync() || pbxprojEmbedsCodeAssets(pbxproj.readAsStringSync()),
+      stagedFrameworks: stagedCodeAssetFrameworks(
+        tvosProjectDir.childDirectory('Flutter').childDirectory(kStagedCodeAssetsDirectoryName),
+      ),
+      simulator: buildInfo.simulator,
+      codesign: buildInfo.codesign,
+    );
+    if (blocker != null) {
+      throwToolExit(blocker);
+    }
+
     // 3. Generate GeneratedPluginRegistrant
     _generatePluginRegistrant(tvosProjectDir);
 
@@ -806,7 +827,7 @@ class NativeTvosBundle extends Target {
     }
 
     // The same, for the code-asset frameworks of a project whose embed phase
-    // predates them.
+    // does not embed them (simulator and unsigned builds only).
     await _embedCodeAssetsFallback(tvosProjectDir, symroot, platformSuffix);
 
     // The engine is the one payload the app cannot start without, and an
@@ -918,23 +939,21 @@ class NativeTvosBundle extends Target {
   }
 
   /// Embeds the staged code-asset frameworks into the built `Runner.app` for a
-  /// project whose "Embed Flutter.framework" phase predates them.
+  /// project whose "Embed Flutter.framework" phase does not embed them — one
+  /// [TvosEmbedPhaseMigration] could not update because it was edited, or one
+  /// from before that phase existed.
   ///
-  /// A backward-compatibility fallback, like [_embedAppFrameworkFallback]: the
-  /// current template's phase embeds and signs them itself (and so covers
-  /// `xcodebuild archive` too), and this does nothing there. An older project
-  /// keeps building and running with its code assets through this; archiving it
-  /// straight from Xcode does not include them, which is said once per build
-  /// that has any.
+  /// Only for a simulator or an unsigned build. Adding a framework after Xcode
+  /// has signed the app breaks the app's seal, and a device refuses to install
+  /// it; a signed device build of such a project stops before Xcode runs
+  /// instead (see [codeAssetsEmbedBlocker]). Removes the code-asset frameworks
+  /// an earlier build embedded that are no longer staged, as the phase does.
   Future<void> _embedCodeAssetsFallback(
     Directory tvosProjectDir,
     String symroot,
     String platformSuffix,
   ) async {
-    final List<String> frameworks = stagedCodeAssetFrameworks(
-      tvosProjectDir.childDirectory('Flutter').childDirectory(kStagedCodeAssetsDirectoryName),
-    );
-    if (frameworks.isEmpty) {
+    if (!buildInfo.simulator && buildInfo.codesign) {
       return;
     }
     final File pbxproj = tvosProjectDir
@@ -950,30 +969,30 @@ class NativeTvosBundle extends Target {
     if (!builtApp.existsSync()) {
       return;
     }
-
-    globals.logger.printWarning(
-      'Warning: this project\'s "Embed Flutter.framework" build phase predates '
-      'code assets, so ${frameworks.join(', ')} ${frameworks.length == 1 ? 'was' : 'were'} '
-      'embedded by flutter-tvos after the Xcode build. Building and running '
-      'with flutter-tvos works; archiving from Xcode would leave '
-      '${frameworks.length == 1 ? 'it' : 'them'} out, and the app would fail at '
-      'its first call into ${frameworks.length == 1 ? 'it' : 'them'}.\n'
-      'Move tvos/ aside and re-create it with "flutter-tvos create ." (an '
-      'existing tvos/ is not rewritten), or add the code-asset lines of the '
-      'current template\'s "Embed Flutter.framework" phase to yours.',
-    );
-
-    final Directory destFrameworks = builtApp.childDirectory('Frameworks');
-    destFrameworks.createSync(recursive: true);
     final Directory staged = tvosProjectDir
         .childDirectory('Flutter')
         .childDirectory(kStagedCodeAssetsDirectoryName);
-    // Signed ad hoc at install, which is all a simulator or an unsigned build
-    // needs; a signed device build gets the app's identity, as the phase does.
-    final String? identity = !buildInfo.simulator && buildInfo.codesign
-        ? await _embeddedEngineSigningIdentity(destFrameworks)
-        : null;
+    final List<String> frameworks = stagedCodeAssetFrameworks(staged);
+    final Directory destFrameworks = builtApp.childDirectory('Frameworks');
+    removeStaleCodeAssetFrameworks(destFrameworks, frameworks.toSet());
+    if (frameworks.isEmpty) {
+      return;
+    }
+
+    globals.logger.printWarning(
+      'Warning: this project\'s "Embed Flutter.framework" build phase does not '
+      'embed code assets, so ${frameworks.join(', ')} '
+      '${frameworks.length == 1 ? 'was' : 'were'} embedded by flutter-tvos '
+      'after the Xcode build. That works for this simulator or unsigned build; '
+      'a signed device build, or an archive from Xcode, needs the phase to do '
+      'it.\n'
+      '${_codeAssetPhaseInstructions()}',
+    );
+
+    destFrameworks.createSync(recursive: true);
     for (final framework in frameworks) {
+      // Signed ad hoc at install, which is all a simulator or an unsigned
+      // build needs.
       final ProcessResult copy = await globals.processManager.run(<String>[
         'rsync',
         '-a',
@@ -984,21 +1003,76 @@ class NativeTvosBundle extends Target {
       if (copy.exitCode != 0) {
         throwToolExit('Failed to embed $framework into ${builtApp.path}: ${copy.stderr}');
       }
-      if (identity != null) {
-        final ProcessResult sign = await globals.processManager.run(<String>[
-          'codesign',
-          '--force',
-          '--sign',
-          identity,
-          '--timestamp=none',
-          destFrameworks.childDirectory(framework).path,
-        ]);
-        if (sign.exitCode != 0) {
-          throwToolExit('Failed to codesign $framework (identity="$identity"): ${sign.stderr}');
-        }
-      }
     }
   }
+
+  /// Removes from [frameworksDir] the code-asset frameworks (recognized by
+  /// their bundle identifier) that are not in [staged], and returns their
+  /// names. The engine, App.framework and anything else are left alone.
+  @visibleForTesting
+  static List<String> removeStaleCodeAssetFrameworks(
+    Directory frameworksDir,
+    Set<String> staged,
+  ) {
+    if (!frameworksDir.existsSync()) {
+      return const <String>[];
+    }
+    final removed = <String>[];
+    for (final FileSystemEntity entity in frameworksDir.listSync()) {
+      if (entity is! Directory ||
+          !entity.basename.endsWith('.framework') ||
+          staged.contains(entity.basename)) {
+        continue;
+      }
+      final File plist = entity.childFile('Info.plist');
+      if (!plist.existsSync()) {
+        continue;
+      }
+      final String? id = RegExp(r'<key>CFBundleIdentifier</key>\s*<string>([^<]*)</string>')
+          .firstMatch(plist.readAsStringSync())
+          ?.group(1);
+      if (id != null && id.startsWith(kCodeAssetBundleIdentifierPrefix)) {
+        entity.deleteSync(recursive: true);
+        removed.add(entity.basename);
+      }
+    }
+    return removed;
+  }
+
+  /// Why this build cannot embed its code assets, or null when it can.
+  ///
+  /// A signed device build of a project whose "Embed Flutter.framework" phase
+  /// does not embed code assets has no correct way to get them into the app:
+  /// adding them after Xcode signed it breaks the app's seal, so the device
+  /// would refuse to install it. Stopping before Xcode runs, with the lines to
+  /// add, is better than an app that cannot be installed or that fails at its
+  /// first `@Native` call.
+  @visibleForTesting
+  static String? codeAssetsEmbedBlocker({
+    required bool projectEmbedsCodeAssets,
+    required List<String> stagedFrameworks,
+    required bool simulator,
+    required bool codesign,
+  }) {
+    if (projectEmbedsCodeAssets || stagedFrameworks.isEmpty || simulator || !codesign) {
+      return null;
+    }
+    return 'This app has code assets (${stagedFrameworks.join(', ')}), native '
+        'libraries its packages build through Dart build hooks, but the '
+        '"Embed Flutter.framework" build phase of tvos/Runner.xcodeproj does not '
+        'embed them, and flutter-tvos did not update it because it differs from '
+        'every phase an earlier flutter-tvos generated.\n'
+        'Embedding them after Xcode signs the app would break its signature, '
+        'and the Apple TV would refuse to install it.\n'
+        '${_codeAssetPhaseInstructions()}';
+  }
+
+  static String _codeAssetPhaseInstructions() =>
+      'Either move tvos/ aside and re-create it with "flutter-tvos create ." '
+      '(an existing tvos/ is not rewritten), or add these lines to the end of '
+      'the "Embed Flutter.framework" Run Script phase of the Runner target, after '
+      'the lines that embed Flutter.framework (they use its DEST_FRAMEWORKS):\n'
+      '$kCodeAssetEmbedScript';
 
   /// Whether the Runner project's "Embed Flutter.framework" phase embeds the
   /// code assets staged under `Flutter/native_assets`.
@@ -1700,19 +1774,8 @@ class NativeTvosBundle extends Target {
   /// generated umbrella's platform floor matches the app (SwiftPM rejects a
   /// dependency whose deployment target exceeds the consuming project's).
   /// Falls back to the package default when not found.
-  String _resolveTvosDeploymentTarget(Directory tvosProjectDir) {
-    final File pbxproj = tvosProjectDir
-        .childDirectory('Runner.xcodeproj')
-        .childFile('project.pbxproj');
-    if (pbxproj.existsSync()) {
-      final Match? match = RegExp(r'TVOS_DEPLOYMENT_TARGET\s*=\s*([\d.]+)')
-          .firstMatch(pbxproj.readAsStringSync());
-      if (match != null) {
-        return match.group(1)!;
-      }
-    }
-    return TvosSwiftPackageManager.kDefaultDeploymentTarget;
-  }
+  String _resolveTvosDeploymentTarget(Directory tvosProjectDir) =>
+      readTvosDeploymentTarget(tvosProjectDir) ?? TvosSwiftPackageManager.kDefaultDeploymentTarget;
 
   /// Assembles flutter_assets from the build output (kernel_blob.bin, fonts,
   /// etc.) into tvos/Flutter/flutter_assets/ so the "Copy flutter_assets"
@@ -2020,7 +2083,7 @@ class NativeTvosBundle extends Target {
   /// Minimum tvOS version the embedded App.framework declares. Must match the
   /// `TVOS_DEPLOYMENT_TARGET` baked into the Xcode project template, otherwise
   /// App Store validation rejects the binary for a deployment-target mismatch.
-  static const String _kTvosMinimumOSVersion = '15.0';
+  static const String kTvosMinimumOSVersion = '15.0';
 
   /// Deployment-target flag for the AOT clang steps (assemble + link).
   ///
@@ -2030,8 +2093,8 @@ class NativeTvosBundle extends Target {
   /// binary's `minos`.
   static String tvosVersionMinFlag(String sdkName) =>
       sdkName.contains('simulator')
-          ? '-mtvos-simulator-version-min=$_kTvosMinimumOSVersion'
-          : '-mtvos-version-min=$_kTvosMinimumOSVersion';
+          ? '-mtvos-simulator-version-min=$kTvosMinimumOSVersion'
+          : '-mtvos-version-min=$kTvosMinimumOSVersion';
 
   /// The full `xcodebuild` argv for the native build.
   ///
@@ -2193,7 +2256,7 @@ class NativeTvosBundle extends Target {
         '\t<key>DTPlatformName</key>\n'
         '\t<string>appletvos</string>\n'
         '\t<key>MinimumOSVersion</key>\n'
-        '\t<string>$_kTvosMinimumOSVersion</string>\n'
+        '\t<string>$kTvosMinimumOSVersion</string>\n'
         '\t<key>UIDeviceFamily</key>\n'
         '\t<array>\n'
         '\t\t<integer>3</integer>\n'

@@ -15,6 +15,8 @@ import 'package:file/file.dart';
 import 'package:file/local.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tvos/build_targets/application.dart';
+import 'package:flutter_tvos/build_targets/tvos_code_assets.dart' show codeAssetInfoPlist;
+import 'package:flutter_tvos/tvos_embed_phase_migration.dart';
 
 import '../src/common.dart';
 
@@ -455,6 +457,59 @@ void main() {
         expect(codeAssetPart, contains(r'\"${DEST_FRAMEWORKS}/\"'));
         expect(codeAssetPart, contains(r'codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\"'));
         expect(codeAssetPart, contains(r'CODE_SIGNING_REQUIRED'));
+
+        // The phase is exactly what TvosEmbedPhaseMigration writes into an
+        // older project, so a migrated project and a new one embed alike.
+        expect(script, currentEmbedFlutterFrameworkScript);
+        expect(pbxproj, contains(r'"$(PROJECT_DIR)/Flutter/native_assets",'));
+      });
+
+      test('$relativePath embeds staged code assets and drops stale ones', () {
+        final String escaped = shellScriptOf(fs.file(relativePath).readAsStringSync(), 'Embed Flutter.framework');
+        final source = StringBuffer();
+        for (var i = 0; i < escaped.length; i++) {
+          if (escaped[i] != r'\') {
+            source.write(escaped[i]);
+            continue;
+          }
+          final String escapee = escaped[++i];
+          source.write(escapee == 'n' ? '\n' : escapee);
+        }
+        final Directory root = fs.systemTempDirectory.createTempSync('flutter_tvos_embed.');
+        addTearDown(() => root.deleteSync(recursive: true));
+        final Directory project = root.childDirectory('tvos');
+        final Directory app = root.childDirectory('Runner.app');
+        final Directory frameworks = app.childDirectory('Frameworks');
+        void framework(Directory parent, String name, String id) {
+          final Directory dir = parent.childDirectory('$name.framework')..createSync(recursive: true);
+          dir.childFile(name).writeAsStringSync('binary');
+          dir.childFile('Info.plist').writeAsStringSync(
+            codeAssetInfoPlist(name: name, bundleIdentifier: id, minimumOSVersion: '15.0', simulator: true),
+          );
+        }
+
+        framework(project.childDirectory('Flutter'), 'Flutter', 'io.flutter.flutter');
+        framework(project.childDirectory('Flutter').childDirectory('native_assets'), 'kept',
+            '${kCodeAssetBundleIdentifierPrefix}kept');
+        // What earlier builds embedded: a library a package no longer ships,
+        // and the app's own Dart code, which must survive.
+        framework(frameworks, 'gone', '${kCodeAssetBundleIdentifierPrefix}gone');
+        framework(frameworks, 'App', 'io.flutter.flutter.app');
+        final File script = root.childFile('embed.sh')..writeAsStringSync(source.toString());
+
+        final ProcessResult result = Process.runSync('/bin/sh', <String>[script.path],
+            environment: <String, String>{
+          'PROJECT_DIR': project.path,
+          'CODESIGNING_FOLDER_PATH': app.path,
+          'BUILT_PRODUCTS_DIR': root.path,
+          'CODE_SIGNING_REQUIRED': 'NO',
+        });
+
+        expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+        expect(
+          frameworks.listSync().map((FileSystemEntity e) => e.basename).toSet(),
+          <String>{'Flutter.framework', 'App.framework', 'kept.framework'},
+        );
       });
     }
 

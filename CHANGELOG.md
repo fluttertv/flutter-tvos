@@ -34,11 +34,26 @@ All notable changes to flutter-tvos will be documented here.
   such as a user-define in the app's `pubspec.yaml`. `native_toolchain_c`
   cannot build for tvOS; see `doc/develop-plugin.md`.
 
-  New projects embed the libraries in the "Embed Flutter.framework" build
-  phase, which also covers archiving from Xcode. Projects created with 1.12.0
-  or earlier keep working: `build` and `run` embed the libraries after the
-  Xcode build and warn that an Xcode archive would leave them out until the
-  phase is updated.
+  Native assets have to stay enabled too (they are by default); with them
+  off, or when a hook only builds through the iOS-family retry, the build warns
+  that code assets were discarded. Turning either flag on or off takes effect
+  on the next build, without `flutter-tvos clean`, and a library the app no
+  longer has is removed from it.
+
+  The "Embed Flutter.framework" build phase embeds and signs the libraries,
+  which also covers archiving from Xcode. A project created with 1.9.0
+  through 1.12.0 whose phase is unchanged has the phase updated in
+  `tvos/Runner.xcodeproj/project.pbxproj` on its next build, and the build
+  says so. A phase that was edited is left alone: simulator and
+  `--no-codesign` builds then embed the libraries after the Xcode build, and
+  a signed device build stops, printing the lines to add, because embedding
+  after Xcode has signed the app would make it uninstallable.
+
+  Each library's framework declares tvOS in its `Info.plist`
+  (`CFBundleSupportedPlatforms`, `DTPlatformName`, `UIDeviceFamily`), takes
+  `MinimumOSVersion` from the library, with a warning when that is above the
+  app's deployment target, and a library that would be named
+  `Flutter.framework` or `App.framework` stops the build.
 
 ## [1.12.0] - 2026-11-14
 

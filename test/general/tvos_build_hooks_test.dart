@@ -24,6 +24,7 @@ import 'package:data_assets/data_assets.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/asset.dart' show FlutterHookResult;
+import 'package:flutter_tools/src/base/context.dart' show context;
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
@@ -34,9 +35,10 @@ import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/isolated/native_assets/native_assets.dart';
 import 'package:flutter_tools/src/isolated/native_assets/targets.dart';
 import 'package:flutter_tools/src/macos/xcode.dart' show Xcode;
+import 'package:flutter_tvos/build_targets/tvos_code_assets.dart' show TvosInstallCodeAssets;
 import 'package:flutter_tvos/build_targets/tvos_hooks.dart';
 import 'package:hooks/hooks.dart';
-import 'package:hooks_runner/hooks_runner.dart';
+import 'package:hooks_runner/hooks_runner.dart' hide Target;
 import 'package:logging/logging.dart' as logging;
 import 'package:test/fake.dart';
 
@@ -323,10 +325,12 @@ void main() {
       expect(written(env)['code_assets'], isEmpty);
       expect(written(env)['data_assets'], hasLength(1));
       expect(
-        logger.traceText,
+        logger.warningText,
         contains('Discarding 1 code asset(s) from the iOS-family retry'),
-        reason: '"none existed" and "dropped" must not look the same in a bug report',
+        reason: 'a library the app may call is missing; that is not a trace-level '
+            'fact, and "none existed" and "dropped" must not look the same',
       );
+      expect(logger.warningText, contains('package:some_package/native.dylib'));
     }, overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => FakeProcessManager.any(),
@@ -335,12 +339,14 @@ void main() {
 
     testUsingContext('drops the code assets with native assets turned off', () async {
       final runner = _RecordingBuildRunner(assets: <EncodedAsset>[dataAsset, codeAsset]);
-      final Environment env = buildEnv();
+      final logger = BufferLogger.test();
+      final Environment env = buildEnv(logger: logger);
 
       await TvosBuildHooks(buildRunner: runner).build(env);
 
       expect(written(env)['code_assets'], isEmpty);
       expect(written(env)['data_assets'], hasLength(1));
+      expect(logger.warningText, contains('--enable-native-assets'));
     }, overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => FakeProcessManager.any(),
@@ -363,6 +369,12 @@ void main() {
         logger.warningText,
         contains('flutter config --enable-dart-data-assets'),
         reason: 'the warning has to name the one command that fixes it',
+      );
+      expect(
+        logger.warningText,
+        contains('native library'),
+        reason: 'a package shipping a dart:ffi library loses it too, and that '
+            'fails at runtime rather than rendering wrong',
       );
     }, overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
@@ -470,6 +482,153 @@ void main() {
     });
   });
 
+  group('re-runs when what the result depends on changes', () {
+    // The build system skips a target whose input files and buildKey are
+    // unchanged. The hooks' result also depends on two feature flags, and on
+    // what this CLI does with it, neither of which is a file: before the
+    // buildKey, turning a flag on or off, or upgrading from a CLI that kept no
+    // code assets, left the old result in place until `clean`.
+    late FlutterBuildSystem buildSystem;
+
+    setUp(() {
+      buildSystem = FlutterBuildSystem(
+        fileSystem: fileSystem,
+        platform: FakePlatform(),
+        logger: BufferLogger.test(),
+      );
+    });
+
+    final EncodedAsset processAsset = CodeAsset(
+      package: 'some_package',
+      name: 'in_process.dart',
+      linkMode: LookupInProcess(),
+    ).encode();
+
+    Future<void> buildWith(
+      Target target,
+      Environment env, {
+      required bool dataAssets,
+      bool nativeAssets = true,
+    }) async {
+      await context.run<void>(
+        overrides: <Type, Generator>{
+          FeatureFlags: () => TestFeatureFlags(
+            isDartDataAssetsEnabled: dataAssets,
+            isNativeAssetsEnabled: nativeAssets,
+          ),
+        },
+        body: () async {
+          expect((await buildSystem.build(target, env)).success, isTrue);
+        },
+      );
+    }
+
+    Map<String, Object?> manifest(Environment env) =>
+        json.decode(env.buildDir.childFile('native_assets.json').readAsStringSync())
+            as Map<String, Object?>;
+
+    testUsingContext('turning data assets on picks the hooks up without clean', () async {
+      final runner = _RecordingBuildRunner(assets: <EncodedAsset>[processAsset]);
+      final Environment env = buildEnv();
+      final target = TvosInstallCodeAssets(hooks: TvosBuildHooks(buildRunner: runner));
+
+      await buildWith(target, env, dataAssets: false);
+      expect(runner.inputs, isEmpty);
+      expect(manifest(env)['native-assets'], isEmpty);
+
+      await buildWith(target, env, dataAssets: true);
+      expect(runner.inputs, isNotEmpty, reason: 'the hooks did not run after the flag went on');
+      expect(
+        (manifest(env)['native-assets']! as Map<String, Object?>)['ios_arm64'],
+        contains('package:some_package/in_process.dart'),
+      );
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+    });
+
+    testUsingContext('turning data assets off removes what was installed', () async {
+      final runner = _RecordingBuildRunner(assets: <EncodedAsset>[processAsset]);
+      final Environment env = buildEnv();
+      final target = TvosInstallCodeAssets(hooks: TvosBuildHooks(buildRunner: runner));
+
+      await buildWith(target, env, dataAssets: true);
+      expect(manifest(env)['native-assets'], isNotEmpty);
+      // What an earlier build with a bundled library left installed.
+      final Directory framework = env.buildDir
+          .childDirectory(TvosInstallCodeAssets.directoryName)
+          .childDirectory('foo.framework')
+        ..createSync(recursive: true);
+
+      await buildWith(target, env, dataAssets: false);
+      expect(manifest(env)['native-assets'], isEmpty);
+      expect(
+        framework.existsSync(),
+        isFalse,
+        reason: 'NativeTvosBundle stages from here, so it must be empty too',
+      );
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+    });
+
+    testUsingContext('turning native assets off drops the code assets', () async {
+      final runner = _RecordingBuildRunner(assets: <EncodedAsset>[processAsset]);
+      final Environment env = buildEnv();
+      final target = TvosInstallCodeAssets(hooks: TvosBuildHooks(buildRunner: runner));
+
+      await buildWith(target, env, dataAssets: true);
+      expect(manifest(env)['native-assets'], isNotEmpty);
+
+      await buildWith(target, env, dataAssets: true, nativeAssets: false);
+      expect(manifest(env)['native-assets'], isEmpty);
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+    });
+
+    testUsingContext('a result written by an earlier CLI is not trusted', () async {
+      final runner = _RecordingBuildRunner(assets: <EncodedAsset>[processAsset]);
+      final Environment env = buildEnv();
+      final target = TvosInstallCodeAssets(hooks: TvosBuildHooks(buildRunner: runner));
+      await buildWith(target, env, dataAssets: true);
+      final int runs = runner.inputs.length;
+
+      // What 1.12.0 left behind: the same result with no code assets, and
+      // stamps that carry no buildKey.
+      final File result = env.buildDir.childFile(LinkHooks.resultFilename);
+      final old = json.decode(result.readAsStringSync()) as Map<String, Object?>;
+      result.writeAsStringSync(json.encode(<String, Object?>{...old, 'code_assets': <Object?>[]}));
+      for (final name in <String>['tvos_build_hooks', 'tvos_install_code_assets']) {
+        final File stamp = env.buildDir.childFile('$name.stamp');
+        final values = json.decode(stamp.readAsStringSync()) as Map<String, Object?>;
+        expect(values, contains('buildKey'));
+        values.remove('buildKey');
+        stamp.writeAsStringSync(json.encode(values));
+      }
+
+      await buildWith(target, env, dataAssets: true);
+      expect(runner.inputs.length, greaterThan(runs), reason: 'the old result was reused');
+      expect(manifest(env)['native-assets'], isNotEmpty);
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+    });
+
+    testWithoutContext('the key names the schema and both flags', () {
+      final keys = <String>{
+        for (final data in <bool>[true, false])
+          for (final native in <bool>[true, false])
+            tvosHooksBuildKey(schema: 's', dartDataAssets: data, nativeAssets: native),
+      };
+      expect(keys, hasLength(4));
+      expect(
+        tvosHooksBuildKey(schema: 'a', dartDataAssets: true, nativeAssets: true),
+        isNot(tvosHooksBuildKey(schema: 'b', dartDataAssets: true, nativeAssets: true)),
+      );
+    });
+  });
+
   group('keepsCodeAssets', () {
     testWithoutContext('keeps only a tvOS pass with native assets on', () {
       expect(keepsCodeAssets(fromIOSFamilyRetry: false, nativeAssetsEnabled: true), isTrue);
@@ -486,12 +645,128 @@ void main() {
     // the same one.
     testWithoutContext("passes the runner's logger on to the wrapped extension", () {
       final extension = TvosCodeAssetExtension(cCompiler: null);
-      final logger = logging.Logger('tvos_hooks_test');
+      final logger = logging.Logger.detached('tvos_hooks_test')..level = logging.Level.ALL;
+      final records = <logging.LogRecord>[];
+      logger.onRecord.listen(records.add);
 
       extension.setupLogger(logger);
+      extension.codeAssets.logger.warning('a real warning');
+      extension.codeAssets.logger.warning(
+        'Could not validate code asset "x" file "y": No registered validator '
+        'recognized the file and target. If this is a valid native library, ...',
+      );
 
       expect(extension.logger, same(logger));
-      expect(extension.codeAssets.logger, same(logger));
+      expect(records.map((logging.LogRecord r) => r.level), <logging.Level>[
+        logging.Level.WARNING,
+        // Every tvOS library gets this one; it is not a defect in the package.
+        logging.Level.FINE,
+      ]);
+      expect(records.first.message, 'a real warning');
+    });
+
+    // The protocol's own checks, forwarded. Before, the wrapper forwarded only
+    // the setup calls, so none of these were made, and hooks_runner never
+    // learned which files a hook emitted.
+    final base = '${io.Directory.systemTemp.resolveSymbolicLinksSync()}/tvos_validation_test';
+
+    BuildInput input(String package) {
+      final builder = BuildInputBuilder()
+        ..setupShared(
+          packageRoot: Uri.directory('$base/$package'),
+          packageName: package,
+          outputDirectoryShared: Uri.directory('$base/shared'),
+          outputFile: Uri.file('$base/$package/output.json'),
+        )
+        ..setupBuildInput()
+        ..config.setupBuild(linkingEnabled: false);
+      TvosCodeAssetExtension(cCompiler: null).setupBuildInput(builder);
+      return BuildInput(builder.json);
+    }
+
+    BuildOutput output(List<CodeAsset> assets) {
+      final builder = BuildOutputBuilder();
+      assets.forEach(builder.assets.code.add);
+      return BuildOutput(builder.json);
+    }
+
+    TvosCodeAssetExtension extension() =>
+        TvosCodeAssetExtension(cCompiler: null)..setupLogger(logging.Logger.detached('t'));
+
+    testWithoutContext('reports a statically linked asset', () async {
+      final List<String> errors = await extension().validateBuildOutput(
+        input('foo'),
+        output(<CodeAsset>[
+          CodeAsset(
+            package: 'foo',
+            name: 'foo.dart',
+            linkMode: StaticLinking(),
+            file: Uri.file('$base/libfoo.a'),
+          ),
+        ]),
+      );
+      expect(errors, contains(contains('link mode')));
+    });
+
+    testWithoutContext('reports a library the hook did not write', () async {
+      final List<String> errors = await extension().validateBuildOutput(
+        input('foo'),
+        output(<CodeAsset>[
+          CodeAsset(
+            package: 'foo',
+            name: 'foo.dart',
+            linkMode: DynamicLoadingBundled(),
+            file: Uri.file('$base/missing/libfoo.dylib'),
+          ),
+        ]),
+      );
+      expect(errors, contains(contains('libfoo.dylib')));
+    });
+
+    testWithoutContext('reports two packages shipping the same library file name', () async {
+      final List<String> errors = await extension().validateApplicationAssets(<EncodedAsset>[
+        CodeAsset(
+          package: 'foo',
+          name: 'foo.dart',
+          linkMode: DynamicLoadingBundled(),
+          file: Uri.file('$base/foo/libnative.dylib'),
+        ).encode(),
+        CodeAsset(
+          package: 'bar',
+          name: 'bar.dart',
+          linkMode: DynamicLoadingBundled(),
+          file: Uri.file('$base/bar/libnative.dylib'),
+        ).encode(),
+      ]);
+      expect(errors, contains(contains('Duplicate dynamic library file name "libnative.dylib"')));
+    });
+
+    testWithoutContext('reports a duplicate asset id', () async {
+      final List<String> errors = await extension().validateApplicationAssets(<EncodedAsset>[
+        for (final dir in <String>['a', 'b'])
+          CodeAsset(
+            package: 'foo',
+            name: 'foo.dart',
+            linkMode: DynamicLoadingBundled(),
+            file: Uri.file('$base/$dir/lib$dir.dylib'),
+          ).encode(),
+      ]);
+      expect(errors, contains(contains('package:foo/foo.dart')));
+    });
+
+    testWithoutContext('names the files a hook emitted, so a changed one reruns it', () {
+      final file = Uri.file('$base/foo/libfoo.dylib');
+      expect(
+        extension().outputFiles(<EncodedAsset>[
+          CodeAsset(
+            package: 'foo',
+            name: 'foo.dart',
+            linkMode: DynamicLoadingBundled(),
+            file: file,
+          ).encode(),
+        ]),
+        <Uri>[file],
+      );
     });
   });
 }

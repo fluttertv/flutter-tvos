@@ -27,7 +27,16 @@ import 'package:flutter_tools/src/isolated/native_assets/macos/native_assets_hos
 import 'package:flutter_tools/src/isolated/native_assets/native_assets.dart'
     show FlutterCodeAsset, FlutterNativeAssetsBuildRunner;
 import 'package:hooks/hooks.dart'
-    show BuildInputBuilder, EncodedAsset, LinkInputBuilder, ProtocolExtension;
+    show
+        BuildInput,
+        BuildInputBuilder,
+        BuildOutput,
+        EncodedAsset,
+        LinkInput,
+        LinkInputBuilder,
+        LinkOutput,
+        ProtocolExtension,
+        ValidationErrors;
 import 'package:hooks_runner/hooks_runner.dart' show BuildResult;
 import 'package:logging/logging.dart' as logging;
 import 'package:meta/meta.dart' show visibleForTesting;
@@ -102,14 +111,16 @@ const Architecture tvOSArchitecture = Architecture.arm64;
 /// leaving it out keeps the input from claiming something untrue alongside a
 /// target OS that is true.
 ///
-/// The validation callbacks are left at their defaults, which report nothing,
-/// instead of being forwarded. The protocol's own library check cannot judge a
-/// tvOS library: its Mach-O validator recognizes only `ios` and `macos`, and
-/// nothing in the input says device or simulator, which is the property that
-/// decides whether a library loads. The libraries this pass keeps are checked
-/// where that is known instead, when they are installed — see
-/// `installTvosCodeAssets`. Data assets are validated by
-/// `DataAssetsExtension`, which is untouched by any of this.
+/// Everything else is forwarded too: input and output validation, the
+/// application-wide checks (one asset id or library file name per app), and
+/// [outputFiles], which hooks_runner hashes to tell whether a hook has to run
+/// again. The one thing the protocol's checks cannot judge is a tvOS library
+/// itself: its Mach-O validator recognizes only `ios` and `macos`, and nothing
+/// in the input says device or simulator, which decides whether a library
+/// loads. For every tvOS library it therefore warns that it could not
+/// validate it, and that warning is dropped here (see [setupLogger]); the
+/// libraries are checked where the SDK is known instead, when they are
+/// installed — see `installTvosCodeAssets`.
 final class TvosCodeAssetExtension extends ProtocolExtension {
   TvosCodeAssetExtension({required CCompilerConfig? cCompiler})
     : _codeAssets = CodeAssetExtension(
@@ -130,10 +141,16 @@ final class TvosCodeAssetExtension extends ProtocolExtension {
   /// Forwarded, because the runner only calls this on the wrapper: the
   /// protocol promises an extension its logger before any other call, and
   /// the wrapped one is called through here.
+  ///
+  /// Through a filter: code_assets' library check cannot recognize a tvOS
+  /// library and says so for every one, as a warning that reads like a defect
+  /// in the package. It is not one, and the install step checks the library
+  /// properly, so that warning goes to the runner's logger at fine level and
+  /// everything else is passed on as it is.
   @override
   void setupLogger(logging.Logger logger) {
     super.setupLogger(logger);
-    _codeAssets.setupLogger(logger);
+    _codeAssets.setupLogger(filteringUnrecognizedLibraryWarnings(logger));
   }
 
   @override
@@ -141,6 +158,54 @@ final class TvosCodeAssetExtension extends ProtocolExtension {
 
   @override
   void setupLinkInput(LinkInputBuilder input) => _codeAssets.setupLinkInput(input);
+
+  @override
+  Future<ValidationErrors> validateBuildInput(BuildInput input) =>
+      _codeAssets.validateBuildInput(input);
+
+  @override
+  Future<ValidationErrors> validateLinkInput(LinkInput input) =>
+      _codeAssets.validateLinkInput(input);
+
+  @override
+  Future<ValidationErrors> validateBuildOutput(BuildInput input, BuildOutput output) =>
+      _codeAssets.validateBuildOutput(input, output);
+
+  @override
+  Future<ValidationErrors> validateLinkOutput(LinkInput input, LinkOutput output) =>
+      _codeAssets.validateLinkOutput(input, output);
+
+  @override
+  Future<ValidationErrors> validateApplicationAssets(List<EncodedAsset> assets) =>
+      _codeAssets.validateApplicationAssets(assets);
+
+  @override
+  Iterable<Uri> outputFiles(List<EncodedAsset> assets) => _codeAssets.outputFiles(assets);
+}
+
+/// The text code_assets' library check warns with when no validator
+/// recognizes a library for its target, which is every tvOS library.
+const String _unrecognizedLibraryWarning = 'No registered validator recognized the file and target.';
+
+/// A logger that passes every record on to [target], except code_assets'
+/// "could not validate" warning for a library no validator recognizes, which
+/// it passes on at [logging.Level.FINE].
+@visibleForTesting
+logging.Logger filteringUnrecognizedLibraryWarnings(logging.Logger target) {
+  final logger = logging.Logger.detached('${target.name}.tvos_code_assets')
+    ..level = logging.Level.ALL;
+  logger.onRecord.listen((logging.LogRecord record) {
+    final bool unrecognized =
+        record.level == logging.Level.WARNING &&
+        record.message.contains(_unrecognizedLibraryWarning);
+    target.log(
+      unrecognized ? logging.Level.FINE : record.level,
+      record.message,
+      record.error,
+      record.stackTrace,
+    );
+  });
+  return logger;
 }
 
 /// The iOS-family code config the fallback needs.
@@ -236,7 +301,8 @@ Future<DartHooksResult> runTvosHooks({
       'A package that generates assets for the platform it is built for — '
       'shader bundles and the like — will ship whatever its generated '
       'directory already held, which may be output from a build for another '
-      'platform, or nothing.\n'
+      'platform, or nothing; and a native library a package builds for '
+      '`dart:ffi` is not built or installed, so calls into it fail.\n'
       'Turn them on with `flutter config --enable-dart-data-assets`.',
     );
     return DartHooksResult.empty();
@@ -316,11 +382,22 @@ Future<DartHooksResult> runTvosHooks({
     nativeAssetsEnabled: featureFlags.isNativeAssetsEnabled,
   );
   if (encodedCodeAssets.isNotEmpty && !keep) {
-    // Otherwise "no code assets existed" and "code assets existed and were
-    // discarded" look identical from the outside, including in a bug report.
-    environment.logger.printTrace(
-      'Discarding ${encodedCodeAssets.length} code asset(s) from '
-      '${fromIOSFamilyRetry ? 'the iOS-family retry, which built them for iOS' : 'a pass with native assets disabled'}.',
+    // A warning, not a trace: these are libraries the app's Dart code may call,
+    // and a call into one that is not installed fails at runtime. Otherwise
+    // "no code assets existed" and "code assets existed and were discarded"
+    // also look identical from the outside, including in a bug report.
+    final String ids = <String>[
+      for (final EncodedAsset asset in encodedCodeAssets) CodeAsset.fromEncoded(asset).id,
+    ].join(', ');
+    environment.logger.printWarning(
+      fromIOSFamilyRetry
+          ? 'Discarding ${encodedCodeAssets.length} code asset(s) from the '
+                'iOS-family retry, which built them for iOS: $ids. The build '
+                'for tvOS by name failed, so this app has no native library '
+                'from these packages, and calls into one fail at runtime.'
+          : 'Discarding ${encodedCodeAssets.length} code asset(s) because '
+                'native assets are disabled: $ids. Turn them on with '
+                '`flutter config --enable-native-assets`.',
     );
   }
 
@@ -345,6 +422,15 @@ Future<DartHooksResult> runTvosHooks({
     dependencies: result.dependencies,
   );
 }
+
+/// The `buildKey` of the tvOS hook targets: a schema plus the feature flags
+/// their output depends on. A stamp from a build with another key, or with
+/// none (an earlier CLI), makes the build system run the target again.
+String tvosHooksBuildKey({
+  required String schema,
+  required bool dartDataAssets,
+  required bool nativeAssets,
+}) => '$schema;dart-data-assets=$dartDataAssets;native-assets=$nativeAssets';
 
 /// Whether the code assets of a hook pass are installed into the app.
 ///
@@ -410,6 +496,22 @@ class TvosBuildHooks extends Target {
 
   @override
   String get name => 'tvos_build_hooks';
+
+  /// What the result depends on besides its input files: the two feature
+  /// flags, which decide whether hooks run and whether code assets are kept,
+  /// and a schema that changes when this target's output does for the same
+  /// inputs. Without it, turning a flag on or off — or upgrading from a CLI
+  /// that wrote no code assets — left the last result in place until `clean`.
+  @override
+  String get buildKey => tvosHooksBuildKey(
+    schema: _schema,
+    dartDataAssets: featureFlags.isDartDataAssetsEnabled,
+    nativeAssets: featureFlags.isNativeAssetsEnabled,
+  );
+
+  /// Bumped when what this target writes changes for the same hooks. `2`: code
+  /// assets of the tvOS pass are kept (1.12.0 and earlier wrote none).
+  static const _schema = 'tvos-build-hooks-2';
 
   @override
   List<Target> get dependencies => const <Target>[];

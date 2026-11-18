@@ -12,6 +12,7 @@ import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/depfile.dart';
 import 'package:flutter_tools/src/build_system/exceptions.dart' show MissingDefineException;
 import 'package:flutter_tools/src/build_system/targets/native_assets.dart' show LinkHooks;
+import 'package:flutter_tools/src/features.dart' show featureFlags;
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/isolated/native_assets/macos/native_assets_host.dart';
@@ -20,6 +21,8 @@ import 'package:flutter_tools/src/isolated/native_assets/native_assets.dart'
 import 'package:flutter_tools/src/isolated/native_assets/native_assets_manifest.dart';
 import 'package:meta/meta.dart' show immutable, visibleForTesting;
 
+import '../tvos_embed_phase_migration.dart' show kCodeAssetBundleIdentifierPrefix;
+import 'application.dart' show NativeTvosBundle;
 import 'tvos_hooks.dart';
 
 /// The OS the tvOS engine looks its native assets up under.
@@ -35,12 +38,6 @@ import 'tvos_hooks.dart';
 ///
 /// The hooks are still told `tvos`; this is only the manifest's key.
 const OS tvosNativeAssetsManifestOS = OS.iOS;
-
-/// The minimum tvOS version stamped into a code-asset framework's Info.plist
-/// when its library does not say.
-///
-/// Matches the template's `TVOS_DEPLOYMENT_TARGET` and the engine's own floor.
-const String kTvosCodeAssetFallbackMinimumOSVersion = '15.0';
 
 /// The Mach-O platform a library has to carry to load on the SDK being built.
 ///
@@ -76,27 +73,41 @@ const Map<String, String> _machOPlatformNumbers = <String, String>{
   '1': 'MACOS',
   '2': 'IOS',
   '3': 'TVOS',
+  '4': 'WATCHOS',
   '7': 'IOSSIMULATOR',
   '8': 'TVOSSIMULATOR',
+  '9': 'WATCHOSSIMULATOR',
+};
+
+/// The platform each pre-`LC_BUILD_VERSION` load command implies. None of them
+/// names a simulator; a simulator library of that age carries the device's.
+const Map<String, String> _legacyVersionMinPlatforms = <String, String>{
+  'LC_VERSION_MIN_TVOS': 'TVOS',
+  'LC_VERSION_MIN_IPHONEOS': 'IOS',
+  'LC_VERSION_MIN_MACOSX': 'MACOS',
+  'LC_VERSION_MIN_WATCHOS': 'WATCHOS',
 };
 
 /// Parses the output of `xcrun vtool -show-build <file>`.
 ///
 /// A thin library has one build-version command, a fat one one per slice.
-/// Libraries linked before `LC_BUILD_VERSION` existed carry
-/// `LC_VERSION_MIN_TVOS` instead, which names no simulator; it is reported as
-/// `TVOS`, which is what it is on Apple's side as well.
+/// Libraries linked before `LC_BUILD_VERSION` existed carry an
+/// `LC_VERSION_MIN_*` command instead, which names no simulator; it is
+/// reported as the device platform, which is what it is on Apple's side too,
+/// so an old iPhone library is refused rather than installed unchecked.
 @visibleForTesting
 List<MachOBuildVersion> parseVtoolBuildVersions(String output) {
   final versions = <MachOBuildVersion>[];
   String? platform;
   String? minos;
+  var legacy = false;
   void flush() {
     if (platform != null) {
       versions.add(MachOBuildVersion(platform: platform!, minos: minos));
     }
     platform = null;
     minos = null;
+    legacy = false;
   }
 
   for (final String rawLine in output.split('\n')) {
@@ -108,13 +119,12 @@ List<MachOBuildVersion> parseVtoolBuildVersions(String output) {
     switch (fields.first) {
       case 'cmd':
         flush();
-        if (fields[1] == 'LC_VERSION_MIN_TVOS') {
-          platform = 'TVOS';
-        }
+        platform = _legacyVersionMinPlatforms[fields[1]];
+        legacy = platform != null;
       case 'platform':
         platform = _machOPlatformNumbers[fields[1]] ?? fields[1];
       case 'minos':
-      case 'version' when platform == 'TVOS' && minos == null:
+      case 'version' when legacy && minos == null:
         minos = fields[1];
     }
   }
@@ -158,6 +168,146 @@ Map<FlutterCodeAsset, FlutterCodeAssetTargetLocation> tvosCodeAssetTargetLocatio
   ]);
 }
 
+/// Framework names a code asset cannot take: the app's own frameworks sit in
+/// the same `Frameworks/` directory, and APFS is case-insensitive by default.
+const Set<String> _reservedFrameworkNames = <String>{'flutter', 'app'};
+
+/// Fails the build when a code asset would be bundled as `Flutter.framework`
+/// or `App.framework`, which would overwrite the engine or the app's Dart code.
+@visibleForTesting
+void checkReservedFrameworkNames(
+  Map<FlutterCodeAsset, FlutterCodeAssetTargetLocation> locations,
+) {
+  final clashes = <String>[
+    for (final MapEntry<FlutterCodeAsset, FlutterCodeAssetTargetLocation> entry
+        in locations.entries)
+      if (entry.value.bundlePath case final Uri bundlePath
+          when _reservedFrameworkNames.contains(
+            bundlePath.pathSegments.first.replaceFirst(RegExp(r'\.framework$'), '').toLowerCase(),
+          ))
+        '  ${entry.key.codeAsset.id} would be ${bundlePath.pathSegments.first}',
+  ];
+  if (clashes.isNotEmpty) {
+    throwToolExit(
+      'A Dart build hook produced a native library whose framework name is '
+      "taken by the app's own frameworks:\n"
+      '${clashes.join('\n')}\n'
+      'Code assets are bundled as <library name>.framework, next to '
+      'Flutter.framework and App.framework. The package has to rename its '
+      'library.',
+    );
+  }
+}
+
+/// A bundle identifier per framework, unique even when two framework names
+/// differ only in characters a bundle identifier cannot carry (`foo_bar` and
+/// `foo-bar` both give `foo-bar`).
+@visibleForTesting
+Map<Uri, String> codeAssetBundleIdentifiers(Iterable<Uri> frameworks) {
+  final taken = <String>{};
+  return <Uri, String>{
+    for (final Uri framework in frameworks)
+      framework: () {
+        final String base =
+            '$kCodeAssetBundleIdentifierPrefix${framework.pathSegments.last}'.replaceAll('_', '-');
+        var id = base;
+        for (var i = 1; taken.contains(id.toLowerCase()); i++) {
+          id = '$base-$i';
+        }
+        taken.add(id.toLowerCase());
+        return id;
+      }(),
+  };
+}
+
+/// The `Info.plist` of a code-asset framework.
+///
+/// Upstream's iOS one, plus what an embedded tvOS framework declares and App
+/// Store validation reads — the same keys this toolchain's App.framework
+/// carries: the supported platform, the platform name and the Apple TV device
+/// family.
+@visibleForTesting
+String codeAssetInfoPlist({
+  required String name,
+  required String bundleIdentifier,
+  required String minimumOSVersion,
+  required bool simulator,
+}) {
+  return '''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>$name</string>
+	<key>CFBundleIdentifier</key>
+	<string>$bundleIdentifier</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$name</string>
+	<key>CFBundlePackageType</key>
+	<string>FMWK</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>${simulator ? 'AppleTVSimulator' : 'AppleTVOS'}</string>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1.0</string>
+	<key>DTPlatformName</key>
+	<string>${simulator ? 'appletvsimulator' : 'appletvos'}</string>
+	<key>MinimumOSVersion</key>
+	<string>$minimumOSVersion</string>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>3</integer>
+	</array>
+</dict>
+</plist>
+''';
+}
+
+/// The `TVOS_DEPLOYMENT_TARGET` of the Runner project in [tvosProjectDir], or
+/// null when the project or the setting cannot be read.
+String? readTvosDeploymentTarget(Directory tvosProjectDir) {
+  final File pbxproj = tvosProjectDir
+      .childDirectory('Runner.xcodeproj')
+      .childFile('project.pbxproj');
+  try {
+    if (!pbxproj.existsSync()) {
+      return null;
+    }
+    return RegExp(r'TVOS_DEPLOYMENT_TARGET\s*=\s*([\d.]+)')
+        .firstMatch(pbxproj.readAsStringSync())
+        ?.group(1);
+  } on FileSystemException {
+    return null;
+  }
+}
+
+/// Whether version [a] is above version [b], compared numerically by
+/// component (`15.10` is above `15.9`).
+@visibleForTesting
+bool isVersionAbove(String a, String b) {
+  List<int> parts(String v) => <int>[for (final String p in v.split('.')) int.tryParse(p) ?? 0];
+  final List<int> x = parts(a);
+  final List<int> y = parts(b);
+  for (var i = 0; i < x.length || i < y.length; i++) {
+    final int l = i < x.length ? x[i] : 0;
+    final int r = i < y.length ? y[i] : 0;
+    if (l != r) {
+      return l > r;
+    }
+  }
+  return false;
+}
+
 /// Reads the build versions of [library] with `vtool`.
 Future<List<MachOBuildVersion>> _readBuildVersions(File library) async {
   final RunResult result = await globals.processUtils.run(<String>[
@@ -193,7 +343,11 @@ Future<List<MachOBuildVersion>> _readBuildVersions(File library) async {
 ///    failing here instead names it while the build can still say why.
 ///  * `MinimumOSVersion` comes from the library's own `minos`, which App Store
 ///    validation compares it to (ITMS-90208). iOS can hard-code it because it
-///    tells its hooks the deployment target; a tvOS hook is told none.
+///    tells its hooks the deployment target; a tvOS hook is told none, so a
+///    `minos` above the app's [deploymentTarget] is warned about.
+///  * The `Info.plist` declares tvOS (platform, device family), and a library
+///    that would be named `Flutter.framework` or `App.framework` stops the
+///    build instead of overwriting the app's own.
 Future<List<File>> installTvosCodeAssets({
   required List<FlutterCodeAsset> codeAssets,
   required Directory targetDirectory,
@@ -201,9 +355,27 @@ Future<List<File>> installTvosCodeAssets({
   required BuildMode buildMode,
   required bool simulator,
   required FileSystem fileSystem,
+  String? deploymentTarget,
 }) async {
+  // Upstream throws a plain Exception on these while computing locations. The
+  // tvOS pass asks hooks for dynamic libraries, so one here is a package that
+  // ignored the preference; say so as a tool error naming it.
+  final staticAssets = <String>[
+    for (final FlutterCodeAsset asset in codeAssets)
+      if (asset.codeAsset.linkMode is StaticLinking) asset.codeAsset.id,
+  ];
+  if (staticAssets.isNotEmpty) {
+    throwToolExit(
+      'A Dart build hook produced a statically linked code asset, which a '
+      'Flutter app cannot bundle: ${staticAssets.join(', ')}.\n'
+      'Hooks building for tvOS are asked for dynamic libraries '
+      '(LinkModePreference.dynamic).',
+    );
+  }
+
   final Map<FlutterCodeAsset, FlutterCodeAssetTargetLocation> locations =
       tvosCodeAssetTargetLocations(codeAssets);
+  checkReservedFrameworkNames(locations);
 
   // As upstream: a library loaded from the process, the executable or the
   // system has nothing to bundle and only a manifest entry.
@@ -225,7 +397,14 @@ Future<List<File>> installTvosCodeAssets({
   final installedFiles = <File>[];
   if (frameworks.isNotEmpty) {
     installedFiles.addAll(
-      await _copyFrameworks(frameworks, targetDirectory, buildMode, simulator, fileSystem),
+      await _copyFrameworks(
+        frameworks,
+        targetDirectory,
+        buildMode,
+        simulator,
+        fileSystem,
+        deploymentTarget,
+      ),
     );
   }
 
@@ -243,6 +422,7 @@ Future<List<File>> _copyFrameworks(
   BuildMode buildMode,
   bool simulator,
   FileSystem fileSystem,
+  String? deploymentTarget,
 ) async {
   // Check everything before installing anything, and report every library
   // that is wrong rather than the first: a package that picks the wrong SDK
@@ -266,6 +446,13 @@ Future<List<File>> _copyFrameworks(
       final String? minos = versions.map((MachOBuildVersion v) => v.minos).nonNulls.firstOrNull;
       if (minos != null) {
         minimumVersions[entry.key] = minos;
+        if (deploymentTarget != null && isVersionAbove(minos, deploymentTarget)) {
+          globals.logger.printWarning(
+            '${asset.codeAsset.id} (${library.path}) requires tvOS $minos, but '
+            'the app deploys to tvOS $deploymentTarget (TVOS_DEPLOYMENT_TARGET). '
+            'On an older Apple TV it fails to load at its first `@Native` call.',
+          );
+        }
       }
     }
   }
@@ -288,6 +475,7 @@ Future<List<File>> _copyFrameworks(
     );
   }
 
+  final Map<Uri, String> bundleIdentifiers = codeAssetBundleIdentifiers(frameworks.keys);
   final installedFiles = <File>[];
   final oldToNewInstallNames = <String, String>{};
   final dylibs = <(File, String, Directory)>[];
@@ -316,12 +504,16 @@ Future<List<File>> _copyFrameworks(
     }
     dylibs.add((dylibFile, newInstallName, frameworkDir));
 
-    await createInfoPlist(
-      target.pathSegments.last,
-      frameworkDir,
-      minimumIOSVersion: minimumVersions[target] ?? kTvosCodeAssetFallbackMinimumOSVersion,
-    );
-    installedFiles.add(frameworkDir.childFile('Info.plist'));
+    final File infoPlist = frameworkDir.childFile('Info.plist')
+      ..writeAsStringSync(
+        codeAssetInfoPlist(
+          name: target.pathSegments.last,
+          bundleIdentifier: bundleIdentifiers[target]!,
+          minimumOSVersion: minimumVersions[target] ?? NativeTvosBundle.kTvosMinimumOSVersion,
+          simulator: simulator,
+        ),
+      );
+    installedFiles.add(infoPlist);
   }
 
   for (final (File dylibFile, String newInstallName, Directory frameworkDir) in dylibs) {
@@ -344,13 +536,28 @@ Future<List<File>> _copyFrameworks(
 /// here; the build directory is keyed on the defines, so a device build and a
 /// simulator build do not share it.
 class TvosInstallCodeAssets extends Target {
-  const TvosInstallCodeAssets();
+  const TvosInstallCodeAssets({@visibleForTesting TvosBuildHooks hooks = const TvosBuildHooks()})
+    : _hooks = hooks;
+
+  final TvosBuildHooks _hooks;
 
   @override
   String get name => 'tvos_install_code_assets';
 
   @override
-  List<Target> get dependencies => const <Target>[TvosBuildHooks()];
+  List<Target> get dependencies => <Target>[_hooks];
+
+  /// What this target's output depends on besides its files: see
+  /// [tvosHooksBuildKey].
+  @override
+  String get buildKey => tvosHooksBuildKey(
+    schema: _schema,
+    dartDataAssets: featureFlags.isDartDataAssetsEnabled,
+    nativeAssets: featureFlags.isNativeAssetsEnabled,
+  );
+
+  /// Bumped when what this target installs changes for the same hook result.
+  static const _schema = 'tvos-install-code-assets-1';
 
   @override
   List<Source> get inputs => const <Source>[
@@ -396,6 +603,7 @@ class TvosInstallCodeAssets extends Target {
       buildMode: BuildMode.fromCliName(buildModeName),
       simulator: simulator,
       fileSystem: environment.fileSystem,
+      deploymentTarget: readTvosDeploymentTarget(environment.projectDir.childDirectory('tvos')),
     );
 
     final depfile = Depfile(<File>[

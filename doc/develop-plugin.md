@@ -141,7 +141,7 @@ FFI plugins are distributed as CocoaPods and loaded via `DynamicLibrary.process(
 
 ## Code assets from build hooks
 
-A package can also ship its native library through a Dart build hook (`hook/build.dart`) and call it with `@Native`, as on other platforms. flutter-tvos runs the hooks when Dart data assets are enabled (`flutter config --enable-dart-data-assets`, off by default) and installs the code assets they return the way Flutter does for iOS: each dynamic library becomes `<name>.framework` in the app's `Frameworks/`, with the install name `@rpath/<name>.framework/<name>`, and is listed in `NativeAssetsManifest.json`.
+A package can also ship its native library through a Dart build hook (`hook/build.dart`) and call it with `@Native`, as on other platforms. flutter-tvos runs the hooks when Dart data assets are enabled (`flutter config --enable-dart-data-assets`, off by default) and native assets are enabled (`--enable-native-assets`, on by default; turning it off discards code assets with a warning), and installs the code assets they return the way Flutter does for iOS: each dynamic library becomes `<name>.framework` in the app's `Frameworks/`, with the install name `@rpath/<name>.framework/<name>`, and is listed in `NativeAssetsManifest.json`.
 
 What a tvOS hook has to know:
 
@@ -160,7 +160,9 @@ What a tvOS hook has to know:
 - **Link hooks do not run.** A code asset has to be added for the app bundle by the build hook.
 - **A hook that cannot read `tvos`** (one resolving `code_assets` 1.x) is retried as the iOS family so its data assets still flow; the code assets of that retry are iPhone libraries and are not installed.
 
-Projects created with 1.12.0 or earlier have an "Embed Flutter.framework" phase without the code-asset step. `flutter-tvos build` and `run` embed the libraries after the Xcode build for them and warn; archiving such a project from Xcode leaves them out until the phase is updated (re-create `tvos/`, or copy the code-asset lines from the current template's phase).
+The "Embed Flutter.framework" build phase of the Runner target embeds the libraries and signs them with the app's identity, and removes ones an earlier build embedded that the app no longer has. Projects created with 1.9.0 through 1.12.0 have a phase without that step; if it is unchanged, the next build updates it in `tvos/Runner.xcodeproj/project.pbxproj` and says so. If it was edited (or the project predates the phase), simulator and `--no-codesign` builds embed the libraries after the Xcode build with a warning, and a signed device build stops and prints the lines to add to the phase: embedding after Xcode has signed the app would break its signature. Re-creating `tvos/` also works.
+
+Turning either flag on or off takes effect on the next build; no `flutter-tvos clean` is needed.
 
 ## Run the example app
 
