@@ -2,6 +2,18 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- **`flutter-tvos precache --force` keeps the tvOS engine stamp it writes**
+  ([#101](https://github.com/fluttertv/flutter-tvos/issues/101)). It cleared the
+  cache stamps after downloading the tvOS engine, which deleted the engine's
+  fresh stamp, so the next command found the engine stale and downloaded all of
+  it again. It now takes the cache lock and clears the stamps before it
+  downloads anything, as stock `flutter precache` does, so the tvOS engine is
+  also no longer downloaded without holding the cache lock.
+
 ## [1.12.1] - 2026-11-20
 
 ### Changed
