@@ -5,10 +5,12 @@
 // Regression test: plugins in a project created with `--platforms=tvos`.
 //
 // Flutter 3.47 stopped writing `.flutter-plugins-dependencies` for a project
-// with none of Flutter's own platforms, and every tvOS plugin is found through
-// that file's `dependencyGraph`. In a tvOS-only project the generated
+// with none of Flutter's own platforms, and every tvOS plugin was then found
+// through that file's `dependencyGraph`. In a tvOS-only project the generated
 // registrants came out empty, so every native plugin threw
-// MissingPluginException at runtime and no Dart plugin registered.
+// MissingPluginException at runtime and no Dart plugin registered. Plugins
+// are now found from the package config and graph (#99), and the file is
+// still written for the `plugins.tvos` list the Podfile reads.
 //
 // Where the list is written matters as much as whether: `validateCommand`
 // runs before `pub get`, so after `clean` or on a fresh clone the list has to
@@ -170,10 +172,11 @@ flutter:
     () async {
       await ensureReadyForTvosTooling(seedApp(withIos: true));
 
-      // Flutter writes the file for this project itself, on `pub get`; with
-      // none written here, discovery has nothing to go on.
+      // Flutter writes the file for this project itself, on `pub get`, so
+      // none is written here. Discovery does not need it: the plugins come
+      // from what `pub get` resolved.
       expect(names(pluginsDependencies()['dependencyGraph']), isEmpty);
-      expect(objcRegistrant(), isNot(contains('GizmoTvosPlugin')));
+      expect(objcRegistrant(), contains('[GizmoTvosPlugin registerWithRegistrar:'));
     },
     overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
@@ -183,9 +186,11 @@ flutter:
   );
 
   testUsingContext('says nothing before `pub get` has written a package config', () async {
-    await ensureReadyForTvosTooling(seedApp(pubGetRan: false));
+    await ensureReadyForTvosTooling(seedApp(pubGetRan: false), beforePubGet: true);
 
-    expect(objcRegistrant(), isNot(contains('GizmoTvosPlugin')));
+    // Nothing to find yet: the native build writes the registrants after
+    // `pub get`.
+    expect(fileSystem.file('/app/tvos/Runner/GeneratedPluginRegistrant.m').existsSync(), isFalse);
     // Upstream's reader prints "package_config.json does not exist" for
     // this, in red, on the first command after `clean` or a fresh clone.
     expect(logger.errorText, isEmpty);
@@ -197,8 +202,11 @@ flutter:
       final FlutterProject project = seedApp(pubGetRan: false);
 
       // `validateCommand`, which runs before `pub get`.
-      await ensureReadyForTvosTooling(project);
-      expect(dartRegistrant(), isNot(contains('GizmoTvos.registerWith()')));
+      await ensureReadyForTvosTooling(project, beforePubGet: true);
+      expect(
+        fileSystem.file('/app/.dart_tool/flutter_build/dart_plugin_registrant.dart').existsSync(),
+        isFalse,
+      );
 
       // `pub get`, which writes no plugin list for this project.
       runPubGet(project.directory);
@@ -347,9 +355,10 @@ flutter:
 
         await TvosBuilder.writeDartPluginRegistrant(project);
 
-        // What it costs, and what to fix.
-        expect(logger.warningText, contains('may be missing tvOS plugins'));
+        // What to fix; the tvOS plugins are found all the same.
+        expect(logger.warningText, contains('Flutter itself rejects this dependency'));
         expect(logger.warningText, contains('odd_package'));
+        expect(dartRegistrant(), contains('gizmo_tvos.GizmoTvos.registerWith()'));
       },
       overrides: overrides(),
     );
@@ -367,16 +376,21 @@ flutter:
       expect(dartRegistrant(), contains('gizmo_tvos.GizmoTvos.registerWith()'));
     }, overrides: overrides());
 
-    testUsingContext('warns, rather than stops the build, without a package graph', () async {
+    // The package graph is where the plugins come from: without it the app
+    // would be built with none, and every plugin call would throw
+    // MissingPluginException at runtime.
+    testUsingContext('stops the build without a package graph', () async {
       final FlutterProject project = seedApp();
       fileSystem.file('/app/.dart_tool/package_graph.json').deleteSync();
 
-      await TvosBuilder.writeDartPluginRegistrant(project);
-
+      await expectLater(
+        TvosBuilder.writeDartPluginRegistrant(project),
+        throwsToolExit(message: 'package_graph.json'),
+      );
       expect(logger.warningText, contains('Could not refresh .flutter-plugins-dependencies'));
     }, overrides: overrides());
 
-    testUsingContext('warns, rather than stops the build, on a malformed package graph', () async {
+    testUsingContext('stops the build on a malformed package graph', () async {
       final FlutterProject project = seedApp();
       // A dependency that is not a string: upstream's reader throws a
       // TypeError for it, not an Exception.
@@ -388,9 +402,14 @@ flutter:
         ),
       );
 
-      await ensureReadyForTvosTooling(project);
-      await TvosBuilder.writeDartPluginRegistrant(project);
-
+      await expectLater(
+        ensureReadyForTvosTooling(project),
+        throwsToolExit(message: 'Could not read the package graph'),
+      );
+      await expectLater(
+        TvosBuilder.writeDartPluginRegistrant(project),
+        throwsToolExit(message: 'flutter-tvos pub get'),
+      );
       expect(logger.warningText, contains('Could not refresh .flutter-plugins-dependencies'));
     }, overrides: overrides());
 

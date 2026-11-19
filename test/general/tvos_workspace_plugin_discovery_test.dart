@@ -91,10 +91,17 @@ flutter:
       ..createSync(recursive: true)
       ..writeAsStringSync(json.encode(<String, String>{'workspaceRoot': '../..'}));
 
-    app.childFile('.flutter-plugins-dependencies').writeAsStringSync(
+    fileSystem.directory('/ws/.dart_tool').childFile('package_graph.json').writeAsStringSync(
       json.encode(<String, dynamic>{
-        'dependencyGraph': <Map<String, String>>[
-          <String, String>{'name': 'gizmo_tvos'},
+        'configVersion': 1,
+        'roots': <String>['app'],
+        'packages': <Map<String, Object>>[
+          <String, Object>{
+            'name': 'app',
+            'dependencies': <String>['gizmo_tvos'],
+            'devDependencies': <String>[],
+          },
+          <String, Object>{'name': 'gizmo_tvos', 'dependencies': <String>[]},
         ],
       }),
     );
