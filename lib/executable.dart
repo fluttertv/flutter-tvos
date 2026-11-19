@@ -6,6 +6,11 @@
 
 import 'dart:io';
 
+// Stock's own command-name lookup, so `daemon`, `doctor` and `help` are found
+// the way stock finds them (after any global options). It is marked
+// @visibleForTesting only because stock has no other caller.
+// ignore: invalid_use_of_visible_for_testing_member
+import 'package:flutter_tools/executable.dart' as stock show findCommandName;
 import 'package:flutter_tools/runner.dart' as runner;
 import 'package:flutter_tools/src/android/android_workflow.dart';
 import 'package:flutter_tools/src/application_package.dart';
@@ -31,6 +36,7 @@ import 'package:flutter_tools/src/commands/screenshot.dart';
 import 'package:flutter_tools/src/commands/shell_completion.dart';
 import 'package:flutter_tools/src/commands/symbolize.dart';
 import 'package:flutter_tools/src/commands/update_packages.dart';
+import 'package:flutter_tools/src/commands/widget_preview.dart' show WidgetPreviewCommand;
 import 'package:flutter_tools/src/context/android_context.dart';
 import 'package:flutter_tools/src/context/apple_context.dart';
 import 'package:flutter_tools/src/context/tool_context.dart';
@@ -219,19 +225,34 @@ List<FlutterCommand> tvosCommands({
 ///
 /// Source: `flutter.main` in `executable.dart` (some commands and options were omitted)
 Future<void> main(List<String> args) async {
+  // The flags below are derived from argv exactly as stock `flutter.main`
+  // derives them; together they choose the logger (see [createTvosLogger]).
   final bool veryVerbose = args.contains('-vv');
   final bool verbose = args.contains('-v') || args.contains('--verbose') || veryVerbose;
+  final bool prefixedErrors = args.contains('--prefixed-errors');
+  // Support universal help idioms.
+  final int powershellHelpIndex = args.indexOf('-?');
+  if (powershellHelpIndex != -1) {
+    args[powershellHelpIndex] = '-h';
+  }
+  final int slashQuestionHelpIndex = args.indexOf('/?');
+  if (slashQuestionHelpIndex != -1) {
+    args[slashQuestionHelpIndex] = '-h';
+  }
 
-  final bool doctor =
-      (args.isNotEmpty && args.first == 'doctor') ||
-      (args.length == 2 && verbose && args.last == 'doctor');
+  // ignore: invalid_use_of_visible_for_testing_member
+  final String? commandName = stock.findCommandName(args);
+  final doctor = commandName == 'doctor';
   final bool help =
       args.contains('-h') ||
       args.contains('--help') ||
-      (args.isNotEmpty && args.first == 'help') ||
+      commandName == 'help' ||
       (args.length == 1 && verbose);
   final bool muteCommandLogging = (help || doctor) && !veryVerbose;
   final bool verboseHelp = help && verbose;
+  final daemon = commandName == 'daemon';
+  final widgetPreviews = commandName == WidgetPreviewCommand.kWidgetPreview;
+  final bool runMachine = args.contains('--machine');
 
   args = <String>[
     '--suppress-analytics', // Suppress flutter analytics by default.
@@ -319,24 +340,21 @@ Future<void> main(List<String> args) async {
         tvosWorkflow: tvosWorkflow!,
       ),
       TvosValidator: () => TvosValidator(processManager: globals.processManager),
-      // Always wrap the logger with TvosCategoryRewritingLogger so the
-      // device list shows `(tv)` instead of `(mobile)` for tvOS devices.
-      // The wrapper is a no-op on every other line. In verbose mode,
-      // VerboseLogger sits inside ours so timestamps still apply.
-      Logger: () => TvosCategoryRewritingLogger(
-        verbose && !muteCommandLogging
-            ? VerboseLogger(
-                StdoutLogger(
-                  stdio: globals.stdio,
-                  terminal: globals.terminal,
-                  outputPreferences: globals.outputPreferences,
-                ),
-              )
-            : StdoutLogger(
-                stdio: globals.stdio,
-                terminal: globals.terminal,
-                outputPreferences: globals.outputPreferences,
-              ),
+      // Stock's logger for the mode (daemon, --machine, widget-preview,
+      // verbose, --prefixed-errors), with TvosCategoryRewritingLogger in the
+      // chain so the device list shows `(tv)` instead of `(mobile)` for tvOS
+      // devices. Stock code looks the daemon and machine loggers up by type,
+      // so `daemon`, `run --machine` and `attach --machine` need them.
+      Logger: () => createTvosLogger(
+        terminal: globals.terminal,
+        stdio: globals.stdio,
+        outputPreferences: globals.outputPreferences,
+        daemon: daemon,
+        machine: runMachine,
+        verbose: verbose && !muteCommandLogging,
+        prefixedErrors: prefixedErrors,
+        windows: globals.platform.isWindows,
+        widgetPreviews: widgetPreviews,
       ),
     },
     shutdownHooks: globals.shutdownHooks,
