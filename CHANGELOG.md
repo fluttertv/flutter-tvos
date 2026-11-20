@@ -60,6 +60,19 @@ All notable changes to flutter-tvos will be documented here.
   app's deployment target, and a library that would be named
   `Flutter.framework` or `App.framework` stops the build.
 
+## [1.12.1] - 2026-11-20
+
+### Changed
+
+- **Upgraded to Flutter 3.50.1** (`ae9b586f34a8443573f82ef57c3bf914a908cbf7`).
+  Engine artifacts rebuilt from the ported patch set and published as
+  [`engine-7997cf369898d2b11ddc32f9353d91f5c3313fa8`](https://github.com/fluttertv/engine-artifacts/releases/tag/engine-7997cf369898d2b11ddc32f9353d91f5c3313fa8).
+
+  Ported automatically by the release train: the patch set applied and the tvOS
+  engine unit tests passed, the CLI analyzes and tests clean against the new
+  SDK, and the end-to-end matrix ran on a tvOS simulator with the device
+  profile and release builds compiled.
+
 ## [1.12.0] - 2026-11-14
 
 ### Changed
