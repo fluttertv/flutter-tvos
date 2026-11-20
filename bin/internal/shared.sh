@@ -10,6 +10,10 @@
 #
 # -------------------------------------------------------------------------- #
 
+# Everything this file prints goes to stderr, as stock Flutter's bootstrap
+# does: stdout belongs to the tool, and `--machine` and `daemon` promise IDEs
+# nothing but JSON there, including on the first run after an edit or upgrade.
+
 set -e
 
 # Needed because if it is set, cd may print the path it changed to.
@@ -18,7 +22,7 @@ unset CDPATH
 FLUTTER_REPO="https://github.com/flutter/flutter.git"
 
 if [[ -z "$BIN_DIR" ]]; then
-  echo "BIN_DIR is not set."
+  >&2 echo "BIN_DIR is not set."
   exit 1
 fi
 ROOT_DIR="$(cd "${BIN_DIR}/.." ; pwd -P)"
@@ -49,7 +53,7 @@ function tool_revision() {
 
 function update_flutter() {
   if [[ -e "$FLUTTER_DIR" && ! -d "$FLUTTER_DIR/.git" ]]; then
-    echo "$FLUTTER_DIR is not a git directory. Remove it and try again."
+    >&2 echo "$FLUTTER_DIR is not a git directory. Remove it and try again."
     exit 1
   fi
 
@@ -68,8 +72,8 @@ function update_flutter() {
   # working — a fresh clone takes 10–30s depending on connection. The
   # pinned commit is fetched and checked out below.
   if [[ ! -d "$FLUTTER_DIR" ]]; then
-    echo "Setting up flutter-tvos (first run)..."
-    echo "Downloading Flutter SDK source..."
+    >&2 echo "Setting up flutter-tvos (first run)..."
+    >&2 echo "Downloading Flutter SDK source..."
     git clone --depth=1 --quiet "$FLUTTER_REPO" "$FLUTTER_DIR"
   fi
 
@@ -79,7 +83,7 @@ function update_flutter() {
 
   # Update flutter repo if needed.
   if [[ "$version" != "$(git rev-parse HEAD)" ]]; then
-    echo "Updating Flutter SDK to pinned revision..."
+    >&2 echo "Updating Flutter SDK to pinned revision..."
     git reset --hard --quiet
     git clean -xdf --quiet
     # `--tags` is required so `git describe --tags` can resolve the
@@ -95,7 +99,7 @@ function update_flutter() {
   fi
 
   if [[ "$version" != "$(git rev-parse HEAD)" ]]; then
-    echo "Something went wrong when upgrading the Flutter SDK." \
+    >&2 echo "Something went wrong when upgrading the Flutter SDK." \
          "Remove directory $FLUTTER_DIR and try again."
     exit 1
   fi
@@ -137,7 +141,7 @@ function update_flutter() {
 function bootstrap_flutter_tool() {
   local log_file
   log_file="$(mktemp -t flutter-tvos-bootstrap.XXXXXX)"
-  echo "Bootstrapping Flutter SDK (one-time setup, this may take a few minutes)..."
+  >&2 echo "Bootstrapping Flutter SDK (one-time setup, this may take a few minutes)..."
   if ! "$FLUTTER_EXE" --version >"$log_file" 2>&1; then
     echo "Flutter SDK bootstrap failed. Captured output:" >&2
     cat "$log_file" >&2
@@ -194,18 +198,18 @@ function update_flutter_tvos() {
   if [[ ! -f "$SNAPSHOT_PATH" || ! -s "$stamp_path" || "$revision" != "$(cat "$stamp_path")"
         || "$needs_pub_get" == "true" ]]; then
     if [[ "$needs_pub_get" == "true" ]]; then
-      echo "Running pub get..."
-      (cd "$ROOT_DIR" && "$FLUTTER_EXE" pub get --offline) || \
-      (cd "$ROOT_DIR" && "$FLUTTER_EXE" pub get) || {
+      >&2 echo "Running pub get..."
+      (cd "$ROOT_DIR" && "$FLUTTER_EXE" pub get --offline) >&2 || \
+      (cd "$ROOT_DIR" && "$FLUTTER_EXE" pub get) >&2 || {
         >&2 echo "Error: Unable to resolve flutter-tvos dependencies."
         exit 1
       }
     fi
 
-    echo "Compiling flutter-tvos..."
+    >&2 echo "Compiling flutter-tvos..."
     "$DART_EXE" --disable-dart-dev --no-enable-mirrors \
                 --snapshot="$SNAPSHOT_PATH" --packages="$ROOT_DIR/.dart_tool/package_config.json" \
-                "$ROOT_DIR/bin/flutter_tvos.dart"
+                "$ROOT_DIR/bin/flutter_tvos.dart" >&2
 
     echo "$revision" > "$stamp_path"
   fi

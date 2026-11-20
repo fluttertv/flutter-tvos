@@ -23,6 +23,12 @@ All notable changes to flutter-tvos will be documented here.
   --machine` did report it. With this fix the daemon starts, and its device
   list carries the same `cpuArch` field.
 
+- The launcher prints its own messages ("Running pub get...", pub's output,
+  "Compiling flutter-tvos...", the Flutter SDK setup lines) to stderr, as
+  stock Flutter does. They went to stdout, so the first `--machine` or
+  `daemon` command after an edit or an upgrade began with lines that are not
+  JSON.
+
 ## [1.12.1] - 2026-11-20
 
 ### Changed
