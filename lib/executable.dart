@@ -16,8 +16,10 @@ import 'package:flutter_tools/src/android/android_workflow.dart';
 import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/context.dart';
+import 'package:flutter_tools/src/base/io.dart' show Stdio;
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/template.dart';
+import 'package:flutter_tools/src/base/terminal.dart' show OutputPreferences, Terminal;
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/build_targets.dart';
 import 'package:flutter_tools/src/cache.dart';
@@ -36,7 +38,6 @@ import 'package:flutter_tools/src/commands/screenshot.dart';
 import 'package:flutter_tools/src/commands/shell_completion.dart';
 import 'package:flutter_tools/src/commands/symbolize.dart';
 import 'package:flutter_tools/src/commands/update_packages.dart';
-import 'package:flutter_tools/src/commands/widget_preview.dart' show WidgetPreviewCommand;
 import 'package:flutter_tools/src/context/android_context.dart';
 import 'package:flutter_tools/src/context/apple_context.dart';
 import 'package:flutter_tools/src/context/tool_context.dart';
@@ -221,12 +222,23 @@ List<FlutterCommand> tvosCommands({
   ];
 }
 
-/// Main entry point for commands.
+/// The flags `main` derives from argv before anything else runs.
+typedef TvosMainFlags = ({
+  bool verbose,
+  bool verboseHelp,
+  bool muteCommandLogging,
+  bool prefixedErrors,
+  bool daemon,
+  bool machine,
+});
+
+/// Derives [TvosMainFlags] from [args] exactly as stock `flutter.main` derives
+/// them, and, as there, changes [args] in place: `-?` and `/?` become `-h`.
 ///
-/// Source: `flutter.main` in `executable.dart` (some commands and options were omitted)
-Future<void> main(List<String> args) async {
-  // The flags below are derived from argv exactly as stock `flutter.main`
-  // derives them; together they choose the logger (see [createTvosLogger]).
+/// Stock's `widget-preview` flag is left out: flutter-tvos has no such
+/// command.
+@visibleForTesting
+TvosMainFlags mainFlags(List<String> args) {
   final bool veryVerbose = args.contains('-vv');
   final bool verbose = args.contains('-v') || args.contains('--verbose') || veryVerbose;
   final bool prefixedErrors = args.contains('--prefixed-errors');
@@ -251,8 +263,44 @@ Future<void> main(List<String> args) async {
   final bool muteCommandLogging = (help || doctor) && !veryVerbose;
   final bool verboseHelp = help && verbose;
   final daemon = commandName == 'daemon';
-  final widgetPreviews = commandName == WidgetPreviewCommand.kWidgetPreview;
   final bool runMachine = args.contains('--machine');
+  return (
+    verbose: verbose,
+    verboseHelp: verboseHelp,
+    muteCommandLogging: muteCommandLogging,
+    prefixedErrors: prefixedErrors,
+    daemon: daemon,
+    machine: runMachine,
+  );
+}
+
+/// The logger `main` installs for [flags], as stock's `Logger` override
+/// builds it from the same flags (see [createTvosLogger]).
+@visibleForTesting
+Logger mainLogger(
+  TvosMainFlags flags, {
+  required Terminal terminal,
+  required Stdio stdio,
+  required OutputPreferences outputPreferences,
+  required bool windows,
+}) => createTvosLogger(
+  terminal: terminal,
+  stdio: stdio,
+  outputPreferences: outputPreferences,
+  daemon: flags.daemon,
+  machine: flags.machine,
+  verbose: flags.verbose && !flags.muteCommandLogging,
+  prefixedErrors: flags.prefixedErrors,
+  windows: windows,
+);
+
+/// Main entry point for commands.
+///
+/// Source: `flutter.main` in `executable.dart` (some commands and options were omitted)
+Future<void> main(List<String> args) async {
+  // Together these choose the logger (see [mainLogger]).
+  final TvosMainFlags flags = mainFlags(args);
+  final TvosMainFlags(:bool verbose, :bool verboseHelp, :bool muteCommandLogging) = flags;
 
   args = <String>[
     '--suppress-analytics', // Suppress flutter analytics by default.
@@ -340,21 +388,17 @@ Future<void> main(List<String> args) async {
         tvosWorkflow: tvosWorkflow!,
       ),
       TvosValidator: () => TvosValidator(processManager: globals.processManager),
-      // Stock's logger for the mode (daemon, --machine, widget-preview,
-      // verbose, --prefixed-errors), with TvosCategoryRewritingLogger in the
-      // chain so the device list shows `(tv)` instead of `(mobile)` for tvOS
-      // devices. Stock code looks the daemon and machine loggers up by type,
-      // so `daemon`, `run --machine` and `attach --machine` need them.
-      Logger: () => createTvosLogger(
+      // Stock's logger for the mode (daemon, --machine, verbose,
+      // --prefixed-errors), with TvosCategoryRewritingLogger in the chain so
+      // the device list shows `(tv)` instead of `(mobile)` for tvOS devices.
+      // Stock code looks the daemon and machine loggers up by type, so
+      // `daemon`, `run --machine` and `attach --machine` need them.
+      Logger: () => mainLogger(
+        flags,
         terminal: globals.terminal,
         stdio: globals.stdio,
         outputPreferences: globals.outputPreferences,
-        daemon: daemon,
-        machine: runMachine,
-        verbose: verbose && !muteCommandLogging,
-        prefixedErrors: prefixedErrors,
         windows: globals.platform.isWindows,
-        widgetPreviews: widgetPreviews,
       ),
     },
     shutdownHooks: globals.shutdownHooks,

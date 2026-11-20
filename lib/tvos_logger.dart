@@ -9,8 +9,6 @@ import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/terminal.dart';
 import 'package:flutter_tools/src/commands/daemon.dart' show MachineOutputLogger, NotifyingLogger;
-import 'package:flutter_tools/src/commands/widget_preview.dart'
-    show WidgetPreviewMachineAwareLogger;
 
 import 'tvos_device.dart' show TvosDevice;
 
@@ -20,20 +18,20 @@ import 'tvos_device.dart' show TvosDevice;
 /// Stock builds its logger with `LoggerFactory.createLogger` (in
 /// `flutter_tools/lib/executable.dart`), and parts of stock require the
 /// result by type: `daemon` looks up a [NotifyingLogger] with `asLogger`,
-/// `run --machine` a [MachineOutputLogger] the same way, `attach --machine`
-/// casts the logger itself to [MachineOutputLogger], and `widget-preview`
-/// casts it to [WidgetPreviewMachineAwareLogger]. So the mode logger has to
-/// be the outermost one, and ours goes directly beneath it.
+/// `run --machine` a [MachineOutputLogger] the same way, and
+/// `attach --machine` casts the logger itself to [MachineOutputLogger]. So the
+/// mode logger has to be the outermost one, and ours goes directly beneath it.
 ///
 /// The base of the chain (the stdout logger for the platform, with
 /// [VerboseLogger] and [PrefixedErrorLogger] when asked for) is stock's own
-/// factory called with every mode off. The three mode branches that follow
-/// repeat the end of `LoggerFactory.createLogger`, because the factory gives
-/// no way to put a logger beneath them, and [MachineOutputLogger] and
-/// [WidgetPreviewMachineAwareLogger] are `final`, so a tvOS subclass of them
-/// is not possible either. `test/general/tvos_logger_test.dart` compares the
-/// chain this builds with stock's for every combination of flags, and fails
-/// if a Flutter update changes stock's branches or their order.
+/// factory called with every mode off. The daemon and machine branches that
+/// follow repeat the end of `LoggerFactory.createLogger`, because the factory
+/// gives no way to put a logger beneath them, and [MachineOutputLogger] is
+/// `final`, so a tvOS subclass of it is not possible either. Stock's third
+/// branch, for `widget-preview`, is left out: flutter-tvos has no such
+/// command. `test/general/tvos_logger_test.dart` compares the chain this
+/// builds with stock's for every combination of flags, and fails if a Flutter
+/// update changes stock's branches or their order.
 Logger createTvosLogger({
   required Terminal terminal,
   required Stdio stdio,
@@ -43,7 +41,6 @@ Logger createTvosLogger({
   required bool machine,
   required bool daemon,
   required bool windows,
-  required bool widgetPreviews,
   StopwatchFactory stopwatchFactory = const StopwatchFactory(),
 }) {
   final Logger base =
@@ -61,14 +58,6 @@ Logger createTvosLogger({
         widgetPreviews: false,
       );
   final Logger logger = TvosCategoryRewritingLogger(base);
-  if (widgetPreviews) {
-    return WidgetPreviewMachineAwareLogger(
-      logger,
-      machine: machine,
-      verbose: verbose,
-      stdio: stdio,
-    );
-  }
   if (daemon) {
     return NotifyingLogger(verbose: verbose, parent: logger);
   }

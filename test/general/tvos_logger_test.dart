@@ -10,8 +10,7 @@ import 'package:flutter_tools/executable.dart' show LoggerFactory;
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/terminal.dart';
 import 'package:flutter_tools/src/commands/daemon.dart' show MachineOutputLogger, NotifyingLogger;
-import 'package:flutter_tools/src/commands/widget_preview.dart'
-    show WidgetPreviewMachineAwareLogger;
+import 'package:flutter_tvos/executable.dart' show TvosMainFlags, mainFlags, mainLogger;
 import 'package:flutter_tvos/tvos_logger.dart';
 
 import '../src/common.dart';
@@ -20,8 +19,8 @@ import '../src/fakes.dart';
 /// The logger `flutter-tvos` installs (flutter-tvos#100).
 ///
 /// Stock requires the daemon and machine loggers by type: `daemon` and
-/// `run --machine` with `asLogger`, `attach --machine` and `widget-preview`
-/// with a cast on the logger itself. Before this was fixed the override always
+/// `run --machine` with `asLogger`, `attach --machine` with a cast on the
+/// logger itself. Before this was fixed the override always
 /// built `TvosCategoryRewritingLogger(StdoutLogger)`, and all three commands
 /// failed before doing anything.
 void main() {
@@ -42,7 +41,6 @@ void main() {
     bool machine = false,
     bool daemon = false,
     bool windows = false,
-    bool widgetPreviews = false,
   }) => createTvosLogger(
     terminal: Terminal.test(),
     stdio: stdio,
@@ -52,7 +50,6 @@ void main() {
     machine: machine,
     daemon: daemon,
     windows: windows,
-    widgetPreviews: widgetPreviews,
   );
 
   String stdout() => stdio.writtenToStdout.join();
@@ -153,15 +150,87 @@ void main() {
     });
   });
 
-  testWithoutContext('widget-preview gets the logger it casts to', () {
-    final Logger logger = create(widgetPreviews: true, machine: true);
-    expect(logger, isA<WidgetPreviewMachineAwareLogger>());
-    expect(asLogger<TvosCategoryRewritingLogger>(logger), isA<TvosCategoryRewritingLogger>());
+  // What main installs, from the command line as main reads it. The cases
+  // above call createTvosLogger with flags already chosen; these hold how main
+  // chooses them, which is where #100 came back if they were all false.
+  group('the logger main installs', () {
+    Logger fromArgs(List<String> args) => mainLogger(
+      mainFlags(args),
+      terminal: Terminal.test(),
+      stdio: stdio,
+      outputPreferences: OutputPreferences.test(),
+      windows: false,
+    );
+
+    for (final args in <List<String>>[
+      <String>['daemon'],
+      <String>['-v', 'daemon'],
+      <String>['--verbose', 'daemon'],
+    ]) {
+      testWithoutContext('`${args.join(' ')}` gets the NotifyingLogger the daemon looks up', () {
+        final Logger logger = fromArgs(args);
+        expect(asLogger<NotifyingLogger>(logger), same(logger));
+        expect(logger.isVerbose, args.length > 1);
+        expect(asLogger<TvosCategoryRewritingLogger>(logger), isA<TvosCategoryRewritingLogger>());
+      });
+    }
+
+    for (final args in <List<String>>[
+      <String>['run', '--machine'],
+      <String>['attach', '--machine', '-d', '1234-ABCD'],
+      <String>['--machine', '--version'],
+      <String>['-v', 'devices', '--machine'],
+    ]) {
+      testWithoutContext('`${args.join(' ')}` gets the MachineOutputLogger run and attach require', () {
+        final Logger logger = fromArgs(args);
+        expect(logger, isA<MachineOutputLogger>());
+        expect(asLogger<MachineOutputLogger>(logger), same(logger));
+        expect(asLogger<TvosCategoryRewritingLogger>(logger), isA<TvosCategoryRewritingLogger>());
+      });
+    }
+
+    testWithoutContext('`devices` gets the rewriting logger over the terminal', () {
+      final Logger logger = fromArgs(<String>['devices']);
+      expect(logger, isA<TvosCategoryRewritingLogger>());
+      expect(logger.isVerbose, isFalse);
+      expect(logger.isMachine, isFalse);
+    });
+
+    testWithoutContext('`-v devices` is verbose', () {
+      expect(fromArgs(<String>['-v', 'devices']).isVerbose, isTrue);
+    });
+
+    for (final args in <List<String>>[
+      <String>['-v', 'help'],
+      <String>['-v', 'doctor'],
+      <String>['-v', 'run', '-h'],
+      <String>['-v', 'run', '-?'],
+    ]) {
+      testWithoutContext('`${args.join(' ')}` mutes verbose logging, as stock does', () {
+        expect(fromArgs(args).isVerbose, isFalse);
+      });
+    }
+
+    testWithoutContext('`-vv doctor` stays verbose', () {
+      expect(fromArgs(<String>['-vv', 'doctor']).isVerbose, isTrue);
+    });
+
+    testWithoutContext('the flags runner.run is given', () {
+      final args = <String>['-v', 'run', '/?'];
+      final TvosMainFlags flags = mainFlags(args);
+      expect(args, <String>['-v', 'run', '-h'], reason: 'the help idioms become -h, as in stock');
+      expect(flags.verbose, isTrue);
+      expect(flags.verboseHelp, isTrue);
+      expect(flags.muteCommandLogging, isTrue);
+      expect(mainFlags(<String>['--prefixed-errors', 'devices']).prefixedErrors, isTrue);
+      expect(mainFlags(<String>['devices']).prefixedErrors, isFalse);
+    });
   });
 
   // createTvosLogger calls stock's LoggerFactory for the base of the chain
-  // and repeats its daemon, machine and widget-preview branches, to put the
-  // rewriting logger beneath them. If a Flutter update changes those
+  // and repeats its daemon and machine branches, to put the rewriting logger
+  // beneath them. flutter-tvos has no widget-preview command, so stock is
+  // asked without it. If a Flutter update changes those
   // branches, their order, or how the base is built, this fails: the two
   // chains must match type for type once the rewriting logger is taken out.
   testWithoutContext('matches stock LoggerFactory for every combination of flags', () {
@@ -170,14 +239,13 @@ void main() {
       stdio: stdio,
       outputPreferences: OutputPreferences.test(),
     );
-    for (var bits = 0; bits < 64; bits++) {
+    for (var bits = 0; bits < 32; bits++) {
       bool flag(int i) => bits & (1 << i) != 0;
       final bool verbose = flag(0);
       final bool prefixedErrors = flag(1);
       final bool machine = flag(2);
       final bool daemon = flag(3);
       final bool windows = flag(4);
-      final bool widgetPreviews = flag(5);
       final List<Type> stock = _chain(
         factory.createLogger(
           verbose: verbose,
@@ -185,7 +253,7 @@ void main() {
           machine: machine,
           daemon: daemon,
           windows: windows,
-          widgetPreviews: widgetPreviews,
+          widgetPreviews: false,
         ),
       );
       final List<Type> ours = _chain(
@@ -195,17 +263,16 @@ void main() {
           machine: machine,
           daemon: daemon,
           windows: windows,
-          widgetPreviews: widgetPreviews,
         ),
       );
       final flags =
           'verbose: $verbose, prefixedErrors: $prefixedErrors, machine: $machine, '
-          'daemon: $daemon, windows: $windows, widgetPreviews: $widgetPreviews';
+          'daemon: $daemon, windows: $windows';
       expect(ours, contains(TvosCategoryRewritingLogger), reason: flags);
       expect(ours.where((Type t) => t != TvosCategoryRewritingLogger), stock, reason: flags);
-      // A mode logger (daemon, machine, widget-preview) stays outermost:
-      // stock casts the logger itself to some of them.
-      if (daemon || machine || widgetPreviews) {
+      // A mode logger (daemon, machine) stays outermost: stock casts the
+      // logger itself to the machine one.
+      if (daemon || machine) {
         expect(ours.first, stock.first, reason: flags);
       }
     }
