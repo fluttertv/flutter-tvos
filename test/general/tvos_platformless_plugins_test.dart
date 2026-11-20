@@ -356,7 +356,7 @@ flutter:
         await TvosBuilder.writeDartPluginRegistrant(project);
 
         // What to fix; the tvOS plugins are found all the same.
-        expect(logger.warningText, contains('Flutter itself rejects this dependency'));
+        expect(logger.warningText, contains('Flutter could not refresh its plugin list'));
         expect(logger.warningText, contains('odd_package'));
         expect(dartRegistrant(), contains('gizmo_tvos.GizmoTvos.registerWith()'));
       },
@@ -387,7 +387,8 @@ flutter:
         TvosBuilder.writeDartPluginRegistrant(project),
         throwsToolExit(message: 'package_graph.json'),
       );
-      expect(logger.warningText, contains('Could not refresh .flutter-plugins-dependencies'));
+      // Only what is wrong: nothing was rejected, and no plugin was found.
+      expect(logger.warningText, isEmpty);
     }, overrides: overrides());
 
     testUsingContext('stops the build on a malformed package graph', () async {
@@ -410,7 +411,7 @@ flutter:
         TvosBuilder.writeDartPluginRegistrant(project),
         throwsToolExit(message: 'flutter-tvos pub get'),
       );
-      expect(logger.warningText, contains('Could not refresh .flutter-plugins-dependencies'));
+      expect(logger.warningText, isEmpty);
     }, overrides: overrides());
 
     testUsingContext('writes no plugin list into a plugin package', () async {

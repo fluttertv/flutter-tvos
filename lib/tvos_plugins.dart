@@ -135,41 +135,15 @@ class _DependencyPluginYaml {
 /// built with. Its pubspecs are read here as before: one that is missing or
 /// does not parse is not a plugin.
 ///
-/// A package config or package graph that is missing or does not parse stops
-/// the build with a [ToolExit] that says to run `pub get`: without them no
-/// plugin can be found, and an app built with none throws
-/// `MissingPluginException` from every plugin at runtime.
-List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
-  final PackageConfig packageConfig = _loadPackageConfig(project);
-  // Checked here for a message that says what to do: upstream's reader goes
-  // through the error-handling file system, whose message suggests
-  // `flutter clean`.
-  final File packageGraph = globals.fs.file(project.packageConfig.uri.resolve('package_graph.json'));
-  if (!packageGraph.existsSync()) {
-    throwToolExit(
-      'No ${packageGraph.path} was found, so the tvOS plugins of ${project.directory.path} '
-      'cannot be found.\n'
-      'Try running `flutter-tvos pub get`.',
-    );
-  }
-  final List<Dependency> dependencies;
-  try {
-    dependencies = computeTransitiveDependencies(project, packageConfig);
-  } on ToolExit {
-    rethrow;
-  } on Object catch (error) {
-    // Upstream's graph reader lets a TypeError through for a dependency list
-    // that is not all strings, and a null check fail for a package the
-    // package config does not have.
-    throwToolExit(
-      'Could not read the package graph of ${project.directory.path}, so its tvOS plugins '
-      'cannot be found: $error\n'
-      'Try running `flutter-tvos pub get`.',
-    );
-  }
-
+/// Pass the [dependencies] that [_readPluginDependencyGraph] returned when the
+/// caller has already read them; otherwise they are read here, with the
+/// [ToolExit] that method throws.
+List<_DependencyPluginYaml> _walkPluginDependencies(
+  FlutterProject project, {
+  List<Dependency>? dependencies,
+}) {
   final found = <String, _DependencyPluginYaml>{};
-  for (final dependency in dependencies) {
+  for (final Dependency dependency in dependencies ?? _readPluginDependencyGraph(project)) {
     final String pluginPath = globals.fs.path.normalize(
       globals.fs.path.fromUri(dependency.rootUri),
     );
@@ -226,6 +200,45 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
   return <_DependencyPluginYaml>[for (final Plugin plugin in sorted) found[plugin.name]!];
 }
 
+/// Reads, from the package config and package graph that `pub get` wrote, the
+/// packages [project] depends on, directly or not.
+///
+/// A package config or package graph that is missing or does not parse stops
+/// the build with a [ToolExit] that says to run `pub get`: without them no
+/// plugin can be found, and an app built with none throws
+/// `MissingPluginException` from every plugin at runtime. Every failure here
+/// is one that `pub get` repairs, and nothing else throws from here, so a
+/// caller that runs before `pub get` can tell them from other errors by where
+/// they come from (see [ensureReadyForTvosTooling]).
+List<Dependency> _readPluginDependencyGraph(FlutterProject project) {
+  final PackageConfig packageConfig = _loadPackageConfig(project);
+  // Checked here for a message that says what to do: upstream's reader goes
+  // through the error-handling file system, whose message suggests
+  // `flutter clean`.
+  final File packageGraph = globals.fs.file(project.packageConfig.uri.resolve('package_graph.json'));
+  if (!packageGraph.existsSync()) {
+    throwToolExit(
+      'No ${packageGraph.path} was found, so the tvOS plugins of ${project.directory.path} '
+      'cannot be found.\n'
+      'Try running `flutter-tvos pub get`.',
+    );
+  }
+  try {
+    return computeTransitiveDependencies(project, packageConfig);
+  } on ToolExit {
+    rethrow;
+  } on Object catch (error) {
+    // Upstream's graph reader lets a TypeError through for a dependency list
+    // that is not all strings, and a null check fail for a package the
+    // package config does not have.
+    throwToolExit(
+      'Could not read the package graph of ${project.directory.path}, so its tvOS plugins '
+      'cannot be found: $error\n'
+      'Try running `flutter-tvos pub get`.',
+    );
+  }
+}
+
 /// Reads the package config `pub get` wrote for [project], or stops the build
 /// with a [ToolExit] that says to run `pub get` when there is none or it does
 /// not parse.
@@ -251,9 +264,14 @@ PackageConfig _loadPackageConfig(FlutterProject project) {
 
 /// Discovers plugins in [project] that declare a `flutter.plugin.platforms.tvos`
 /// block, parsing them into [TvosPlugin] instances.
-List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
+///
+/// [dependencies] are as for [_walkPluginDependencies].
+List<TvosPlugin> _discoverTvosPlugins(FlutterProject project, {List<Dependency>? dependencies}) {
   final tvosPlugins = <TvosPlugin>[];
-  for (final _DependencyPluginYaml dep in _walkPluginDependencies(project)) {
+  for (final _DependencyPluginYaml dep in _walkPluginDependencies(
+    project,
+    dependencies: dependencies,
+  )) {
     final Object? platforms = dep.pluginYaml['platforms'];
     if (platforms is! YamlMap) {
       continue;
@@ -599,7 +617,16 @@ String _renderFfiForcedReferenceBody(List<String> symbols) {
 /// [ensureReadyForTvosTooling] also calls it, but from `validateCommand`,
 /// which runs before `pub get`: on a fresh checkout, after `clean`, or with a
 /// plugin just added, the package config it reads is missing or stale.
-Future<void> refreshTvosPluginsList(FlutterProject project) async {
+///
+/// A package config or graph that cannot be read throws the [ToolExit] of
+/// [_readPluginDependencyGraph], before Flutter's own refresh runs. When
+/// Flutter's own refresh then fails, [onFlutterRefreshFailed] is given what
+/// it threw and the `plugins.tvos` list is written all the same; without
+/// [onFlutterRefreshFailed], the error is thrown.
+Future<void> refreshTvosPluginsList(
+  FlutterProject project, {
+  void Function(Object error)? onFlutterRefreshFailed,
+}) async {
   final bool flutterRefreshesIt =
       project.android.existsSync() ||
       project.ios.existsSync() ||
@@ -612,13 +639,28 @@ Future<void> refreshTvosPluginsList(FlutterProject project) async {
       findPackageConfigFile(project.directory) == null) {
     return;
   }
-  await refreshPluginsList(project);
+  // Read first, so that a package config or graph that cannot be read stops
+  // with what to do rather than with what upstream's reader says about it.
+  final List<Dependency> dependencies = _readPluginDependencyGraph(project);
+  try {
+    await refreshPluginsList(project);
+  } on Object catch (error) {
+    // Not only an Exception: upstream's reader lets a TypeError through for
+    // a package_graph.json whose dependencies are not all strings.
+    if (onFlutterRefreshFailed == null) {
+      rethrow;
+    }
+    onFlutterRefreshFailed(error);
+  }
   // Upstream writes the file from scratch, without the `plugins.tvos` list
   // that the tvOS Podfile reads. Write the current one straight away, from
   // the list just refreshed, rather than leave it missing until
   // [ensureReadyForTvosTooling] runs again: a build that stops in between,
   // on a Dart error or Ctrl-C, would leave `pod install` with no tvOS plugins.
-  _writeTvosPluginsList(project, _tvosPluginEntries(_discoverTvosPlugins(project)));
+  _writeTvosPluginsList(
+    project,
+    _tvosPluginEntries(_discoverTvosPlugins(project, dependencies: dependencies)),
+  );
 }
 
 /// The `plugins.tvos` entries of `.flutter-plugins-dependencies`, which the
@@ -686,12 +728,17 @@ Future<void> ensureReadyForTvosTooling(
   // Commands call this from `validateCommand` with [beforePubGet], and
   // `validateCommand` runs before `pub get`. Then the package config and
   // graph can be missing (a fresh checkout) or out of date in a way `pub get`
-  // repairs, so a failure to find the plugins is not this pass's to report:
-  // leave the files alone, and the native build, which calls this again after
-  // `pub get`, writes them, or stops on what is still broken.
-  final List<TvosPlugin> plugins;
+  // repairs, so failing to read them is not this pass's to report: leave the
+  // files alone, and the native build, which calls this again after
+  // `pub get`, writes them, or stops on what is still broken. Only that
+  // failure: anything else found once they are read is not one `pub get`
+  // repairs, and is reported now, before anything is built. Flutter itself
+  // first reads plugins straight after `pub get`
+  // (`regeneratePlatformSpecificToolingIfApplicable` in
+  // `verifyThenRunCommand`), and stops there on what it finds.
+  final List<Dependency> dependencies;
   try {
-    plugins = _discoverTvosPlugins(project);
+    dependencies = _readPluginDependencyGraph(project);
   } on ToolExit catch (error) {
     if (!beforePubGet) {
       rethrow;
@@ -701,6 +748,7 @@ Future<void> ensureReadyForTvosTooling(
     );
     return;
   }
+  final List<TvosPlugin> plugins = _discoverTvosPlugins(project, dependencies: dependencies);
 
   // For each plugin in the app's dep graph that has a FlutterTV-
   // published `<name>_tvos` sibling the user hasn't added yet, print

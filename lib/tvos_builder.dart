@@ -29,24 +29,24 @@ class TvosBuilder {
   /// run: Flutter does not write it for a project with no platform but tvOS,
   /// and the refresh in `validateCommand` ran before `pub get`.
   ///
-  /// Best effort, as in [ensureReadyForTvosTooling]: upstream's list rejects
-  /// some dependencies a tvOS-only app has always built with, such as one
-  /// declaring `flutter: plugin:` with no platforms. The build goes on, and
-  /// says so. The registrant itself does not depend on that list: its plugins
-  /// are found from the package config and graph, and a missing or broken one
-  /// stops the build.
+  /// A package config or graph that cannot be read stops the build here, with
+  /// what to do: the registrant's plugins are found from them. Flutter's own
+  /// refresh of the file is best effort, as in [ensureReadyForTvosTooling]: it
+  /// rejects some dependencies a tvOS-only app has always built with, such as
+  /// one declaring `flutter: plugin:` with no platforms. The build goes on,
+  /// and says so.
   @visibleForTesting
   static Future<void> writeDartPluginRegistrant(FlutterProject project) async {
-    try {
-      await refreshTvosPluginsList(project);
-    } on Object catch (error) {
-      // Not only an Exception: upstream's reader lets a TypeError through for
-      // a package_graph.json whose dependencies are not all strings.
-      globals.logger.printWarning(
-        'Could not refresh .flutter-plugins-dependencies. The tvOS plugins are still found from '
-        'the package config, but Flutter itself rejects this dependency as a plugin.\n$error',
-      );
-    }
+    await refreshTvosPluginsList(
+      project,
+      onFlutterRefreshFailed: (Object error) {
+        globals.logger.printWarning(
+          'Flutter could not refresh its plugin list in .flutter-plugins-dependencies. The tvOS '
+          'plugins do not depend on it: they are still found from the package config and '
+          'package graph.\n$error',
+        );
+      },
+    );
     writeTvosDartPluginRegistrant(project);
   }
 

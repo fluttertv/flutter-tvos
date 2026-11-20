@@ -16,6 +16,7 @@
 import 'dart:convert';
 
 import 'package:file/memory.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/flutter_plugins.dart' show refreshPluginsList;
@@ -31,9 +32,22 @@ import '../src/pub_get.dart';
 void main() {
   late MemoryFileSystem fileSystem;
   late BufferLogger logger;
+  // A file that cannot be read, as Flutter's error-handling file system
+  // reports one: with a ToolExit.
+  String? unreadablePath;
 
   setUp(() {
-    fileSystem = MemoryFileSystem.test();
+    unreadablePath = null;
+    fileSystem = MemoryFileSystem.test(
+      opHandle: (String context, FileSystemOp operation) {
+        if (operation == FileSystemOp.read && context == unreadablePath) {
+          throwToolExit(
+            'Flutter failed to read a file at "$context". '
+            'The flutter tool cannot access the file or directory.',
+          );
+        }
+      },
+    );
     logger = BufferLogger.test();
   });
 
@@ -350,6 +364,20 @@ flutter:
       await ensureReadyForTvosTooling(seedApp(), beforePubGet: true);
 
       expectAllPluginsFound();
+    }, overrides: overrides());
+
+    // Only a package config or graph that cannot be read waits for `pub get`.
+    // Anything wrong once they are read stays wrong after it, so it stops
+    // the command now, not late in the native build.
+    testUsingContext('stops on an error that pub get does not repair', () async {
+      final FlutterProject project = seedApp();
+      unreadablePath = '/pub/gadget/pubspec.yaml';
+
+      await expectLater(
+        ensureReadyForTvosTooling(project, beforePubGet: true),
+        throwsToolExit(message: 'cannot access the file'),
+      );
+      expect(logger.traceText, isNot(contains('not found before pub get')));
     }, overrides: overrides());
   });
 
