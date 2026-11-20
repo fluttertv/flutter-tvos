@@ -4,14 +4,17 @@
 
 import 'dart:convert';
 
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/dart/language_version.dart';
 import 'package:flutter_tools/src/dart/package_map.dart' show findPackageConfigFile;
 import 'package:flutter_tools/src/features.dart';
-import 'package:flutter_tools/src/flutter_plugins.dart' show refreshPluginsList;
+import 'package:flutter_tools/src/flutter_plugins.dart' show refreshPluginsList, sortByDependencies;
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/package_graph.dart';
 import 'package:flutter_tools/src/platform_plugins.dart';
+import 'package:flutter_tools/src/plugins.dart';
 import 'package:flutter_tools/src/project.dart';
 import 'package:package_config/package_config.dart';
 import 'package:yaml/yaml.dart';
@@ -94,6 +97,8 @@ class _DependencyPluginYaml {
     required this.name,
     required this.path,
     required this.pluginYaml,
+    required this.dependencies,
+    required this.isDevDependency,
   });
 
   /// Pub package name (e.g. `audioplayers`).
@@ -104,92 +109,44 @@ class _DependencyPluginYaml {
 
   /// The `flutter.plugin:` map from the plugin's `pubspec.yaml`.
   final YamlMap pluginYaml;
+
+  /// The packages under `dependencies:` in the plugin's `pubspec.yaml`.
+  final List<String> dependencies;
+
+  /// Whether the app reaches this plugin only through its `dev_dependencies`.
+  final bool isDevDependency;
 }
 
-/// Walks the project's plugin dependency graph and yields each entry
-/// that declares a `flutter.plugin:` block, regardless of platform.
+/// Walks the packages the project depends on, directly or not, and yields
+/// each one that declares a `flutter.plugin:` block, regardless of platform,
+/// in the order Flutter lists plugins.
 ///
-/// Flutter's built-in [`findPlugins`](https://github.com/flutter/flutter/blob/main/packages/flutter_tools/lib/src/flutter_plugins.dart)
-/// ignores unknown platform keys like `tvos`, so we read the
-/// `dependencyGraph` from `.flutter-plugins-dependencies` (which
-/// Flutter does populate even for unrecognized platforms) to get
-/// plugin names, resolve each one's path through
-/// `.dart_tool/package_config.json`, and parse each pubspec ourselves.
+/// The source of truth is what `pub get` resolved: the package config and the
+/// package graph next to it, which are what Flutter's own `findPlugins` reads.
+/// The set of packages and whether each is reached only through
+/// `dev_dependencies` come from upstream's [computeTransitiveDependencies],
+/// and the order from upstream's [sortByDependencies], so the list is the one
+/// `findPlugins` returns, which is also what Flutter writes to the deprecated
+/// `dependencyGraph` of `.flutter-plugins-dependencies` that this used to read.
 ///
-/// Returns `[]` (not an error) if either input file is missing or
-/// malformed; callers degrade silently the same way Flutter itself
-/// does for plugin discovery.
-List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
-  final out = <_DependencyPluginYaml>[];
-
-  final File depsFile = project.flutterPluginsDependenciesFile;
-  if (!depsFile.existsSync()) {
-    return out;
-  }
-  Map<String, dynamic> depsJson;
-  try {
-    final Object? decoded = json.decode(depsFile.readAsStringSync());
-    if (decoded is! Map<String, dynamic>) {
-      // Root JSON is valid but not an object (e.g. `[]`, `null`, a
-      // bare number). A blind `as Map` cast would throw `TypeError`
-      // outside the try/catch — degrade silently here the same way
-      // we do for malformed JSON.
-      return out;
-    }
-    depsJson = decoded;
-  } on FormatException {
-    return out; // Malformed JSON — treat as no plugins.
-  } on FileSystemException {
-    return out; // File disappeared between existsSync() and read.
-  }
-  final Object? rawGraph = depsJson['dependencyGraph'];
-  final List<dynamic> depGraph =
-      rawGraph is List<dynamic> ? rawGraph : <dynamic>[];
-
-  // Build a name→path map from .dart_tool/package_config.json.
-  // Pub workspaces hoist package_config.json to the workspace root, so this
-  // walks up from the project directory until one is found. Use the same
-  // helper upstream's plugin discovery uses (and that tvos_builder.dart:79
-  // already uses), so both places in this build resolve package_config.json
-  // with identical (normalized, path-equals-terminated) semantics.
-  final packagePaths = <String, String>{};
-  final File packageConfigFile = project.packageConfig;
-  if (packageConfigFile.existsSync()) {
-    try {
-      final packageConfig =
-          json.decode(packageConfigFile.readAsStringSync()) as Map<String, dynamic>;
-      final List<dynamic> packages =
-          (packageConfig['packages'] as List<dynamic>?) ?? <dynamic>[];
-      for (final dynamic pkg in packages) {
-        final pkgMap = pkg as Map<String, dynamic>;
-        final name = pkgMap['name'] as String;
-        var rootUri = pkgMap['rootUri'] as String;
-        // rootUri may be relative to the package_config.json's own directory
-        // (which is the workspace root's .dart_tool/ under pub workspaces) or
-        // a file:// URI.
-        if (rootUri.startsWith('../') || rootUri.startsWith('./')) {
-          rootUri = globals.fs.path.normalize(
-            globals.fs.path.join(packageConfigFile.parent.path, rootUri),
-          );
-        } else if (rootUri.startsWith('file://')) {
-          rootUri = Uri.parse(rootUri).toFilePath();
-        }
-        packagePaths[name] = rootUri;
-      }
-    } on FormatException {
-      // Malformed package_config.json — leave packagePaths empty.
-    } on TypeError {
-      // Unexpected JSON shape; fall through with empty packagePaths.
-    }
-  }
-
-  for (final dynamic dep in depGraph) {
-    final depMap = dep as Map<String, dynamic>;
-    final pluginName = depMap['name'] as String;
-    final String? pluginPath = packagePaths[pluginName];
-    if (pluginPath == null) {
-      continue;
-    }
+/// `findPlugins` itself is not called because it also validates each plugin
+/// for Flutter's own platforms, and stops on a dependency that declares
+/// `flutter: plugin:` without platforms, which tvOS-only apps have always
+/// built with. Its pubspecs are read here as before: one that is missing or
+/// does not parse is not a plugin.
+///
+/// Pass the [dependencies] that [_readPluginDependencyGraph] returned when the
+/// caller has already read them; otherwise they are read here, with the
+/// [ToolExit] that method throws.
+List<_DependencyPluginYaml> _walkPluginDependencies(
+  FlutterProject project, {
+  List<Dependency>? dependencies,
+}) {
+  final found = <String, _DependencyPluginYaml>{};
+  for (final Dependency dependency in dependencies ?? _readPluginDependencyGraph(project)) {
+    final String pluginPath = globals.fs.path.normalize(
+      globals.fs.path.fromUri(dependency.rootUri),
+    );
     final File pubspecFile = globals.fs.file(
       globals.fs.path.join(pluginPath, 'pubspec.yaml'),
     );
@@ -197,35 +154,124 @@ List<_DependencyPluginYaml> _walkPluginDependencies(FlutterProject project) {
       continue;
     }
     try {
-      final pubspec = loadYaml(pubspecFile.readAsStringSync()) as YamlMap;
-      final flutter = pubspec['flutter'] as YamlMap?;
-      final plugin = flutter?['plugin'] as YamlMap?;
-      if (plugin == null) {
+      final Object? pubspec = loadYaml(pubspecFile.readAsStringSync());
+      if (pubspec is! YamlMap) {
         continue;
       }
-      out.add(_DependencyPluginYaml(
-        name: pluginName,
+      final Object? flutter = pubspec['flutter'];
+      final Object? plugin = flutter is YamlMap ? flutter['plugin'] : null;
+      if (plugin is! YamlMap) {
+        continue;
+      }
+      final Object? pubspecDependencies = pubspec['dependencies'];
+      found[dependency.name] = _DependencyPluginYaml(
+        name: dependency.name,
         path: pluginPath,
         pluginYaml: plugin,
-      ));
+        dependencies: <String>[
+          if (pubspecDependencies is YamlMap) ...pubspecDependencies.keys.whereType<String>(),
+        ],
+        isDevDependency: dependency.isExclusiveDevDependency,
+      );
     } on YamlException {
-      // Malformed pubspec.yaml — skip this plugin.
+      // Malformed pubspec.yaml: not a plugin, as upstream treats it.
       continue;
-    } on TypeError {
-      // pubspec layout doesn't match the expected schema (e.g.
-      // plugin.platforms is a list rather than a map); skip.
+    } on FileSystemException {
       continue;
     }
   }
 
-  return out;
+  // Upstream's order: dependencies before the plugins that depend on them,
+  // and alphabetical otherwise. It sorts [Plugin]s, so give it stand-ins
+  // that carry the name and dependencies, which is all it reads.
+  final List<Plugin> sorted = sortByDependencies(<Plugin>[
+    for (final _DependencyPluginYaml dep in found.values)
+      Plugin(
+        name: dep.name,
+        path: dep.path,
+        platforms: const <String, PluginPlatform>{},
+        defaultPackagePlatforms: const <String, String>{},
+        pluginDartClassPlatforms: const <String, DartPluginClassAndFilePair>{},
+        dependencies: dep.dependencies,
+        isDirectDependency: false,
+        isDevDependency: dep.isDevDependency,
+      ),
+  ]);
+  return <_DependencyPluginYaml>[for (final Plugin plugin in sorted) found[plugin.name]!];
+}
+
+/// Reads, from the package config and package graph that `pub get` wrote, the
+/// packages [project] depends on, directly or not.
+///
+/// A package config or package graph that is missing or does not parse stops
+/// the build with a [ToolExit] that says to run `pub get`: without them no
+/// plugin can be found, and an app built with none throws
+/// `MissingPluginException` from every plugin at runtime. Every failure here
+/// is one that `pub get` repairs, and nothing else throws from here, so a
+/// caller that runs before `pub get` can tell them from other errors by where
+/// they come from (see [ensureReadyForTvosTooling]).
+List<Dependency> _readPluginDependencyGraph(FlutterProject project) {
+  final PackageConfig packageConfig = _loadPackageConfig(project);
+  // Checked here for a message that says what to do: upstream's reader goes
+  // through the error-handling file system, whose message suggests
+  // `flutter clean`.
+  final File packageGraph = globals.fs.file(project.packageConfig.uri.resolve('package_graph.json'));
+  if (!packageGraph.existsSync()) {
+    throwToolExit(
+      'No ${packageGraph.path} was found, so the tvOS plugins of ${project.directory.path} '
+      'cannot be found.\n'
+      'Try running `flutter-tvos pub get`.',
+    );
+  }
+  try {
+    return computeTransitiveDependencies(project, packageConfig);
+  } on ToolExit {
+    rethrow;
+  } on Object catch (error) {
+    // Upstream's graph reader lets a TypeError through for a dependency list
+    // that is not all strings, and a null check fail for a package the
+    // package config does not have.
+    throwToolExit(
+      'Could not read the package graph of ${project.directory.path}, so its tvOS plugins '
+      'cannot be found: $error\n'
+      'Try running `flutter-tvos pub get`.',
+    );
+  }
+}
+
+/// Reads the package config `pub get` wrote for [project], or stops the build
+/// with a [ToolExit] that says to run `pub get` when there is none or it does
+/// not parse.
+PackageConfig _loadPackageConfig(FlutterProject project) {
+  final File? file = findPackageConfigFile(project.directory);
+  if (file == null) {
+    throwToolExit(
+      'No .dart_tool/package_config.json was found for ${project.directory.path}, so its tvOS '
+      'plugins cannot be found.\n'
+      'Try running `flutter-tvos pub get`.',
+    );
+  }
+  try {
+    return PackageConfig.parseBytes(file.readAsBytesSync(), file.absolute.uri);
+  } on Object catch (error) {
+    throwToolExit(
+      'Could not read ${file.path}, so the tvOS plugins of ${project.directory.path} cannot be '
+      'found: $error\n'
+      'Try running `flutter-tvos pub get`.',
+    );
+  }
 }
 
 /// Discovers plugins in [project] that declare a `flutter.plugin.platforms.tvos`
 /// block, parsing them into [TvosPlugin] instances.
-List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
+///
+/// [dependencies] are as for [_walkPluginDependencies].
+List<TvosPlugin> _discoverTvosPlugins(FlutterProject project, {List<Dependency>? dependencies}) {
   final tvosPlugins = <TvosPlugin>[];
-  for (final _DependencyPluginYaml dep in _walkPluginDependencies(project)) {
+  for (final _DependencyPluginYaml dep in _walkPluginDependencies(
+    project,
+    dependencies: dependencies,
+  )) {
     final Object? platforms = dep.pluginYaml['platforms'];
     if (platforms is! YamlMap) {
       continue;
@@ -245,7 +291,8 @@ List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
       ),
     );
     globals.logger.printTrace(
-      'Discovered tvOS plugin: ${dep.name} at ${dep.path}',
+      'Discovered tvOS plugin: ${dep.name} at ${dep.path}'
+      '${dep.isDevDependency ? ' (dev dependency)' : ''}',
     );
   }
   return tvosPlugins;
@@ -260,8 +307,8 @@ List<TvosPlugin> _discoverTvosPlugins(FlutterProject project) {
 /// symbols in the binary (see [_collectFfiForcedReferenceSymbols]).
 ///
 /// Tolerant of garbage: a non-list value, non-string entries, and names that
-/// aren't valid C identifiers are dropped with a trace, never an exception —
-/// plugin discovery degrades silently the same way the rest of this file does.
+/// aren't valid C identifiers are dropped with a trace, never an exception: a
+/// plugin with a malformed list still registers.
 List<String> _parseFfiSymbols(String pluginName, Object? raw) {
   if (raw == null) {
     return const <String>[];
@@ -549,16 +596,16 @@ String _renderFfiForcedReferenceBody(List<String> symbols) {
 /// Writes `.flutter-plugins-dependencies` for a project Flutter no longer
 /// writes it for.
 ///
-/// Every tvOS plugin is found through that file's `dependencyGraph` (see
-/// [_walkPluginDependencies]). Flutter 3.47 made
-/// `FlutterProject.ensureReadyForPlatformSpecificTooling` return before
-/// `refreshPluginsList` when none of its own platforms is present, since
-/// nothing of Flutter's reads the list then. A project created with
-/// `--platforms=tvos` is exactly that: `flutter pub get` stopped writing the
-/// file, discovery found nothing, and the generated registrants came out
-/// empty — every native plugin a `MissingPluginException`, every Dart plugin
-/// unregistered, every FFI plugin's symbols unreferenced. So write it here, as
-/// `flutter pub get` did before.
+/// The tvOS Podfile reads its plugins from that file's `plugins.tvos` list.
+/// Flutter 3.47 made `FlutterProject.ensureReadyForPlatformSpecificTooling`
+/// return before `refreshPluginsList` when none of its own platforms is
+/// present, since nothing of Flutter's reads the list then. A project created
+/// with `--platforms=tvos` is exactly that: `flutter pub get` stopped writing
+/// the file. Until 1.12.0 tvOS plugins were also found through its
+/// `dependencyGraph`, so the generated registrants came out empty; they are
+/// now found from the package config and graph (see
+/// [_walkPluginDependencies]). So write it here, as `flutter pub get` did
+/// before.
 ///
 /// Only when Flutter skipped it, with the same conditions Flutter checks: a
 /// project with any of those platforms already gets it from `pub get`. And
@@ -570,7 +617,16 @@ String _renderFfiForcedReferenceBody(List<String> symbols) {
 /// [ensureReadyForTvosTooling] also calls it, but from `validateCommand`,
 /// which runs before `pub get`: on a fresh checkout, after `clean`, or with a
 /// plugin just added, the package config it reads is missing or stale.
-Future<void> refreshTvosPluginsList(FlutterProject project) async {
+///
+/// A package config or graph that cannot be read throws the [ToolExit] of
+/// [_readPluginDependencyGraph], before Flutter's own refresh runs. When
+/// Flutter's own refresh then fails, [onFlutterRefreshFailed] is given what
+/// it threw and the `plugins.tvos` list is written all the same; without
+/// [onFlutterRefreshFailed], the error is thrown.
+Future<void> refreshTvosPluginsList(
+  FlutterProject project, {
+  void Function(Object error)? onFlutterRefreshFailed,
+}) async {
   final bool flutterRefreshesIt =
       project.android.existsSync() ||
       project.ios.existsSync() ||
@@ -583,13 +639,28 @@ Future<void> refreshTvosPluginsList(FlutterProject project) async {
       findPackageConfigFile(project.directory) == null) {
     return;
   }
-  await refreshPluginsList(project);
+  // Read first, so that a package config or graph that cannot be read stops
+  // with what to do rather than with what upstream's reader says about it.
+  final List<Dependency> dependencies = _readPluginDependencyGraph(project);
+  try {
+    await refreshPluginsList(project);
+  } on Object catch (error) {
+    // Not only an Exception: upstream's reader lets a TypeError through for
+    // a package_graph.json whose dependencies are not all strings.
+    if (onFlutterRefreshFailed == null) {
+      rethrow;
+    }
+    onFlutterRefreshFailed(error);
+  }
   // Upstream writes the file from scratch, without the `plugins.tvos` list
   // that the tvOS Podfile reads. Write the current one straight away, from
   // the list just refreshed, rather than leave it missing until
   // [ensureReadyForTvosTooling] runs again: a build that stops in between,
   // on a Dart error or Ctrl-C, would leave `pod install` with no tvOS plugins.
-  _writeTvosPluginsList(project, _tvosPluginEntries(_discoverTvosPlugins(project)));
+  _writeTvosPluginsList(
+    project,
+    _tvosPluginEntries(_discoverTvosPlugins(project, dependencies: dependencies)),
+  );
 }
 
 /// The `plugins.tvos` entries of `.flutter-plugins-dependencies`, which the
@@ -625,7 +696,17 @@ void _writeTvosPluginsList(FlutterProject project, List<Map<String, Object?>> en
   file.writeAsStringSync(json.encode(dependencies));
 }
 
-Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
+/// Writes what the tvOS build needs to know about the app's plugins: the
+/// registrants and the `plugins.tvos` list of `.flutter-plugins-dependencies`.
+///
+/// Pass [beforePubGet] from a command's `validateCommand`, which runs before
+/// `pub get`: then plugins that cannot be found yet are left for the native
+/// build, which calls this again after `pub get` and stops the build if they
+/// still cannot be found.
+Future<void> ensureReadyForTvosTooling(
+  FlutterProject project, {
+  bool beforePubGet = false,
+}) async {
   final Directory tvosDir = project.directory.childDirectory('tvos');
   // A plugin's own tvos/ holds its native sources, not a runner. Registrants
   // and plugin lists belong to the app that uses the plugin, such as its
@@ -644,7 +725,30 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
     globals.logger.printTrace('Could not refresh .flutter-plugins-dependencies: $e');
   }
 
-  final List<TvosPlugin> plugins = _discoverTvosPlugins(project);
+  // Commands call this from `validateCommand` with [beforePubGet], and
+  // `validateCommand` runs before `pub get`. Then the package config and
+  // graph can be missing (a fresh checkout) or out of date in a way `pub get`
+  // repairs, so failing to read them is not this pass's to report: leave the
+  // files alone, and the native build, which calls this again after
+  // `pub get`, writes them, or stops on what is still broken. Only that
+  // failure: anything else found once they are read is not one `pub get`
+  // repairs, and is reported now, before anything is built. Flutter itself
+  // first reads plugins straight after `pub get`
+  // (`regeneratePlatformSpecificToolingIfApplicable` in
+  // `verifyThenRunCommand`), and stops there on what it finds.
+  final List<Dependency> dependencies;
+  try {
+    dependencies = _readPluginDependencyGraph(project);
+  } on ToolExit catch (error) {
+    if (!beforePubGet) {
+      rethrow;
+    }
+    globals.logger.printTrace(
+      'tvOS plugins not found before pub get; they are found again after it: ${error.message}',
+    );
+    return;
+  }
+  final List<TvosPlugin> plugins = _discoverTvosPlugins(project, dependencies: dependencies);
 
   // For each plugin in the app's dep graph that has a FlutterTV-
   // published `<name>_tvos` sibling the user hasn't added yet, print
@@ -661,15 +765,13 @@ Future<void> ensureReadyForTvosTooling(FlutterProject project) async {
 
   final List<Map<String, Object?>> tvosPluginEntries = _tvosPluginEntries(plugins);
 
-  // CRITICAL: preserve the existing `.flutter-plugins-dependencies` rather
-  // than overwriting it. Stock `flutter pub get` writes ios/android/...
-  // plugin lists AND the `dependencyGraph` array we need for later
-  // `_discoverTvosPlugins` calls (e.g. from `writeTvosDartPluginRegistrant`
-  // during the build pipeline). Wiping `dependencyGraph: []` here caused
-  // every federated tvOS plugin with `dartPluginClass:` to silently
-  // disappear from the registrant — producing runtime
-  // `MissingPluginException` and `Bad state: <X>Platform.instance must
-  // be set` errors. See bug investigation 2026-05-26.
+  // Preserve the existing `.flutter-plugins-dependencies` rather than
+  // overwriting it: stock `flutter pub get` writes the ios/android/...
+  // plugin lists and the `dependencyGraph` array there. Up to 1.12.0 tvOS
+  // plugin discovery read that `dependencyGraph`, and wiping it here made
+  // every federated tvOS plugin with `dartPluginClass:` disappear from the
+  // registrant (bug investigation 2026-05-26). Discovery no longer reads
+  // it, but the file is upstream's, so only `plugins.tvos` is changed.
   var dependenciesJson = <String, dynamic>{
     'info': 'This is a generated file; do not edit or check into version control.',
     'plugins': <String, dynamic>{},

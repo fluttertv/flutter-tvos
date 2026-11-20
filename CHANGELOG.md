@@ -2,6 +2,23 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- **tvOS plugins are found from what `pub get` resolved**, the package
+  config and package graph in `.dart_tool/`, the way Flutter finds its own
+  plugins ([#99](https://github.com/fluttertv/flutter-tvos/issues/99)). They
+  used to be read from the `dependencyGraph` of
+  `.flutter-plugins-dependencies`, which Flutter keeps only for backwards
+  compatibility; without it, or with it in another shape, an app was built
+  with no plugins and every plugin call threw `MissingPluginException` at
+  runtime, with no error at build time. The plugins found, and their order in
+  the registrants, the Podfile list and the Swift package, are the same as
+  before, and a tvOS plugin that is only a dev dependency is still included. A
+  package config or package graph that is still missing or unreadable after
+  `pub get` now stops the build and says to run `flutter-tvos pub get`.
+
 ## [1.12.1] - 2026-11-20
 
 ### Changed
