@@ -2,6 +2,33 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- `flutter-tvos daemon`, `run --machine` and `attach --machine` work again
+  ([#100](https://github.com/fluttertv/flutter-tvos/issues/100)). All three
+  stopped before doing anything, with a `StateError` or `TypeError` about the
+  logger, because flutter-tvos always built a plain terminal logger, and these
+  commands need the daemon and machine-output loggers stock Flutter builds for
+  them. This also kept IDEs, which drive the tool through the daemon and
+  `--machine`, from running or attaching to an app. The logger is now built by
+  Flutter's own logger factory, from the same flags stock reads
+  (`--machine`, `--verbose`, `--prefixed-errors`, the command name), with the
+  `(tv)` device category rewrite kept in the chain; it never touches a line of
+  JSON output.
+
+  The 1.12.0 entry saying the daemon reports `"cpuArch": "arm64"` for tvOS
+  devices did not hold as released: the daemon failed at startup. `devices
+  --machine` did report it. With this fix the daemon starts, and its device
+  list carries the same `cpuArch` field.
+
+- The launcher prints its own messages ("Running pub get...", pub's output,
+  "Compiling flutter-tvos...", the Flutter SDK setup lines) to stderr, as
+  stock Flutter does. They went to stdout, so the first `--machine` or
+  `daemon` command after an edit or an upgrade began with lines that are not
+  JSON.
+
 ## [1.12.1] - 2026-11-20
 
 ### Changed

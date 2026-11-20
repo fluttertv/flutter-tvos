@@ -29,7 +29,7 @@ OS="$(uname -s)"
 
 # Only macOS is supported for tvOS development.
 if [[ "$OS" != "Darwin" ]]; then
-  echo "flutter-tvos only supports macOS."
+  >&2 echo "flutter-tvos only supports macOS."
   exit 1
 fi
 
