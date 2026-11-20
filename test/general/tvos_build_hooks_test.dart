@@ -18,6 +18,7 @@
 
 import 'dart:convert' show json;
 import 'dart:io' as io;
+import 'dart:typed_data';
 
 import 'package:code_assets/code_assets.dart';
 import 'package:data_assets/data_assets.dart';
@@ -58,11 +59,26 @@ class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
     this.alwaysFails = false,
     this.assets = const <EncodedAsset>[],
     this.dependencies = const <Uri>[],
+    this.validates = false,
   });
 
   /// What the hooks "produced". Empty in tests that only care about the input.
   final List<EncodedAsset> assets;
   final List<Uri> dependencies;
+
+  /// Whether a successful attempt runs the extensions' checks on [assets] the
+  /// way hooks_runner does, and fails on the first error.
+  ///
+  /// Off by default: the other tests use asset files that do not exist, and
+  /// only care about what the hooks were told or what is kept.
+  final bool validates;
+
+  /// The errors the extensions reported, one list per validated attempt.
+  final validationErrors = <List<String>>[];
+
+  /// The files the extensions asked hooks_runner to hash, which is what makes
+  /// a hook run again when one of them changes.
+  final outputFiles = <Uri>[];
 
   /// How many attempts refuse to build before one succeeds. One stands for a
   /// hook that cannot cope with being told `tvos` but can build for the iOS
@@ -101,9 +117,37 @@ class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
     for (final extension in extensions) {
       extension.setupBuildInput(input);
     }
-    inputs.add(BuildInput(input.json));
+    final builtInput = BuildInput(input.json);
+    inputs.add(builtInput);
     if (alwaysFails || inputs.length <= failuresBeforeSuccess) {
       return null;
+    }
+    if (validates) {
+      // What hooks_runner 1.6 does with a hook's output: every extension
+      // checks the input and the output, then the whole set of assets, and
+      // any error is a failed run. Then it hashes the extensions' output files.
+      final logger = logging.Logger.detached('fake_hooks_runner');
+      for (final extension in extensions) {
+        extension.setupLogger(logger);
+      }
+      final BuildOutput output = (BuildOutputBuilder()..assets.addEncodedAssets(assets)).build();
+      final errors = <String>[
+        for (final extension in extensions) ...await extension.validateBuildInput(builtInput),
+        for (final extension in extensions)
+          ...await extension.validateBuildOutput(builtInput, output),
+      ];
+      if (errors.isEmpty) {
+        errors.addAll(<String>[
+          for (final extension in extensions) ...await extension.validateApplicationAssets(assets),
+        ]);
+      }
+      validationErrors.add(errors);
+      if (errors.isNotEmpty) {
+        return null;
+      }
+      outputFiles.addAll(<Uri>[
+        for (final extension in extensions) ...extension.outputFiles(assets),
+      ]);
     }
     return FakeFlutterNativeAssetsBuilderResult(
       encodedAssets: assets,
@@ -125,6 +169,9 @@ class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
     target.cCompilerConfigSync = null;
   }
 }
+
+/// The host C toolchain `cCompilerConfigMacOS` looks up, in the order it asks.
+const _hostTools = <String>['clang', 'ar', 'ld'];
 
 /// Stands in for the real Xcode when the fallback has to derive an SDK root
 /// because the environment carries none.
@@ -420,6 +467,229 @@ void main() {
     });
   });
 
+  // The retry keeps a package's data assets flowing when its hook cannot read
+  // `tvos`, and discards its code assets, which are iPhone libraries. Since
+  // code_assets 2.0 a bare `CodeAssetExtension` told `ios` reads each
+  // library's Mach-O header and rejects a universal one, or one for another
+  // architecture, and hooks_runner fails the run on that: a build that passed
+  // on 1.11.5 failed on 1.12.0 over a library it was about to throw away
+  // (#102). These drive a runner that validates as hooks_runner does, with
+  // real files, because the checks read them through dart:io.
+  group('the iOS-family retry', () {
+    late io.Directory temp;
+
+    setUp(() {
+      temp = io.Directory(
+        io.Directory.systemTemp.resolveSymbolicLinksSync(),
+      ).createTempSync('tvos_hooks_retry_');
+      // The host toolchain the input names. Its input checks still run on the
+      // retry, and they want the files to exist.
+      for (final String tool in _hostTools) {
+        io.File('${temp.path}/$tool').createSync();
+      }
+    });
+
+    tearDown(() {
+      temp.deleteSync(recursive: true);
+    });
+
+    Uri writeFile(String name, List<int> bytes) =>
+        (io.File('${temp.path}/$name')..writeAsBytesSync(bytes)).uri;
+
+    /// The header of a universal Mach-O library with an arm64 and an x86_64
+    /// slice, which is as much of the file as code_assets' check reads.
+    List<int> universalLibrary() {
+      final header = ByteData(8 + 2 * 20)
+        ..setUint32(0, 0xcafebabe) // FAT_MAGIC, big-endian
+        ..setUint32(4, 2) // two slices
+        ..setUint32(8, 0x0100000c) // CPU_TYPE_ARM64
+        ..setUint32(28, 0x01000007); // CPU_TYPE_X86_64
+      return header.buffer.asUint8List();
+    }
+
+    /// The header of a thin 64-bit Mach-O library for [cpuType].
+    List<int> thinLibrary(int cpuType) {
+      final header = ByteData(32)
+        ..setUint32(0, 0xfeedfacf, Endian.little) // MH_MAGIC_64
+        ..setUint32(4, cpuType, Endian.little);
+      return header.buffer.asUint8List();
+    }
+
+    EncodedAsset library(Uri file) => CodeAsset(
+      package: 'some_package',
+      name: 'native.dart',
+      linkMode: DynamicLoadingBundled(),
+      file: file,
+    ).encode();
+
+    EncodedAsset data(Uri file) =>
+        DataAsset(package: 'some_package', name: 'greeting.txt', file: file).encode();
+
+    /// What a bare iOS `CodeAssetExtension` — the retry's extension in 1.12.0 —
+    /// reports on [asset], so each case shows that its fixture is one the
+    /// protocol's checks do reject.
+    Future<List<String>> bareIOSErrors(EncodedAsset asset) async {
+      final input = BuildInputBuilder()
+        ..setupShared(
+          packageRoot: temp.uri.resolve('some_package/'),
+          packageName: 'some_package',
+          outputDirectoryShared: temp.uri.resolve('shared/'),
+          outputFile: temp.uri.resolve('some_package/output.json'),
+        )
+        ..setupBuildInput()
+        ..config.setupBuild(linkingEnabled: false);
+      final bare = CodeAssetExtension(
+        targetArchitecture: tvOSArchitecture,
+        targetOS: OS.iOS,
+        linkModePreference: LinkModePreference.dynamic,
+        iOS: IOSCodeConfig(targetSdk: IOSSdk.iPhoneSimulator, targetVersion: 13),
+      )..setupLogger(logging.Logger.detached('bare'));
+      bare.setupBuildInput(input);
+      return bare.validateBuildOutput(
+        BuildInput(input.json),
+        (BuildOutputBuilder()..assets.addEncodedAsset(asset)).build(),
+      );
+    }
+
+    /// Builds with a hook that refuses `tvos` and, told `ios`, produces
+    /// [assets]. Returns the runner and the result the target wrote.
+    Future<(_RecordingBuildRunner, Map<String, Object?>)> retry(
+      List<EncodedAsset> assets, {
+      BufferLogger? logger,
+    }) async {
+      final runner = _RecordingBuildRunner(
+        failuresBeforeSuccess: 1,
+        validates: true,
+        assets: assets,
+      );
+      final Environment env = buildEnv(logger: logger);
+      await TvosBuildHooks(buildRunner: runner).build(env);
+      final written =
+          json.decode(env.buildDir.childFile(LinkHooks.resultFilename).readAsStringSync())
+              as Map<String, Object?>;
+      return (runner, written);
+    }
+
+    Map<Type, Generator> overrides() => <Type, Generator>{
+      FileSystem: () => fileSystem,
+      // `xcrun --find`, as the pass asks for the host C toolchain.
+      ProcessManager: () => FakeProcessManager.list(<FakeCommand>[
+        for (final String tool in _hostTools)
+          FakeCommand(command: <String>['xcrun', '--find', tool], stdout: '${temp.path}/$tool\n'),
+      ]),
+      FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    };
+
+    for (final (String what, List<int> Function() bytes, String rejection)
+        in <(String, List<int> Function(), String)>[
+          ('a universal library', universalLibrary, 'is a multi-architecture Mach-O binary'),
+          (
+            'a library for another architecture',
+            () => thinLibrary(0x01000007), // CPU_TYPE_X86_64
+            'is built for x64, but the target architecture is arm64',
+          ),
+        ]) {
+      testUsingContext('does not fail the build over $what it discards', () async {
+        final EncodedAsset code = library(writeFile('libnative.dylib', bytes()));
+        expect(
+          await bareIOSErrors(code),
+          contains(contains(rejection)),
+          reason: 'the fixture has to be one the iOS checks reject, or this proves nothing',
+        );
+        final logger = BufferLogger.test();
+
+        final (_RecordingBuildRunner runner, Map<String, Object?> written) = await retry(
+          <EncodedAsset>[code, data(writeFile('greeting.txt', 'hello'.codeUnits))],
+          logger: logger,
+        );
+
+        expect(runner.inputs, hasLength(2), reason: 'the pass was not retried');
+        expect(runner.validationErrors.single, isEmpty);
+        expect(
+          written['data_assets'],
+          hasLength(1),
+          reason: "the package's data asset is what the retry is for",
+        );
+        expect(written['code_assets'], isEmpty);
+        // Reported the way 1.12.0 reports a discarded code asset.
+        expect(logger.traceText, contains('Discarding 1 code asset(s)'));
+      }, overrides: overrides());
+    }
+
+    testUsingContext('does not fail the build over a discarded library that is missing', () async {
+      final EncodedAsset code = library(temp.uri.resolve('libmissing.dylib'));
+      expect(await bareIOSErrors(code), contains(contains('does not exist as a file')));
+
+      final (_RecordingBuildRunner runner, Map<String, Object?> written) = await retry(
+        <EncodedAsset>[code, data(writeFile('greeting.txt', 'hello'.codeUnits))],
+      );
+
+      expect(runner.validationErrors.single, isEmpty);
+      expect(written['data_assets'], hasLength(1));
+      expect(written['code_assets'], isEmpty);
+    }, overrides: overrides());
+
+    testUsingContext('still hashes the libraries it discards', () async {
+      // hooks_runner runs a hook again when one of its output files changes. A
+      // library rebuilt in place has to keep doing that, or the next build
+      // reuses the hook's stale output, data assets included.
+      final Uri file = writeFile('libnative.dylib', universalLibrary());
+
+      final (_RecordingBuildRunner runner, _) = await retry(<EncodedAsset>[
+        library(file),
+        data(writeFile('greeting.txt', 'hello'.codeUnits)),
+      ]);
+
+      expect(runner.outputFiles, contains(file));
+    }, overrides: overrides());
+
+    testUsingContext('still fails over a data asset that is missing', () async {
+      // Data assets are what the retry keeps, so their checks stay: a hook that
+      // names a file it did not write is broken, whatever it was told.
+      final runner = _RecordingBuildRunner(
+        failuresBeforeSuccess: 1,
+        validates: true,
+        assets: <EncodedAsset>[
+          library(writeFile('libnative.dylib', universalLibrary())),
+          data(temp.uri.resolve('missing.txt')),
+        ],
+      );
+
+      await expectLater(
+        TvosBuildHooks(buildRunner: runner).build(buildEnv()),
+        throwsToolExit(message: 'both as tvOS and as the iOS family'),
+      );
+      expect(
+        runner.validationErrors.single,
+        <Matcher>[contains('missing.txt')],
+        reason: 'the failure has to be the data asset, not the discarded library',
+      );
+    }, overrides: overrides());
+
+    testUsingContext('still fails over a code asset that cannot be read', () async {
+      // Not a library the iOS checks dislike, but output that breaks the
+      // protocol. hooks_runner parses every code asset to find its output
+      // files, so this has to fail the hook by name rather than crash later.
+      final EncodedAsset valid = library(writeFile('libnative.dylib', universalLibrary()));
+      final unreadable = EncodedAsset(
+        valid.type,
+        <String, Object?>{...valid.encoding}..remove('link_mode'),
+      );
+      final runner = _RecordingBuildRunner(
+        failuresBeforeSuccess: 1,
+        validates: true,
+        assets: <EncodedAsset>[unreadable],
+      );
+
+      await expectLater(
+        TvosBuildHooks(buildRunner: runner).build(buildEnv()),
+        throwsToolExit(message: 'both as tvOS and as the iOS family'),
+      );
+      expect(runner.validationErrors.single, isNotEmpty);
+      expect(runner.outputFiles, isEmpty);
+    }, overrides: overrides());
+  });
+
   group('TvosCodeAssetExtension', () {
     // hooks_runner hands each extension its logger before calling anything
     // else on it, and only ever calls the wrapper. The wrapped
@@ -427,6 +697,27 @@ void main() {
     // the same one.
     testWithoutContext("passes the runner's logger on to the wrapped extension", () {
       final extension = TvosCodeAssetExtension(cCompiler: null);
+      final logger = logging.Logger('tvos_hooks_test');
+
+      extension.setupLogger(logger);
+
+      expect(extension.logger, same(logger));
+      expect(extension.codeAssets.logger, same(logger));
+    });
+  });
+
+  group('TvosRetryCodeAssetExtension', () {
+    // The same promise as above: the wrapped extension still validates inputs
+    // and reads its logger while doing so.
+    testWithoutContext("passes the runner's logger on to the wrapped extension", () {
+      final extension = TvosRetryCodeAssetExtension(
+        CodeAssetExtension(
+          targetArchitecture: tvOSArchitecture,
+          targetOS: OS.iOS,
+          linkModePreference: LinkModePreference.dynamic,
+          iOS: IOSCodeConfig(targetSdk: IOSSdk.iPhoneOS, targetVersion: 13),
+        ),
+      );
       final logger = logging.Logger('tvos_hooks_test');
 
       extension.setupLogger(logger);

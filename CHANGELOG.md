@@ -2,6 +2,29 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- **A build hook's discarded iPhone library no longer fails a tvOS build**
+  ([#102](https://github.com/fluttertv/flutter-tvos/issues/102)). When a
+  package's hook cannot be told `tvos` — one on `package:code_assets` 1.x
+  throws on it — the hooks run again as the iOS family, so that the package's
+  data assets are still collected; the code assets that pass produces are
+  discarded. In 1.12.0 that second pass checked those code assets anyway, and
+  `package:code_assets` 2.x, which 1.12.0 moved to, reads an iOS library's
+  header: a universal `arm64` + `x86_64` library (what cargokit-style hooks
+  ship), an `arm64e` one, or one built for another architecture failed the
+  build with "A Dart build hook failed while building for tvOS, both as tvOS
+  and as the iOS family", where 1.11.5 built the same app. Only 1.12.0 is
+  affected, and only with Dart data assets enabled.
+
+  The second pass now skips the checks on the code assets it discards — the
+  same ones the first pass has always skipped — and keeps the rest: data
+  assets are checked as before, a hook that fails or writes a code asset that
+  cannot be read still fails the build, and a library the hook reports still
+  makes the hook run again when it changes.
+
 ## [1.12.1] - 2026-11-20
 
 ### Changed
