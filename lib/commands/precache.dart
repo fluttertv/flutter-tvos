@@ -71,6 +71,26 @@ class TvosPrecacheCommand extends PrecacheCommand {
 
   @override
   Future<FlutterCommandResult> runCommand() async {
+    // The opening steps are stock's, in stock's order: take the cache lock,
+    // then, with `--force`, clear every stamp, and only then download. Clearing
+    // the stamps after the tvOS engine was fetched deleted its fresh `tvos-sdk`
+    // stamp, so the next command fetched the whole engine again (#101); and
+    // fetching it before the lock let another flutter-tvos process write the
+    // same directory at the same time.
+    if (globals.platform.environment['FLUTTER_ALREADY_LOCKED'] != 'true') {
+      await globals.cache.lock();
+    }
+    if (boolArg('force')) {
+      globals.cache.clearStampFiles();
+    }
+    final bool allPlatforms = boolArg('all-platforms');
+    if (allPlatforms) {
+      globals.cache.includeAllPlatforms = true;
+    }
+    if (boolArg('use-unsigned-mac-binaries')) {
+      globals.cache.useUnsignedMacBinaries = true;
+    }
+
     // Stock's `--host-arch` (Flutter 3.50): the stock host artifacts this run
     // downloads are for that architecture. Set before any download, as stock
     // does.
@@ -115,20 +135,6 @@ class TvosPrecacheCommand extends PrecacheCommand {
     // delegating to `super.runCommand()`, while still honouring the stock
     // per-platform flags (`--ios`, `--android`, `--all-platforms`, …) for anyone
     // who explicitly asks for them.
-    if (globals.platform.environment['FLUTTER_ALREADY_LOCKED'] != 'true') {
-      await globals.cache.lock();
-    }
-    if (boolArg('force')) {
-      globals.cache.clearStampFiles();
-    }
-    final bool allPlatforms = boolArg('all-platforms');
-    if (allPlatforms) {
-      globals.cache.includeAllPlatforms = true;
-    }
-    if (boolArg('use-unsigned-mac-binaries')) {
-      globals.cache.useUnsignedMacBinaries = true;
-    }
-
     final Set<DevelopmentArtifact> requiredArtifacts = selectRequiredArtifacts(
       featureFlags: featureFlags,
       allPlatforms: allPlatforms,
