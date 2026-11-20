@@ -146,9 +146,13 @@ List<String> runnerEmbedFlutterFrameworkScripts(String pbxproj) {
 }
 
 /// Whether the target the build runs embeds the code assets staged under
-/// `Flutter/native_assets`: it has an "Embed Flutter.framework" phase, and
-/// every one it has names the staging directory (the current phase does, and
-/// so do the lines a person adds by hand).
+/// `Flutter/native_assets`, as far as the text of [pbxproj] shows: it has an
+/// "Embed Flutter.framework" phase, and every one it has names the staging
+/// directory (the current phase does, and so do the lines a person adds by
+/// hand). It is a guess, so the build only traces it: an XML-format project
+/// file, a script kept in a file, a renamed phase or another phase embed them
+/// without this seeing it, and the built app shows after Xcode whether they
+/// were embedded.
 bool pbxprojEmbedsCodeAssets(String pbxproj) {
   final List<String> scripts = runnerEmbedFlutterFrameworkScripts(pbxproj);
   return scripts.isNotEmpty &&

@@ -445,9 +445,9 @@ void main() {
         expect(script, contains(r'EXPANDED_CODE_SIGN_IDENTITY'));
 
         // The same phase embeds the code assets flutter-tvos staged, each a
-        // framework, and signs each with the app's identity. NativeTvosBundle
-        // keys its fallback for older projects on the staging path, so the
-        // phase has to name it.
+        // framework, and signs each with the app's identity. The build's trace
+        // for a project it does not see embedding them looks for the staging
+        // path, so the phase names it.
         expect(pbxprojEmbedsCodeAssets(pbxproj), isTrue);
         final int codeAssets = script.indexOf(r'${PROJECT_DIR}/Flutter/native_assets');
         expect(codeAssets, greaterThan(script.indexOf('Flutter.framework')),

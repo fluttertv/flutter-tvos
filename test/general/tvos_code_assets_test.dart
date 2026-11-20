@@ -840,37 +840,6 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
   });
 
   group('older projects', () {
-    testWithoutContext('a signed device build stops when the phase cannot embed', () {
-      final String? blocker = NativeTvosBundle.codeAssetsEmbedBlocker(
-        projectEmbedsCodeAssets: false,
-        stagedFrameworks: <String>['foo.framework'],
-        simulator: false,
-        codesign: true,
-      );
-      expect(blocker, contains('foo.framework'));
-      expect(blocker, contains('refuse to install'));
-      expect(blocker, contains(kCodeAssetEmbedScript), reason: 'it has to name the lines to add');
-    });
-
-    testWithoutContext('anything else builds', () {
-      for (final (bool embeds, List<String> staged, bool simulator, bool codesign) in <(bool, List<String>, bool, bool)>[
-        (true, <String>['foo.framework'], false, true),
-        (false, <String>[], false, true),
-        (false, <String>['foo.framework'], true, true),
-        (false, <String>['foo.framework'], false, false),
-      ]) {
-        expect(
-          NativeTvosBundle.codeAssetsEmbedBlocker(
-            projectEmbedsCodeAssets: embeds,
-            stagedFrameworks: staged,
-            simulator: simulator,
-            codesign: codesign,
-          ),
-          isNull,
-        );
-      }
-    });
-
     test('removes only code-asset frameworks that are no longer staged', () {
       // Real files and the real plutil: a framework Xcode built — a CocoaPods
       // plugin's under use_frameworks! — has a binary Info.plist, which a text
@@ -919,32 +888,11 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
         },
       );
 
-      // An app with no code assets at all and a pod framework: what every
-      // build of a project with an edited phase now goes through.
+      // Nothing staged: what every build passes before Xcode runs. Every code
+      // asset goes, a pod's framework stays.
       expect(NativeTvosBundle.removeStaleCodeAssetFrameworks(frameworks, <String>{}, parser),
           <String>['kept.framework']);
       expect(frameworks.childDirectory('SomePod.framework').existsSync(), isTrue);
-    });
-
-    testWithoutContext('removes before Xcode, and embeds after it only when unsigned', () {
-      expect(
-        NativeTvosBundle.codeAssetFallbackPlan(projectEmbedsCodeAssets: true, simulator: false, codesign: true),
-        (removeStaleBeforeXcode: false, embedAfterXcode: false),
-      );
-      // Signed device: anything left in the app must go before Xcode seals it,
-      // and nothing may be added after.
-      expect(
-        NativeTvosBundle.codeAssetFallbackPlan(projectEmbedsCodeAssets: false, simulator: false, codesign: true),
-        (removeStaleBeforeXcode: true, embedAfterXcode: false),
-      );
-      expect(
-        NativeTvosBundle.codeAssetFallbackPlan(projectEmbedsCodeAssets: false, simulator: true, codesign: true),
-        (removeStaleBeforeXcode: true, embedAfterXcode: true),
-      );
-      expect(
-        NativeTvosBundle.codeAssetFallbackPlan(projectEmbedsCodeAssets: false, simulator: false, codesign: false),
-        (removeStaleBeforeXcode: true, embedAfterXcode: true),
-      );
     });
   });
 }

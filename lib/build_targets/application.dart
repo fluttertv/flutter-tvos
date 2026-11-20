@@ -526,9 +526,6 @@ String _expandTilde(String path, Map<String, String> environment) {
   return path == '~' ? home : '$home/${path.substring(2)}';
 }
 
-/// See [NativeTvosBundle.codeAssetFallbackPlan].
-typedef CodeAssetFallbackPlan = ({bool removeStaleBeforeXcode, bool embedAfterXcode});
-
 /// Where in `tvos/Flutter/` the code-asset frameworks are staged for Xcode.
 const String kStagedCodeAssetsDirectoryName = 'native_assets';
 
@@ -654,23 +651,23 @@ class NativeTvosBundle extends Target {
     );
 
     // 2c. Bring a generated "Embed Flutter.framework" phase that predates code
-    //     assets up to date, then make sure this build can embed what it
-    //     staged (see [codeAssetsEmbedBlocker]).
+    //     assets up to date. Nothing stops here: whether the Xcode build
+    //     embeds the code assets is checked in the app after it (see
+    //     [_checkCodeAssetsEmbedded]), since a project can embed them in ways
+    //     the text of project.pbxproj does not show.
     final File pbxproj = tvosProjectDir
         .childDirectory('Runner.xcodeproj')
         .childFile('project.pbxproj');
     await TvosEmbedPhaseMigration(pbxproj, globals.logger).migrate();
-    final bool projectEmbedsCodeAssets = _projectEmbedsCodeAssets(pbxproj);
-    final String? blocker = codeAssetsEmbedBlocker(
-      projectEmbedsCodeAssets: projectEmbedsCodeAssets,
-      stagedFrameworks: stagedCodeAssetFrameworks(
-        tvosProjectDir.childDirectory('Flutter').childDirectory(kStagedCodeAssetsDirectoryName),
-      ),
-      simulator: buildInfo.simulator,
-      codesign: buildInfo.codesign,
+    final List<String> stagedCodeAssets = stagedCodeAssetFrameworks(
+      tvosProjectDir.childDirectory('Flutter').childDirectory(kStagedCodeAssetsDirectoryName),
     );
-    if (blocker != null) {
-      throwToolExit(blocker);
+    if (stagedCodeAssets.isNotEmpty && !_projectEmbedsCodeAssets(pbxproj)) {
+      globals.logger.printTrace(
+        'No "Embed Flutter.framework" phase of the Runner target in '
+        '${pbxproj.path} names Flutter/native_assets; checking for '
+        '${stagedCodeAssets.join(', ')} in the app after the Xcode build.',
+      );
     }
 
     // 3. Generate GeneratedPluginRegistrant
@@ -757,29 +754,24 @@ class NativeTvosBundle extends Target {
             globals.logger,
           );
 
-    // A project whose phase does not embed code assets does not remove them
-    // either, so a framework an earlier build put into this app (a package
-    // since removed, code assets since turned off) would stay. Remove it now,
-    // before Xcode signs the app around it; afterwards only a simulator or
-    // unsigned build may still change the bundle.
-    final CodeAssetFallbackPlan fallback = codeAssetFallbackPlan(
-      projectEmbedsCodeAssets: projectEmbedsCodeAssets,
-      simulator: buildInfo.simulator,
-      codesign: buildInfo.codesign,
+    // Remove every code-asset framework an earlier build left in the app,
+    // before Xcode signs the app around it. A project whose phase does not
+    // embed code assets does not remove them either, so one this build no
+    // longer has (a package since removed, code assets since turned off)
+    // would stay, and one embedded after an earlier Xcode build would pass
+    // for this build's in the check after Xcode. With them gone, every code
+    // asset in the app after Xcode is the Xcode build's own. A phase that
+    // embeds them runs on every build (the generated ones are always out of
+    // date) and puts this build's back.
+    removeStaleCodeAssetFrameworks(
+      globals.fs
+          .directory(symroot)
+          .childDirectory('$configuration-${buildInfo.sdkName}')
+          .childDirectory('Runner.app')
+          .childDirectory('Frameworks'),
+      const <String>{},
+      globals.plistParser,
     );
-    if (fallback.removeStaleBeforeXcode) {
-      removeStaleCodeAssetFrameworks(
-        globals.fs
-            .directory(symroot)
-            .childDirectory('$configuration-${buildInfo.sdkName}')
-            .childDirectory('Runner.app')
-            .childDirectory('Frameworks'),
-        stagedCodeAssetFrameworks(
-          tvosProjectDir.childDirectory('Flutter').childDirectory(kStagedCodeAssetsDirectoryName),
-        ).toSet(),
-        globals.plistParser,
-      );
-    }
 
     final Status xcodeStatus = globals.logger.startProgress('Running Xcode build...');
     ProcessResult result;
@@ -854,11 +846,14 @@ class NativeTvosBundle extends Target {
       await _embedAppFrameworkFallback(tvosProjectDir, symroot, platformSuffix);
     }
 
-    // The same, for the code-asset frameworks of a project whose embed phase
-    // does not embed them (simulator and unsigned builds only).
-    if (fallback.embedAfterXcode) {
-      await _embedCodeAssetsFallback(tvosProjectDir, symroot, platformSuffix);
-    }
+    // Likewise the code assets: the app shows whether the Xcode build
+    // embedded them, whatever the project file looks like.
+    await _checkCodeAssetsEmbedded(
+      tvosProjectDir,
+      symroot,
+      platformSuffix,
+      mayChangeBundle: buildInfo.simulator || !buildInfo.codesign,
+    );
 
     // The engine is the one payload the app cannot start without, and an
     // unsigned copy still installs from Xcode while being rejected at App Store
@@ -968,21 +963,24 @@ class NativeTvosBundle extends Target {
     return identity ?? 'Apple Development';
   }
 
-  /// Embeds the staged code-asset frameworks into the built `Runner.app` for a
-  /// project whose "Embed Flutter.framework" phase does not embed them — one
-  /// [TvosEmbedPhaseMigration] could not update because it was edited, or one
-  /// from before that phase existed.
+  /// Checks that the Xcode build embedded every staged code-asset framework
+  /// in the built `Runner.app`, and deals with the ones it left out: the
+  /// project's phases do not embed them, as for a phase edited before code
+  /// assets existed, which [TvosEmbedPhaseMigration] leaves alone.
   ///
-  /// Only for a simulator or an unsigned build ([codeAssetFallbackPlan]).
-  /// Adding a framework after Xcode has signed the app breaks the app's seal,
-  /// and a device refuses to install it; a signed device build of such a
-  /// project stops before Xcode runs instead (see [codeAssetsEmbedBlocker]).
-  /// Frameworks no longer staged were removed before Xcode ran.
-  Future<void> _embedCodeAssetsFallback(
+  /// Every code-asset framework was removed from the app before Xcode ran, so
+  /// one present now is the Xcode build's own, and is left as it is. A
+  /// missing one is added now in a simulator or unsigned build
+  /// ([mayChangeBundle]), signed ad hoc as staged, which is all those builds
+  /// need. Added after Xcode has signed the app, it would be outside the
+  /// app's seal, so a signed device build stops instead, with the lines to
+  /// add, and leaves the app as Xcode built it.
+  Future<void> _checkCodeAssetsEmbedded(
     Directory tvosProjectDir,
     String symroot,
-    String platformSuffix,
-  ) async {
+    String platformSuffix, {
+    required bool mayChangeBundle,
+  }) async {
     final Directory builtApp = globals.fs
         .directory(symroot)
         .childDirectory(platformSuffix)
@@ -993,19 +991,34 @@ class NativeTvosBundle extends Target {
     final Directory staged = tvosProjectDir
         .childDirectory('Flutter')
         .childDirectory(kStagedCodeAssetsDirectoryName);
-    final List<String> frameworks = stagedCodeAssetFrameworks(staged);
     final Directory destFrameworks = builtApp.childDirectory('Frameworks');
+    final frameworks = <String>[
+      for (final String framework in stagedCodeAssetFrameworks(staged))
+        if (!destFrameworks.childDirectory(framework).existsSync()) framework,
+    ];
     if (frameworks.isEmpty) {
       return;
     }
 
+    final missing =
+        '${frameworks.join(', ')}, code assets (native libraries this '
+        "app's packages build through Dart build hooks)";
+    if (!mayChangeBundle) {
+      throwToolExit(
+        'The Xcode build did not embed $missing, so the app would fail at its '
+        'first call into them, and embedding them now, after Xcode signed the '
+        'app, would break its signature. The Runner target of '
+        'tvos/Runner.xcodeproj needs a phase that embeds them.\n'
+        '${_codeAssetPhaseInstructions()}',
+      );
+    }
+
     globals.logger.printWarning(
-      'Warning: this project\'s "Embed Flutter.framework" build phase does not '
-      'embed code assets, so ${frameworks.join(', ')} '
-      '${frameworks.length == 1 ? 'was' : 'were'} embedded by flutter-tvos '
-      'after the Xcode build. That works for this simulator or unsigned build; '
-      'a signed device build, or an archive from Xcode, needs the phase to do '
-      'it.\n'
+      'Warning: the Xcode build did not embed $missing, so flutter-tvos added '
+      '${frameworks.length == 1 ? 'it' : 'them'} to the app after the Xcode '
+      'build. That works for this simulator or unsigned build; a signed device '
+      'build, or an archive from Xcode, needs the Runner target of '
+      'tvos/Runner.xcodeproj to embed them.\n'
       '${_codeAssetPhaseInstructions()}',
     );
 
@@ -1028,7 +1041,8 @@ class NativeTvosBundle extends Target {
 
   /// Removes from [frameworksDir] the code-asset frameworks (recognized by
   /// their bundle identifier) that are not in [staged], and returns their
-  /// names. The engine, App.framework and anything else are left alone.
+  /// names. The engine, App.framework and anything else are left alone. The
+  /// build passes no [staged] at all, to remove every one before Xcode runs.
   ///
   /// The identifier is read with [plistParser] (plutil), because a framework
   /// built by Xcode — a CocoaPods plugin's, under `use_frameworks!` — has a
@@ -1068,34 +1082,6 @@ class NativeTvosBundle extends Target {
     return removed;
   }
 
-  /// Why this build cannot embed its code assets, or null when it can.
-  ///
-  /// A signed device build of a project whose "Embed Flutter.framework" phase
-  /// does not embed code assets has no correct way to get them into the app:
-  /// adding them after Xcode signed it breaks the app's seal, so the device
-  /// would refuse to install it. Stopping before Xcode runs, with the lines to
-  /// add, is better than an app that cannot be installed or that fails at its
-  /// first `@Native` call.
-  @visibleForTesting
-  static String? codeAssetsEmbedBlocker({
-    required bool projectEmbedsCodeAssets,
-    required List<String> stagedFrameworks,
-    required bool simulator,
-    required bool codesign,
-  }) {
-    if (projectEmbedsCodeAssets || stagedFrameworks.isEmpty || simulator || !codesign) {
-      return null;
-    }
-    return 'This app has code assets (${stagedFrameworks.join(', ')}), native '
-        'libraries its packages build through Dart build hooks, but the '
-        '"Embed Flutter.framework" build phase of tvos/Runner.xcodeproj does not '
-        'embed them, and flutter-tvos did not update it because it differs from '
-        'every phase an earlier flutter-tvos generated.\n'
-        'Embedding them after Xcode signs the app would break its signature, '
-        'and the Apple TV would refuse to install it.\n'
-        '${_codeAssetPhaseInstructions()}';
-  }
-
   static String _codeAssetPhaseInstructions() =>
       'Either move tvos/ aside and re-create it with "flutter-tvos create ." '
       '(an existing tvos/ is not rewritten), or add these lines to the end of '
@@ -1103,11 +1089,11 @@ class NativeTvosBundle extends Target {
       'the lines that embed Flutter.framework (they use its DEST_FRAMEWORKS):\n'
       '$kCodeAssetEmbedScript';
 
-  /// Whether the "Embed Flutter.framework" phase(s) of the Runner target embed
-  /// the code assets staged under `Flutter/native_assets`; see
-  /// `pbxprojEmbedsCodeAssets` in `tvos_embed_phase_migration.dart`. A
-  /// project without a `project.pbxproj` has nothing to decide with, and is
-  /// left to xcodebuild.
+  /// Whether the tool sees the "Embed Flutter.framework" phase(s) of the
+  /// Runner target embed the code assets staged under `Flutter/native_assets`;
+  /// see `pbxprojEmbedsCodeAssets` in `tvos_embed_phase_migration.dart`. Only
+  /// for a trace: the app after Xcode decides. A project without a readable
+  /// `project.pbxproj` is left to xcodebuild.
   static bool _projectEmbedsCodeAssets(File pbxproj) {
     try {
       return !pbxproj.existsSync() || pbxprojEmbedsCodeAssets(pbxproj.readAsStringSync());
@@ -1115,23 +1101,6 @@ class NativeTvosBundle extends Target {
       return true;
     }
   }
-
-  /// What a build does for the code assets of a project whose phase does not
-  /// embed them.
-  ///
-  /// Removing frameworks an earlier build left in the app is safe before Xcode
-  /// for every build, and is only correct then for a signed one, so it always
-  /// happens before. Embedding afterwards is only for a simulator or unsigned
-  /// build; a signed device build with code assets is stopped by
-  /// [codeAssetsEmbedBlocker] instead.
-  @visibleForTesting
-  static CodeAssetFallbackPlan codeAssetFallbackPlan({
-    required bool projectEmbedsCodeAssets,
-    required bool simulator,
-    required bool codesign,
-  }) => projectEmbedsCodeAssets
-      ? (removeStaleBeforeXcode: false, embedAfterXcode: false)
-      : (removeStaleBeforeXcode: true, embedAfterXcode: simulator || !codesign);
 
   /// Resolves code signing arguments for xcodebuild.
   ///

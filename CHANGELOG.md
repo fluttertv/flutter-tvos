@@ -44,10 +44,15 @@ All notable changes to flutter-tvos will be documented here.
   which also covers archiving from Xcode. A project created with 1.9.0
   through 1.12.0 whose phase is unchanged has the phase updated in
   `tvos/Runner.xcodeproj/project.pbxproj` on its next build, and the build
-  says so. A phase that was edited is left alone: simulator and
-  `--no-codesign` builds then embed the libraries after the Xcode build, and
-  a signed device build stops, printing the lines to add, because embedding
-  after Xcode has signed the app would make it uninstallable.
+  says so. A phase that was edited is left alone. Whether a project embeds
+  the libraries is not judged from its project file, since an XML-format
+  project file, a script kept in a file or another phase can do it: the
+  libraries an earlier build left in the app are removed before Xcode runs,
+  and the built app then shows which ones the Xcode build embedded.
+  Simulator and `--no-codesign` builds add the missing ones after the Xcode
+  build, with a warning, and a signed device build stops after the Xcode
+  build, printing the lines to add, instead of adding them to an app Xcode
+  has signed, which would break its signature.
 
   Each library's framework declares tvOS in its `Info.plist`
   (`CFBundleSupportedPlatforms`, `DTPlatformName`, `UIDeviceFamily`), takes
