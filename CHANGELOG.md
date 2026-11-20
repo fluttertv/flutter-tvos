@@ -2,6 +2,64 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [Unreleased]
+
+### Added
+
+- **Code assets from Dart build hooks are installed into tvOS apps** (#95).
+  A package that ships a native library through `hook/build.dart` and calls
+  it with `@Native` now works on tvOS: each dynamic library is bundled as
+  `<name>.framework` in the app's `Frameworks/`, install-named
+  `@rpath/<name>.framework/<name>`, stripped with a dSYM outside debug, and
+  listed in `NativeAssetsManifest.json`, as Flutter does for iOS. Until now
+  the hooks ran and their code assets were discarded.
+
+  Still behind `flutter config --enable-dart-data-assets`, like the hook pass
+  itself: turning it on by default would start running every hook in every
+  tvOS app on upgrade. Only the pass that told the hooks `tvos` contributes;
+  the libraries of the iOS-family retry are iPhone libraries and stay
+  discarded.
+
+  The manifest key is `ios_arm64`, not `tvos_arm64`. The tvOS engine is the
+  iOS engine, and it picks the key at compile time from `FML_OS_IOS`, which
+  is set on tvOS too. An app whose manifest says `tvos_arm64` fails its first
+  `@Native` call with "No asset with id ... found"; checked on a simulator.
+
+  **A hook still cannot tell device from simulator** (see 1.8.0), and for a
+  native library that decides whether it loads at all. So the build reads the
+  Mach-O platform of every library before installing it, and fails, naming
+  the library, when it was built for the other SDK, instead of shipping an
+  app that fails at launch. A device and a simulator build share one hooks
+  cache entry, so a package has to choose the SDK by some means of its own,
+  such as a user-define in the app's `pubspec.yaml`. `native_toolchain_c`
+  cannot build for tvOS; see `doc/develop-plugin.md`.
+
+  Native assets have to stay enabled too (they are by default); with them
+  off, or when a hook only builds through the iOS-family retry, the build warns
+  that code assets were discarded. Turning either flag on or off takes effect
+  on the next build, without `flutter-tvos clean`, and a library the app no
+  longer has is removed from it.
+
+  The "Embed Flutter.framework" build phase embeds and signs the libraries,
+  which also covers archiving from Xcode. A project created with 1.9.0
+  through 1.12.0 whose phase is unchanged has the phase updated in
+  `tvos/Runner.xcodeproj/project.pbxproj` on its next build, and the build
+  says so. A phase that was edited is left alone. Whether a project embeds
+  the libraries is not judged from its project file, since an XML-format
+  project file, a script kept in a file or another phase can do it: the
+  libraries an earlier build left in the app are removed before Xcode runs,
+  and the built app then shows which ones the Xcode build embedded.
+  Simulator and `--no-codesign` builds add the missing ones after the Xcode
+  build, with a warning, and a signed device build stops after the Xcode
+  build, printing the lines to add, instead of adding them to an app Xcode
+  has signed, which would break its signature.
+
+  Each library's framework declares tvOS in its `Info.plist`
+  (`CFBundleSupportedPlatforms`, `DTPlatformName`, `UIDeviceFamily`), takes
+  `MinimumOSVersion` from the library, with a warning when that is above the
+  app's deployment target, and a library that would be named
+  `Flutter.framework` or `App.framework` stops the build.
+
 ## [1.12.1] - 2026-11-20
 
 ### Changed
