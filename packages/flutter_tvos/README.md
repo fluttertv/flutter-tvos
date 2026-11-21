@@ -22,7 +22,7 @@ Add `flutter_tvos` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_tvos: ^1.1.3
+  flutter_tvos: ^1.1.4
 ```
 
 ## Usage
@@ -117,8 +117,10 @@ All of the following is engine-side — it works with or without this package:
 - Select button → `LogicalKeyboardKey.enter` — activates focused
   buttons / list items through Flutter's default `ActivateIntent`
   binding, matching Flutter Android / flutter-tizen behavior
-- Menu button → `flutter/navigation popRoute` → `Navigator.maybePop`
-  (same as Android's physical back button)
+- Menu button (Back on the second-generation Siri Remote) →
+  `LogicalKeyboardKey.goBack` key event, then, on release and only if
+  nothing handled the key, `flutter/navigation popRoute` →
+  `Navigator.maybePop` (see [Menu and Back](#menu-and-back))
 - Play/Pause → `LogicalKeyboardKey.mediaPlayPause`
 - Long-press in a direction → auto-repeat arrow key at ~80 ms intervals
 - External game controllers (MFi) with a directional pad
@@ -127,6 +129,67 @@ All of the following is engine-side — it works with or without this package:
   `LogicalKeyboardKey.mediaPlay` / `mediaPause` / `mediaFastForward`
   / `mediaRewind` / `mediaStop` / `mediaPlayPause` is triggered with
   no app-level wiring
+
+### Menu and Back
+
+The Menu button (Back on the second-generation Siri Remote) reaches
+Flutter in two steps:
+
+1. A key event on `flutter/keyevent`: `LogicalKeyboardKey.goBack` down,
+   then up. This is the logical key Flutter reports for Android's Back
+   key (key code 4), so a `goBack` handler written for Android TV also
+   matches Menu here.
+2. When the button is released, and only if nothing reported the key
+   down or the key up as handled, the engine sends `popRoute` on
+   `flutter/navigation`. Flutter turns that into `Navigator.maybePop`,
+   so `PopScope`, dialogs and pushed routes behave as with Android's
+   back button. On the root route with nothing to pop, Flutter calls
+   `SystemNavigator.pop()` and the app goes to the Home screen. It is
+   suspended, not terminated; reopening it resumes it.
+
+Flutter binds nothing to `goBack` by default, so an app that does not
+handle it gets step 2 on every press.
+
+To handle Menu yourself, report `goBack` as handled while focus is
+inside your widget:
+
+```dart
+Focus(
+  onKeyEvent: (node, event) {
+    if (event.logicalKey != LogicalKeyboardKey.goBack) {
+      return KeyEventResult.ignored;
+    }
+    if (event is KeyDownEvent) {
+      showPauseMenu();
+    }
+    return KeyEventResult.handled;
+  },
+  child: gameView,
+)
+```
+
+A `Shortcuts` or `CallbackShortcuts` binding on
+`SingleActivator(LogicalKeyboardKey.goBack)` works as well: it handles
+the key down, which is enough. A screen that handles `goBack` owns the
+press: the engine sends no `popRoute` and nothing pops. On the app's
+top-level screen that means Menu no longer leaves the app. Apple's
+Human Interface Guidelines treat the Home screen as the parent of an
+app's top level; the exception they name is active gameplay, where Back
+opens a pause menu instead.
+
+Holding Menu is tvOS's own gesture for going to the Home screen, and
+tvOS decides when a press counts as a hold. With simulated remote
+presses on an Apple TV 4K running tvOS 27.2, a hold of about 0.8 s or
+longer never reached the app as a key and nothing popped, while a
+0.3 s hold arrived on release and popped once.
+
+The engine sends every press that tvOS reports as Menu this way. A
+hardware keyboard's Escape key or a game controller's B or Menu button
+may be reported as Menu; those then arrive as `goBack` as well, not as
+`escape` or `gameButtonB` as on Android.
+
+flutter-tvos 1.12.1 and earlier sent only `popRoute`, when the button
+went down, and no key event.
 
 ### Tuning
 

@@ -15,6 +15,27 @@ All notable changes to flutter-tvos will be documented here.
   SDK, and the end-to-end matrix ran on a tvOS simulator with the device
   profile and release builds compiled.
 
+- **Menu (Back on the second-generation Siri Remote) reaches Flutter as a
+  key event first.** The engine sends `LogicalKeyboardKey.goBack` down and up
+  on `flutter/keyevent`, the logical key Flutter reports for Android's Back
+  key. It sends `popRoute` on `flutter/navigation` only when the button is
+  released, and only if nothing reported the key down or the key up as
+  handled. Up to 1.12.1, Menu sent only `popRoute`, when the button went down,
+  and no key event.
+
+  For existing apps:
+  - Routes, dialogs and `PopScope` now pop when Menu is released, not when
+    it goes down.
+  - An app that already listens for `goBack`, for example for Android TV,
+    now receives it on tvOS. If it reports the key as handled, nothing pops.
+  - An app that handles `goBack` on its top-level screen keeps the app open:
+    Menu leaves for the Home screen only when nothing handles it.
+
+  Flutter binds nothing to `goBack` by default, so an app that does not
+  handle it pops as before, on release. The change is in the engine and comes
+  with the engine artifacts of this release. The `flutter_tvos` package README
+  describes the new behaviour and how to handle Menu.
+
 ## [1.12.1] - 2026-11-20
 
 ### Changed

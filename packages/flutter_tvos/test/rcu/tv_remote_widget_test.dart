@@ -8,7 +8,9 @@
 //
 //   - Select press → `flutter/keyevent` (macOS keymap, `kVK_Return`)
 //     → `LogicalKeyboardKey.enter` → default `ActivateIntent` shortcut.
-//   - Menu press → `flutter/navigation popRoute` method call.
+//   - Menu press → `LogicalKeyboardKey.goBack` key event, then, when no
+//     widget handled it, a `flutter/navigation popRoute` method call
+//     (only the popRoute half is driven here).
 //   - Play/Pause press → `flutter/keyevent` (android keymap, 85)
 //     → `LogicalKeyboardKey.mediaPlayPause`.
 //
@@ -139,9 +141,11 @@ void main() {
   });
 
   group('M2: Menu → navigation.popRoute', () {
-    // The native plugin responds to UIPressTypeMenu by invoking
-    // `popRoute` on `flutter/navigation`. The Flutter framework hooks
-    // this up to `Navigator.maybePop` via WidgetsBinding's own handler.
+    // The native plugin sends UIPressTypeMenu as a `goBack` key event and,
+    // when neither the key down nor the key up was handled, invokes
+    // `popRoute` on `flutter/navigation` on release. The Flutter framework
+    // hooks this up to `Navigator.maybePop` via WidgetsBinding's own
+    // handler.
     // This test drives the same method call through the binding so the
     // framework pipeline is exercised end-to-end.
 
@@ -192,8 +196,10 @@ void main() {
           .handlePlatformMessage('flutter/navigation', message, (_) {});
       await tester.pumpAndSettle();
 
-      // Root route stays — on a real device, UIKit/Apple TV takes over
-      // from here and sends the user Home, which we can't override.
+      // Root route stays — on a real device, Flutter then calls
+      // SystemNavigator.pop() and the engine sends the app to the Home
+      // screen. An app that handles the `goBack` key keeps it from getting
+      // this far.
       expect(find.text('root'), findsOneWidget);
     });
   });

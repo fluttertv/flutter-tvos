@@ -1,3 +1,18 @@
+## 1.1.4
+
+- Documentation: the README describes how the Menu button (Back on the
+  second-generation Siri Remote) reaches Flutter with the tvOS engine in
+  flutter-tvos releases after 1.12.1: a `LogicalKeyboardKey.goBack` key event
+  first, then `popRoute` on release only if nothing handled the key. It shows
+  how to handle Menu in Dart and what that means on an app's top-level screen.
+  The behaviour comes from the engine, not from this package.
+- Published for the first time with this version: the podspec's tvOS
+  deployment target is 15.0 (was 13.0), and the README's requirements say so;
+  the example app uses the UIScene lifecycle and takes Material from
+  `package:material_ui`. These landed in the repository after 1.1.3.
+- No library, API, or native plugin changes — `lib/` and `tvos/Classes/` are
+  byte-identical to 1.1.3.
+
 ## 1.1.3
 
 - Documentation: the README no longer says this package wires the Siri Remote to
