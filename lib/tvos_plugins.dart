@@ -601,7 +601,7 @@ String _renderFfiForcedReferenceBody(List<String> symbols) {
 /// return before `refreshPluginsList` when none of its own platforms is
 /// present, since nothing of Flutter's reads the list then. A project created
 /// with `--platforms=tvos` is exactly that: `flutter pub get` stopped writing
-/// the file. Until 1.12.0 tvOS plugins were also found through its
+/// the file. Up to 1.12.2 tvOS plugins were also found through its
 /// `dependencyGraph`, so the generated registrants came out empty; they are
 /// now found from the package config and graph (see
 /// [_walkPluginDependencies]). So write it here, as `flutter pub get` did
@@ -767,7 +767,7 @@ Future<void> ensureReadyForTvosTooling(
 
   // Preserve the existing `.flutter-plugins-dependencies` rather than
   // overwriting it: stock `flutter pub get` writes the ios/android/...
-  // plugin lists and the `dependencyGraph` array there. Up to 1.12.0 tvOS
+  // plugin lists and the `dependencyGraph` array there. Up to 1.12.2 tvOS
   // plugin discovery read that `dependencyGraph`, and wiping it here made
   // every federated tvOS plugin with `dartPluginClass:` disappear from the
   // registrant (bug investigation 2026-05-26). Discovery no longer reads
