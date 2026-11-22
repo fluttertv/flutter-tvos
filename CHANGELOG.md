@@ -25,6 +25,19 @@ All notable changes to flutter-tvos will be documented here.
   cannot be read still fails the build, and a library the hook reports still
   makes the hook run again when it changes.
 
+## [1.12.2] - 2026-11-21
+
+### Changed
+
+- **Upgraded to Flutter 3.50.1** (`ae9b586f34a8443573f82ef57c3bf914a908cbf7`).
+  Engine artifacts rebuilt from the ported patch set and published as
+  [`engine-1fb4730463bc3c1096c7f0cd4e131ff839e5c66c`](https://github.com/fluttertv/engine-artifacts/releases/tag/engine-1fb4730463bc3c1096c7f0cd4e131ff839e5c66c).
+
+  Ported automatically by the release train: the patch set applied and the tvOS
+  engine unit tests passed, the CLI analyzes and tests clean against the new
+  SDK, and the end-to-end matrix ran on a tvOS simulator with the device
+  profile and release builds compiled.
+
 ## [1.12.1] - 2026-11-20
 
 ### Changed
