@@ -709,7 +709,7 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
 
     testWithoutContext('leaves an edited phase alone', () {
       final edited =
-          '${earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!}echo mine\\n';
+          '${earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.2']!}echo mine\\n';
       expect(TvosEmbedPhaseMigration.migrateEmbedPhase(project(edited)), isNull);
     });
 
@@ -753,7 +753,7 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
 ''';
 
     testWithoutContext('migrates every generated phase, not only the first', () {
-      final String old = earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!;
+      final String old = earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.2']!;
       final String? migrated = TvosEmbedPhaseMigration.migrateEmbedPhase(
         twoTargets(runnerScript: old, otherScript: old),
       );
@@ -766,7 +766,7 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
     });
 
     testWithoutContext("judges the Runner target's phase, not the first in the file", () {
-      final edited = '${earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!}echo mine\\n';
+      final edited = '${earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.2']!}echo mine\\n';
       // The other target embeds code assets, the Runner target does not: a
       // whole-file search said "embeds", so a signed build shipped without them.
       expect(
@@ -790,11 +790,11 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
     });
 
     testWithoutContext('a phase updated by hand with the printed lines counts', () {
-      final String byHand = earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']! +
+      final String byHand = earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.2']! +
           pbxprojEscapeScript(kCodeAssetEmbedScript);
       expect(byHand, currentEmbedFlutterFrameworkScript);
       expect(pbxprojEmbedsCodeAssets(project('${byHand}echo mine\\n')), isTrue);
-      expect(pbxprojEmbedsCodeAssets(project(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!)),
+      expect(pbxprojEmbedsCodeAssets(project(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.2']!)),
           isFalse);
       expect(pbxprojEmbedsCodeAssets('{}'), isFalse, reason: 'no phase embeds nothing');
     });
@@ -815,7 +815,7 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
         dir.deleteSync(recursive: true);
       });
       final File pbxproj = dir.childFile('project.pbxproj')
-        ..writeAsStringSync(project(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!));
+        ..writeAsStringSync(project(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.2']!));
       Process.runSync('chmod', <String>['a-w', pbxproj.path]);
       final logger = BufferLogger.test();
 
@@ -829,7 +829,7 @@ ${withInput ? '\t\t\t\t"\$(PROJECT_DIR)/Flutter/native_assets",\n' : ''}			);
       final fs = MemoryFileSystem.test();
       final File pbxproj = fs.file('/tvos/Runner.xcodeproj/project.pbxproj')
         ..createSync(recursive: true)
-        ..writeAsStringSync(project(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!));
+        ..writeAsStringSync(project(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.2']!));
       final logger = BufferLogger.test();
 
       await TvosEmbedPhaseMigration(pbxproj, logger).migrate();

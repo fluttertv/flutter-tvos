@@ -510,7 +510,7 @@ class TvosBuildHooks extends Target {
   );
 
   /// Bumped when what this target writes changes for the same hooks. `2`: code
-  /// assets of the tvOS pass are kept (1.12.0 and earlier wrote none).
+  /// assets of the tvOS pass are kept (1.12.2 and earlier wrote none).
   static const _schema = 'tvos-build-hooks-2';
 
   @override

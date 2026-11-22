@@ -94,7 +94,7 @@ What happens when you run `flutter-tvos build tvos --simulator --debug`:
 4. `NativeTvosBundle.build()` orchestrates the native side:
    - **Copy Flutter.framework** — copies the pre-built framework from `engine_artifacts/`
    - **Copy Flutter assets** — places `kernel_blob.bin` and asset bundle into `tvos/Flutter/flutter_assets/`
-   - **Stage code assets** — mirrors the installed code-asset frameworks into `tvos/Flutter/native_assets/`, which the "Embed Flutter.framework" phase embeds and signs. `TvosEmbedPhaseMigration` updates an unchanged phase from 1.9.0–1.12.0. Code-asset frameworks an earlier build left in the app are removed before `xcodebuild`; for any project whose Xcode build leaves some out, simulator and unsigned builds get them after `xcodebuild`, and a signed device build stops after `xcodebuild` with the lines to add
+   - **Stage code assets** — mirrors the installed code-asset frameworks into `tvos/Flutter/native_assets/`, which the "Embed Flutter.framework" phase embeds and signs. `TvosEmbedPhaseMigration` updates an unchanged phase from 1.9.0–1.12.2. Code-asset frameworks an earlier build left in the app are removed before `xcodebuild`; for any project whose Xcode build leaves some out, simulator and unsigned builds get them after `xcodebuild`, and a signed device build stops after `xcodebuild` with the lines to add
    - **Generate plugin registrant stubs** — creates initial Objective-C `.h`/`.m` stubs if not present
    - **AOT snapshot** (release/profile only) — runs `gen_snapshot` to produce `App.framework`
    - **Generate Xcode configs** — writes `Generated.xcconfig`, `Debug.xcconfig`, `Release.xcconfig`

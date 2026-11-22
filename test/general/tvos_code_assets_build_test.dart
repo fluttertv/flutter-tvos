@@ -66,14 +66,14 @@ String _withEmbedScript(String script, {bool codeAssetsInput = true}) {
   return codeAssetsInput ? project : project.replaceFirst(_codeAssetsInput, '');
 }
 
-/// The project file flutter-tvos 1.12.0 created: the template before code
+/// The project file flutter-tvos 1.12.2 created: the template before code
 /// assets, whose phase only embeds the engine.
-String _from1120() =>
-    _withEmbedScript(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!, codeAssetsInput: false);
+String _from1122() =>
+    _withEmbedScript(earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.2']!, codeAssetsInput: false);
 
-/// The 1.12.0 phase with a line of the user's own, so the migration leaves it
+/// The 1.12.2 phase with a line of the user's own, so the migration leaves it
 /// alone: a project whose Xcode build does not embed code assets.
-String _edited1120() => _withEmbedScript('${earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.0']!}echo mine\\n');
+String _edited1122() => _withEmbedScript('${earlierEmbedFlutterFrameworkScripts['1.9.0-1.12.2']!}echo mine\\n');
 
 /// The template with the phase's script kept in a file of the project.
 String _scriptInAFile() => _withEmbedScript(r'/bin/sh \"${PROJECT_DIR}/scripts/embed.sh\"\n');
@@ -81,7 +81,7 @@ String _scriptInAFile() => _withEmbedScript(r'/bin/sh \"${PROJECT_DIR}/scripts/e
 /// The template with the phase renamed.
 String _renamedPhase() => _renderedTemplate().replaceAll('Embed Flutter.framework', 'Embed Flutter and code assets');
 
-/// An edited 1.12.0 phase for the engine, and a second phase of the Runner
+/// An edited 1.12.2 phase for the engine, and a second phase of the Runner
 /// target that embeds the code assets.
 String _secondPhase() {
   const embedEntry = '\t\t\t\tAAF50000000000000000F00D /* Embed Flutter.framework */,\n';
@@ -101,7 +101,7 @@ String _secondPhase() {
       '\t\t\tshellPath = /bin/sh;\n'
       '\t\t\tshellScript = "$script";\n'
       '\t\t};\n';
-  final String project = _edited1120();
+  final String project = _edited1122();
   expect(project, contains(embedEntry));
   return project
       .replaceFirst(embedEntry, '$embedEntry\t\t\t\t1234567890ABCDEF12345678 /* Embed code assets */,\n')
@@ -231,11 +231,11 @@ void main() {
     _root = const local.LocalFileSystem().directory(lib.toFilePath()).parent;
   });
 
-  testWithoutContext('the 1.12.0 project file is the template before code assets', () {
+  testWithoutContext('the 1.12.2 project file is the template before code assets', () {
     // The template gained exactly the code-asset lines of the phase and its
-    // input path since 1.12.0, so the migration turns a 1.12.0 project into
+    // input path since 1.12.2, so the migration turns a 1.12.2 project into
     // a current one.
-    expect(TvosEmbedPhaseMigration.migrateEmbedPhase(_from1120()), _renderedTemplate());
+    expect(TvosEmbedPhaseMigration.migrateEmbedPhase(_from1122()), _renderedTemplate());
   });
 
   group('a build with code assets', () {
@@ -429,7 +429,7 @@ void main() {
     };
 
     // Projects whose Xcode build embeds the code assets. Only the first has
-    // an "Embed Flutter.framework" phase whose text names them; 1.12.0 built
+    // an "Embed Flutter.framework" phase whose text names them; 1.12.2 built
     // all of them, and the Xcode build of each embeds what was staged.
     final projects = <String, String Function()>{
       'the current template': _renderedTemplate,
@@ -459,9 +459,9 @@ void main() {
     }
 
     testUsingContext(
-      'a signed device build of a project from 1.12.0 updates the phase before Xcode runs',
+      'a signed device build of a project from 1.12.2 updates the phase before Xcode runs',
       () async {
-        seedProject(_from1120());
+        seedProject(_from1122());
         xcodeEmbeds = (String pbxproj) => pbxproj.contains(pbxprojEscapeScript(kCodeAssetEmbedScript));
 
         await build();
@@ -495,7 +495,7 @@ void main() {
     testUsingContext(
       'a signed device build whose Xcode build left the code assets out stops after Xcode',
       () async {
-        seedProject(_edited1120(), names: <String>['bar', 'foo']);
+        seedProject(_edited1122(), names: <String>['bar', 'foo']);
         seedEarlierCopies(<String>['foo']);
         xcodeEmbeds = (_) => false;
 
@@ -509,7 +509,7 @@ void main() {
         expect(codeAssetCommandsAfterXcode(), isEmpty, reason: 'nothing is copied into or signed in an app Xcode signed');
         expect(inApp('foo'), '(missing)');
         expect(inApp('bar'), '(missing)');
-        expect(fileSystem.file(pbxprojPath).readAsStringSync(), _edited1120(), reason: 'an edited phase is left alone');
+        expect(fileSystem.file(pbxprojPath).readAsStringSync(), _edited1122(), reason: 'an edited phase is left alone');
       },
       overrides: overrides(),
     );
@@ -517,7 +517,7 @@ void main() {
     testUsingContext(
       'the stop after Xcode prints the lines to add to the phase',
       () async {
-        seedProject(_edited1120());
+        seedProject(_edited1122());
         xcodeEmbeds = (_) => false;
 
         ToolExit? error;
@@ -561,7 +561,7 @@ void main() {
       testUsingContext(
         '$kind build whose Xcode build left the code assets out embeds them after Xcode, unsigned',
         () async {
-          seedProject(_edited1120());
+          seedProject(_edited1122());
           seedEarlierCopies(<String>['foo', 'gone'], simulator: simulator);
           xcodeEmbeds = (_) => false;
 
@@ -597,7 +597,7 @@ void main() {
     testUsingContext(
       'a build without code assets is not affected by a project that does not embed them',
       () async {
-        seedProject(_edited1120(), names: const <String>[]);
+        seedProject(_edited1122(), names: const <String>[]);
         xcodeEmbeds = (_) => false;
 
         await build();

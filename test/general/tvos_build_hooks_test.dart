@@ -594,7 +594,7 @@ void main() {
       await buildWith(target, env, dataAssets: true);
       final int runs = runner.inputs.length;
 
-      // What 1.12.0 left behind: the same result with no code assets, and
+      // What 1.12.2 left behind: the same result with no code assets, and
       // stamps that carry no buildKey.
       final File result = env.buildDir.childFile(LinkHooks.resultFilename);
       final old = json.decode(result.readAsStringSync()) as Map<String, Object?>;

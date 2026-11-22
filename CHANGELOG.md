@@ -42,7 +42,7 @@ All notable changes to flutter-tvos will be documented here.
 
   The "Embed Flutter.framework" build phase embeds and signs the libraries,
   which also covers archiving from Xcode. A project created with 1.9.0
-  through 1.12.0 whose phase is unchanged has the phase updated in
+  through 1.12.2 whose phase is unchanged has the phase updated in
   `tvos/Runner.xcodeproj/project.pbxproj` on its next build, and the build
   says so. A phase that was edited is left alone. Whether a project embeds
   the libraries is not judged from its project file, since an XML-format
