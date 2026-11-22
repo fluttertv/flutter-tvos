@@ -472,9 +472,9 @@ void main() {
   // code_assets 2.0 a bare `CodeAssetExtension` told `ios` reads each
   // library's Mach-O header and rejects a universal one, or one for another
   // architecture, and hooks_runner fails the run on that: a build that passed
-  // on 1.11.5 failed on 1.12.0 over a library it was about to throw away
-  // (#102). These drive a runner that validates as hooks_runner does, with
-  // real files, because the checks read them through dart:io.
+  // on 1.11.5 failed from 1.12.0 to 1.12.2 over a library it was about to
+  // throw away (#102). These drive a runner that validates as hooks_runner
+  // does, with real files, because the checks read them through dart:io.
   group('the iOS-family retry', () {
     late io.Directory temp;
 
@@ -525,9 +525,9 @@ void main() {
     EncodedAsset data(Uri file) =>
         DataAsset(package: 'some_package', name: 'greeting.txt', file: file).encode();
 
-    /// What a bare iOS `CodeAssetExtension` — the retry's extension in 1.12.0 —
-    /// reports on [asset], so each case shows that its fixture is one the
-    /// protocol's checks do reject.
+    /// What a bare iOS `CodeAssetExtension` — the retry's extension from 1.12.0
+    /// to 1.12.2 — reports on [asset], so each case shows that its fixture is
+    /// one the protocol's checks do reject.
     Future<List<String>> bareIOSErrors(EncodedAsset asset) async {
       final input = BuildInputBuilder()
         ..setupShared(

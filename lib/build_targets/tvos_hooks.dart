@@ -500,7 +500,7 @@ class TvosHookRunner implements FlutterHookRunner {
 /// cargokit-style hooks ship), an arm64e one, or one built for another
 /// architecture than [tvOSArchitecture]. hooks_runner turns any such error into
 /// a failed hook, so a package whose data assets built on 1.11.5 failed the
-/// build on 1.12.0, over a library nothing was going to install.
+/// build from 1.12.0 to 1.12.2, over a library nothing was going to install.
 ///
 /// Forwarded, because they shape what the hooks see or when they run:
 ///

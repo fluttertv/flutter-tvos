@@ -11,13 +11,13 @@ All notable changes to flutter-tvos will be documented here.
   package's hook cannot be told `tvos` — one on `package:code_assets` 1.x
   throws on it — the hooks run again as the iOS family, so that the package's
   data assets are still collected; the code assets that pass produces are
-  discarded. In 1.12.0 that second pass checked those code assets anyway, and
+  discarded. From 1.12.0 that second pass checked those code assets anyway, and
   `package:code_assets` 2.x, which 1.12.0 moved to, reads an iOS library's
   header: a universal `arm64` + `x86_64` library (what cargokit-style hooks
   ship), an `arm64e` one, or one built for another architecture failed the
   build with "A Dart build hook failed while building for tvOS, both as tvOS
-  and as the iOS family", where 1.11.5 built the same app. Only 1.12.0 is
-  affected, and only with Dart data assets enabled.
+  and as the iOS family", where 1.11.5 built the same app. Only 1.12.0
+  through 1.12.2 are affected, and only with Dart data assets enabled.
 
   The second pass now skips the checks on the code assets it discards — the
   same ones the first pass has always skipped — and keeps the rest: data
