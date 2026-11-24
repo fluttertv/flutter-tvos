@@ -104,7 +104,7 @@ class BuildTvosCommand extends BuildSubCommand with TvosRequiredArtifacts {
   @override
   Future<void> validateCommand() async {
     final FlutterProject project = FlutterProject.current();
-    await ensureReadyForTvosTooling(project);
+    await ensureReadyForTvosTooling(project, beforePubGet: true);
     return super.validateCommand();
   }
 

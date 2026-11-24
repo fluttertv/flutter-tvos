@@ -13,7 +13,7 @@ class TvosTestCommand extends TestCommand {
   @override
   Future<void> validateCommand() async {
     final FlutterProject project = FlutterProject.current();
-    await ensureReadyForTvosTooling(project);
+    await ensureReadyForTvosTooling(project, beforePubGet: true);
     return super.validateCommand();
   }
 }
