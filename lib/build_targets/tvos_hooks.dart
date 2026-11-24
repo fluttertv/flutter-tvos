@@ -121,6 +121,9 @@ const Architecture tvOSArchitecture = Architecture.arm64;
 /// validate it, and that warning is dropped here (see [setupLogger]); the
 /// libraries are checked where the SDK is known instead, when they are
 /// installed — see `installTvosCodeAssets`.
+///
+/// The iOS-family retry is the exception: its code assets are discarded, so it
+/// does not forward the output checks. See [TvosRetryCodeAssetExtension].
 final class TvosCodeAssetExtension extends ProtocolExtension {
   TvosCodeAssetExtension({required CCompilerConfig? cCompiler})
     : _codeAssets = CodeAssetExtension(
@@ -357,12 +360,14 @@ Future<DartHooksResult> runTvosHooks({
     );
     result = await buildRunner.build(
       extensions: <ProtocolExtension>[
-        CodeAssetExtension(
-          targetArchitecture: tvOSArchitecture,
-          targetOS: OS.iOS,
-          linkModePreference: LinkModePreference.dynamic,
-          cCompiler: cCompiler,
-          iOS: await _iosFamilyConfig(environment),
+        TvosRetryCodeAssetExtension(
+          CodeAssetExtension(
+            targetArchitecture: tvOSArchitecture,
+            targetOS: OS.iOS,
+            linkModePreference: LinkModePreference.dynamic,
+            cCompiler: cCompiler,
+            iOS: await _iosFamilyConfig(environment),
+          ),
         ),
         dataAssets,
       ],
@@ -618,5 +623,103 @@ class TvosHookRunner implements FlutterHookRunner {
       environment: environment,
     );
     return _lastResult = result.asFlutterResult;
+  }
+}
+
+/// The code-asset half of the iOS-family retry in [runTvosHooks].
+///
+/// The retry tells hooks `ios`, with a faithful iPhone config, so that a
+/// package whose hook cannot read `tvos` still produces its data assets. The
+/// code assets it gets back are iPhone libraries and are discarded, so they
+/// must not be able to fail the build.
+///
+/// A bare `CodeAssetExtension` lets them. Since code_assets 2.0 its output
+/// check reads each bundled library's Mach-O header when the target OS is
+/// `ios`, and rejects a universal library (arm64 and x86_64 together, which
+/// cargokit-style hooks ship), an arm64e one, or one built for another
+/// architecture than [tvOSArchitecture]. hooks_runner turns any such error into
+/// a failed hook, so a package whose data assets built on 1.11.5 failed the
+/// build from 1.12.0 to 1.12.2, over a library nothing was going to install.
+///
+/// Forwarded, because they shape what the hooks see or when they run:
+///
+///  * the logger and the input setup, so the hooks get exactly the input a
+///    bare extension gives them;
+///  * the input checks, which judge the config this tool writes and not
+///    anything a hook produced;
+///  * [outputFiles], which hooks_runner hashes to decide whether a hook has to
+///    run again. A library rebuilt in place still invalidates the hook's cached
+///    output, data assets included.
+///
+/// Not forwarded: the output checks (file present, link mode, asset id, the
+/// library's architecture) and the application-wide ones (one id and one
+/// library file name per app), all of which judge assets this pass throws
+/// away. In their place is one check, that every code asset can be read at
+/// all: [outputFiles] and the discard report in [runTvosHooks] parse every
+/// one, and an asset that does not parse is a hook breaking the protocol,
+/// which should fail that hook by name rather than crash the runner. Data
+/// assets are checked by `DataAssetsExtension`, which this does not touch.
+final class TvosRetryCodeAssetExtension extends ProtocolExtension {
+  TvosRetryCodeAssetExtension(this._codeAssets);
+
+  final CodeAssetExtension _codeAssets;
+
+  /// The wrapped extension, for tests.
+  @visibleForTesting
+  CodeAssetExtension get codeAssets => _codeAssets;
+
+  @override
+  void setupLogger(logging.Logger logger) {
+    super.setupLogger(logger);
+    _codeAssets.setupLogger(logger);
+  }
+
+  @override
+  void setupBuildInput(BuildInputBuilder input) => _codeAssets.setupBuildInput(input);
+
+  @override
+  void setupLinkInput(LinkInputBuilder input) => _codeAssets.setupLinkInput(input);
+
+  @override
+  Future<ValidationErrors> validateBuildInput(BuildInput input) =>
+      _codeAssets.validateBuildInput(input);
+
+  @override
+  Future<ValidationErrors> validateLinkInput(LinkInput input) =>
+      _codeAssets.validateLinkInput(input);
+
+  @override
+  Future<ValidationErrors> validateBuildOutput(BuildInput input, BuildOutput output) async =>
+      _unreadableCodeAssets(<EncodedAsset>[
+        ...output.assets.encodedAssets,
+        ...output.assets.encodedAssetsForBuild,
+        for (final List<EncodedAsset> assets in output.assets.encodedAssetsForLinking.values)
+          ...assets,
+      ]);
+
+  @override
+  Future<ValidationErrors> validateLinkOutput(LinkInput input, LinkOutput output) async =>
+      _unreadableCodeAssets(<EncodedAsset>[
+        ...output.assets.encodedAssets,
+        for (final List<EncodedAsset> assets in output.assets.encodedAssetsForLink.values)
+          ...assets,
+      ]);
+
+  @override
+  Iterable<Uri> outputFiles(List<EncodedAsset> assets) => _codeAssets.outputFiles(assets);
+
+  static ValidationErrors _unreadableCodeAssets(List<EncodedAsset> assets) => <String>[
+    for (final EncodedAsset asset in assets)
+      if (asset.isCodeAsset)
+        if (_readError(asset) case final String error) error,
+  ];
+
+  static String? _readError(EncodedAsset asset) {
+    try {
+      CodeAsset.fromEncoded(asset);
+      return null;
+    } on FormatException catch (error) {
+      return 'A code asset cannot be read: ${error.message} ($asset)';
+    }
   }
 }
