@@ -139,6 +139,31 @@ flutter:
 
 FFI plugins are distributed as CocoaPods and loaded via `DynamicLibrary.process()` — they are **not** added to the plugin registrant.
 
+## Code assets from build hooks
+
+A package can also ship its native library through a Dart build hook (`hook/build.dart`) and call it with `@Native`, as on other platforms. flutter-tvos runs the hooks when Dart data assets are enabled (`flutter config --enable-dart-data-assets`, off by default) and native assets are enabled (`--enable-native-assets`, on by default; turning it off discards code assets with a warning), and installs the code assets they return the way Flutter does for iOS: each dynamic library becomes `<name>.framework` in the app's `Frameworks/`, with the install name `@rpath/<name>.framework/<name>`, and is listed in `NativeAssetsManifest.json`.
+
+What a tvOS hook has to know:
+
+- **It is told `target_os: tvos` and `arm64`.** With `package:code_assets` 2.x, `input.config.code.targetOS == OS.fromString('tvos')`. There is no tvOS sub-config: no deployment target, and no device or simulator.
+- **It has to choose device or simulator itself.** A library is linked for `appletvos` or `appletvsimulator`, and dyld refuses the other. A device build and a simulator build give a hook the same input, and the hooks cache serves both the library it built first. Choose by a means of your own, for example a user-define the app sets in its `pubspec.yaml`, which reruns the hook when it changes:
+
+  ```yaml
+  hooks:
+    user_defines:
+      my_package:
+        tvos_sdk: appletvsimulator   # or appletvos
+  ```
+
+  The build reads the platform out of every library before installing it and fails, naming the library, if it is for the other SDK, rather than ship an app that fails at its first `@Native` call.
+- **`native_toolchain_c` cannot build for tvOS** (0.19): its `CBuilder` has no file-name rules or target flags for an OS it does not know. Invoke `xcrun clang -target arm64-apple-tvos15.0[-simulator] -isysroot $(xcrun --sdk <sdk> --show-sdk-path) -dynamiclib` yourself.
+- **Link hooks do not run.** A code asset has to be added for the app bundle by the build hook.
+- **A hook that cannot read `tvos`** (one resolving `code_assets` 1.x) is retried as the iOS family so its data assets still flow; the code assets of that retry are iPhone libraries and are not installed.
+
+The "Embed Flutter.framework" build phase of the Runner target embeds the libraries and signs them with the app's identity, and removes ones an earlier build embedded that the app no longer has. Projects created with 1.9.0 through 1.12.2 have a phase without that step; if it is unchanged, the next build updates it in `tvos/Runner.xcodeproj/project.pbxproj` and says so. An edited phase is left alone, and the build does not judge from the project file whether the project embeds the libraries: it removes the ones an earlier build left in the app before Xcode runs, and checks the built app afterwards. If the Xcode build left any out, simulator and `--no-codesign` builds embed them after the Xcode build with a warning, and a signed device build stops after the Xcode build and prints the lines to add to the phase: embedding after Xcode has signed the app would break its signature. Re-creating `tvos/` also works.
+
+Turning either flag on or off takes effect on the next build; no `flutter-tvos clean` is needed.
+
 ## Run the example app
 
 ```sh

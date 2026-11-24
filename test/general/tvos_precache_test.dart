@@ -14,6 +14,8 @@ import 'package:test/fake.dart';
 
 import '../src/common.dart';
 import '../src/context.dart';
+import '../src/fake_http_client.dart';
+import '../src/fake_process_manager.dart';
 import '../src/fakes.dart';
 import '../src/test_flutter_command_runner.dart';
 
@@ -23,17 +25,36 @@ class _RecordingCache extends Fake implements Cache {
   HostPlatform? hostPlatformAtTvosUpdate;
   int tvosUpdates = 0;
 
-  @override
-  Future<void> lock() async {}
+  /// The calls made on this cache, in order.
+  final List<String> calls = <String>[];
 
   @override
-  void releaseLock() {}
+  Future<void> lock() async {
+    calls.add('lock');
+  }
+
+  @override
+  void releaseLock() {
+    calls.add('releaseLock');
+  }
+
+  /// The calls made by the command itself: those after the command runner
+  /// released the lock it holds while it prepares the command.
+  List<String> get commandCalls => calls.sublist(calls.lastIndexOf('releaseLock') + 1);
+
+  @override
+  void clearStampFiles() {
+    calls.add('clearStampFiles');
+  }
 
   @override
   Future<void> updateAll(Set<DevelopmentArtifact> requiredArtifacts, {bool offline = false}) async {
     if (requiredArtifacts.contains(TvosDevelopmentArtifact.tvos)) {
+      calls.add('updateAll tvos');
       tvosUpdates++;
       hostPlatformAtTvosUpdate = osUtils.hostPlatformOverride;
+    } else {
+      calls.add('updateAll');
     }
   }
 
@@ -238,5 +259,193 @@ void main() {
       expect(cache.osUtils.hostPlatformOverride, HostPlatform.darwin_x64);
       expect(logger.warningText, isEmpty);
     }, overrides: overrides);
+  });
+
+  // Stock's runCommand takes the lock and, with --force, clears the stamps
+  // before it downloads anything. The tvOS engine is a download like any
+  // other, so it comes after both.
+  group('TvosPrecacheCommand order', () {
+    late _RecordingCache cache;
+    late FakePlatform platform;
+
+    setUp(() {
+      cache = _RecordingCache();
+      platform = FakePlatform(operatingSystem: 'macos', environment: <String, String>{});
+    });
+
+    Future<void> runPrecache(List<String> args) => createTestCommandRunner(
+      TvosPrecacheCommand(
+        verboseHelp: false,
+        cache: cache,
+        logger: BufferLogger.test(),
+        platform: platform,
+        featureFlags: TestFeatureFlags(),
+      ),
+    ).run(<String>['precache', ...args]);
+
+    Map<Type, Generator> overrides() => <Type, Generator>{
+      FileSystem: () => MemoryFileSystem.test(),
+      ProcessManager: () => FakeProcessManager.any(),
+      Platform: () => platform,
+      Cache: () => cache,
+    };
+
+    testUsingContext('takes the cache lock before downloading the tvOS engine', () async {
+      await runPrecache(const <String>[]);
+
+      expect(cache.commandCalls, <String>['lock', 'updateAll tvos', 'updateAll']);
+    }, overrides: overrides());
+
+    testUsingContext('with --force clears the stamps before downloading the tvOS engine', () async {
+      await runPrecache(const <String>['--force']);
+
+      expect(cache.commandCalls, <String>[
+        'lock',
+        'clearStampFiles',
+        'updateAll tvos',
+        'updateAll',
+      ]);
+    }, overrides: overrides());
+
+    testUsingContext('does not take the lock when FLUTTER_ALREADY_LOCKED is set', () async {
+      platform.environment = <String, String>{'FLUTTER_ALREADY_LOCKED': 'true'};
+
+      await runPrecache(const <String>['--force']);
+
+      expect(cache.commandCalls, <String>['clearStampFiles', 'updateAll tvos', 'updateAll']);
+    }, overrides: overrides());
+  });
+
+  // #101: `precache --force` used to clear the stamps after it had fetched the
+  // tvOS engine, deleting the `tvos-sdk` stamp it had just written, so the
+  // next command found the engine stale and fetched all of it again. This runs
+  // the command against a real Cache holding the real tvOS engine artifact.
+  group('TvosPrecacheCommand --force with a real cache', () {
+    late MemoryFileSystem fs;
+    late FakePlatform platform;
+    late BufferLogger logger;
+    late FakeProcessManager processManager;
+    late Cache cache;
+
+    // Extracting the local zip, as the engine artifact does it; the fake unzip
+    // lays out the engine's directories so the result counts as up to date.
+    FakeCommand unzip() => FakeCommand(
+      command: const <String>[
+        'unzip',
+        '-q',
+        '/ws/artifacts/tvos_debug_sim_arm64.zip',
+        '-d',
+        '/ws/cli/engine_artifacts',
+      ],
+      onRun: (List<String> command) {
+        for (final name in <String>[
+          'tvos_debug_arm64',
+          'tvos_debug_sim_arm64',
+          'tvos_profile_arm64',
+          'tvos_release_arm64',
+          'host_debug_unopt',
+          'host_release',
+        ]) {
+          fs.directory('/ws/cli/engine_artifacts/$name').createSync(recursive: true);
+        }
+      },
+    );
+    const chmod = FakeCommand(command: <String>['chmod', 'a+r,a+x', '/ws/cli/engine_artifacts']);
+
+    setUp(() {
+      Cache.enableLocking();
+      fs = MemoryFileSystem.test();
+      // The CLI checkout is /ws/cli with its SDK in /ws/cli/flutter; the
+      // engine zip is the monorepo's local one in /ws/artifacts, so the
+      // update extracts it instead of downloading.
+      Cache.flutterRoot = '/ws/cli/flutter';
+      fs.file('/ws/cli/bin/internal/engine.version')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('engine-0123');
+      fs.file('/ws/artifacts/tvos_debug_sim_arm64.zip').createSync(recursive: true);
+      platform = FakePlatform(
+        operatingSystem: 'macos',
+        environment: <String, String>{'FLUTTER_ALREADY_LOCKED': 'true'},
+      );
+      logger = BufferLogger.test();
+      processManager = FakeProcessManager.empty();
+      final artifacts = <ArtifactSet>[];
+      cache = Cache.test(
+        rootOverride: fs.directory('/ws/cli/flutter'),
+        artifacts: artifacts,
+        artifactUpdater: ArtifactUpdater(
+          operatingSystemUtils: FakeOperatingSystemUtils(),
+          logger: logger,
+          fileSystem: fs,
+          tempStorage: fs.directory('/tmp')..createSync(recursive: true),
+          httpClient: FakeHttpClient.any(),
+          platform: platform,
+          allowedBaseUrls: const <String>[],
+        ),
+        fileSystem: fs,
+        platform: platform,
+        logger: logger,
+        processManager: processManager,
+      );
+      artifacts.add(
+        TvosEngineArtifacts(
+          cache,
+          logger: logger,
+          platform: platform,
+          processManager: processManager,
+        ),
+      );
+      // An installed SDK has the tool's own stamp, and clearStampFiles deletes
+      // it first: without it, it would stop before reaching `tvos-sdk`.
+      cache.getStampFileFor('flutter_tools').createSync(recursive: true);
+      // The command runner looks in the cache's `pkg` directory, and would
+      // create it (with a chmod) if it were missing.
+      fs.directory('/ws/cli/flutter/bin/cache/pkg').createSync(recursive: true);
+    });
+
+    Future<void> runPrecache(List<String> args) => createTestCommandRunner(
+      TvosPrecacheCommand(
+        verboseHelp: false,
+        cache: cache,
+        logger: logger,
+        platform: platform,
+        featureFlags: TestFeatureFlags(),
+      ),
+    ).run(<String>['precache', ...args]);
+
+    Map<Type, Generator> overrides() => <Type, Generator>{
+      FileSystem: () => fs,
+      ProcessManager: () => processManager,
+      Platform: () => platform,
+      Cache: () => cache,
+      Logger: () => logger,
+    };
+
+    testUsingContext('leaves the tvos-sdk stamp it wrote, so the next command '
+        'does not fetch the engine again', () async {
+      processManager.addCommands(<FakeCommand>[unzip(), chmod]);
+      await runPrecache(const <String>['--force']);
+
+      expect(processManager, hasNoRemainingExpectations);
+      expect(cache.getStampFileFor(kTvosEngineStampName).existsSync(), isTrue);
+      expect(cache.getStampFor(kTvosEngineStampName), 'engine-0123');
+      expect(await cache.isUpToDate(), isTrue);
+
+      // A second run with no expected commands: extracting again would fail it.
+      await runPrecache(const <String>[]);
+      expect(processManager, hasNoRemainingExpectations);
+    }, overrides: overrides());
+
+    testUsingContext('fetches the engine again even when it is up to date', () async {
+      processManager.addCommands(<FakeCommand>[unzip(), chmod]);
+      await runPrecache(const <String>[]);
+      expect(await cache.isUpToDate(), isTrue);
+
+      processManager.addCommands(<FakeCommand>[unzip(), chmod]);
+      await runPrecache(const <String>['--force']);
+
+      expect(processManager, hasNoRemainingExpectations);
+      expect(cache.getStampFor(kTvosEngineStampName), 'engine-0123');
+    }, overrides: overrides());
   });
 }

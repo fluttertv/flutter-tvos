@@ -22,6 +22,7 @@ import 'package:package_config/package_config.dart' show LanguageVersion;
 
 import '../src/common.dart';
 import '../src/context.dart';
+import '../src/pub_get.dart';
 
 void main() {
   late MemoryFileSystem fileSystem;
@@ -571,21 +572,12 @@ flutter:
         pluginClass: ${name}Plugin
 ''');
         }
-        pluginsDir.childFile('package_config.json').writeAsStringSync(
-          json.encode(<String, dynamic>{
-            'packages': <Map<String, String>>[
-              <String, String>{'name': 'audioplayers', 'rootUri': 'file:///pubcache/audioplayers'},
-              <String, String>{'name': 'url_launcher', 'rootUri': 'file:///pubcache/url_launcher'},
-            ],
-          }),
-        );
-        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-          json.encode(<String, dynamic>{
-            'dependencyGraph': <Map<String, String>>[
-              <String, String>{'name': 'audioplayers'},
-              <String, String>{'name': 'url_launcher'},
-            ],
-          }),
+        writePubGetOutput(
+          pluginsDir,
+          packages: const <String, String>{
+            'audioplayers': 'file:///pubcache/audioplayers',
+            'url_launcher': 'file:///pubcache/url_launcher',
+          },
         );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
@@ -613,20 +605,22 @@ flutter:
     // Regression test for the bug where ensureReadyForTvosTooling was
     // wiping `.flutter-plugins-dependencies` — replacing the file
     // produced by stock `flutter pub get` with one that contained only
-    // the `tvos` key and an empty `dependencyGraph`. That broke every
-    // later `_discoverTvosPlugins` call (notably during the build
-    // pipeline), making every federated tvOS plugin with
-    // `dartPluginClass:` silently drop from `dart_plugin_registrant.dart`.
+    // the `tvos` key and an empty `dependencyGraph`. While tvOS plugin
+    // discovery read that graph, this made every federated tvOS plugin
+    // with `dartPluginClass:` silently drop from
+    // `dart_plugin_registrant.dart`. The file is upstream's, so it is
+    // still kept intact.
     testUsingContext(
       'preserves dependencyGraph and existing platform plugin keys',
       () async {
         final Directory projectDir = fileSystem.directory('/p')..createSync();
         projectDir.childDirectory('tvos').createSync();
+        // A project with ios/, for which `flutter pub get` writes the file.
+        projectDir.childDirectory('ios').createSync();
         projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
 
         // Simulate exactly what stock `flutter pub get` writes: a
-        // populated `dependencyGraph` (used by `_discoverTvosPlugins`
-        // to walk the project's deps) and existing `ios`/`android`
+        // populated `dependencyGraph` and existing `ios`/`android`
         // plugin lists that must NOT be lost.
         projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
           json.encode(<String, dynamic>{
@@ -667,13 +661,12 @@ flutter:
           }),
         );
 
-        // Minimal `.dart_tool/package_config.json` — required by
-        // `_discoverTvosPlugins`'s name→path resolution step, but no
+        // What `pub get` resolved, which tvOS plugin discovery reads: no
         // tvOS plugins are present so the resolved tvos list is `[]`.
-        fileSystem.directory('/p/.dart_tool').createSync();
-        fileSystem
-            .file('/p/.dart_tool/package_config.json')
-            .writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+        writePubGetOutput(
+          fileSystem.directory('/p/.dart_tool'),
+          packages: const <String, String>{},
+        );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
         await ensureReadyForTvosTooling(project);
@@ -728,16 +721,18 @@ flutter:
       () async {
         final Directory projectDir = fileSystem.directory('/p')..createSync();
         projectDir.childDirectory('tvos').createSync();
+        // With ios/, the file is `flutter pub get`'s, and read as it is.
+        projectDir.childDirectory('ios').createSync();
         projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
         // Valid JSON, but the root is an array — would crash on
         // a blind `as Map<String, dynamic>` cast.
         projectDir
             .childFile('.flutter-plugins-dependencies')
             .writeAsStringSync('[]');
-        fileSystem.directory('/p/.dart_tool').createSync();
-        fileSystem
-            .file('/p/.dart_tool/package_config.json')
-            .writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+        writePubGetOutput(
+          fileSystem.directory('/p/.dart_tool'),
+          packages: const <String, String>{},
+        );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
 
@@ -766,6 +761,8 @@ flutter:
       () async {
         final Directory projectDir = fileSystem.directory('/p')..createSync();
         projectDir.childDirectory('tvos').createSync();
+        // With ios/, the file is `flutter pub get`'s, and read as it is.
+        projectDir.childDirectory('ios').createSync();
         projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
         // Root IS a map this time, but `plugins` is the wrong shape
         // (an array). The cast `as Map<String, dynamic>?` would
@@ -777,10 +774,10 @@ flutter:
             'dependencyGraph': <dynamic>[],
           }),
         );
-        fileSystem.directory('/p/.dart_tool').createSync();
-        fileSystem
-            .file('/p/.dart_tool/package_config.json')
-            .writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
+        writePubGetOutput(
+          fileSystem.directory('/p/.dart_tool'),
+          packages: const <String, String>{},
+        );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
         await ensureReadyForTvosTooling(project);
@@ -836,25 +833,12 @@ flutter:
         }
       }
 
-      fileSystem
-          .directory('/p/.dart_tool')
-          .childFile('package_config.json')
-        ..createSync(recursive: true)
-        ..writeAsStringSync(
-          json.encode(<String, dynamic>{
-            'packages': <Map<String, String>>[
-              <String, String>{'name': 'gizmo_tvos', 'rootUri': 'file:///pubcache/gizmo_tvos'},
-              <String, String>{'name': 'widget_tvos', 'rootUri': 'file:///pubcache/widget_tvos'},
-            ],
-          }),
-        );
-      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-        json.encode(<String, dynamic>{
-          'dependencyGraph': <Map<String, String>>[
-            <String, String>{'name': 'gizmo_tvos'},
-            <String, String>{'name': 'widget_tvos'},
-          ],
-        }),
+      writePubGetOutput(
+        fileSystem.directory('/p/.dart_tool'),
+        packages: const <String, String>{
+          'gizmo_tvos': 'file:///pubcache/gizmo_tvos',
+          'widget_tvos': 'file:///pubcache/widget_tvos',
+        },
       );
       return FlutterProject.fromDirectory(projectDir);
     }
@@ -958,24 +942,9 @@ $symbolsYaml
         );
       }
 
-      fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
-        ..createSync(recursive: true)
-        ..writeAsStringSync(
-          json.encode(<String, dynamic>{
-            'packages': <Map<String, String>>[
-              <String, String>{
-                'name': 'native_gadget',
-                'rootUri': 'file:///pubcache/native_gadget',
-              },
-            ],
-          }),
-        );
-      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-        json.encode(<String, dynamic>{
-          'dependencyGraph': <Map<String, String>>[
-            <String, String>{'name': 'native_gadget'},
-          ],
-        }),
+      writePubGetOutput(
+        fileSystem.directory('/p/.dart_tool'),
+        packages: const <String, String>{'native_gadget': 'file:///pubcache/native_gadget'},
       );
       return FlutterProject.fromDirectory(projectDir);
     }
@@ -1069,11 +1038,9 @@ $symbolsYaml
             .childDirectory('Runner')
             .createSync(recursive: true);
         projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
-        fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
-          ..createSync(recursive: true)
-          ..writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
-        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-          json.encode(<String, dynamic>{'dependencyGraph': <dynamic>[]}),
+        writePubGetOutput(
+          fileSystem.directory('/p/.dart_tool'),
+          packages: const <String, String>{},
         );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
@@ -1112,24 +1079,9 @@ flutter:
       final Directory tvosDir = pkgDir.childDirectory('tvos')..createSync();
       tvosDir.childFile('gadget.podspec').writeAsStringSync('# podspec');
 
-      fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
-        ..createSync(recursive: true)
-        ..writeAsStringSync(
-          json.encode(<String, dynamic>{
-            'packages': <Map<String, String>>[
-              <String, String>{
-                'name': 'gadget',
-                'rootUri': 'file:///pubcache/gadget',
-              },
-            ],
-          }),
-        );
-      projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-        json.encode(<String, dynamic>{
-          'dependencyGraph': <Map<String, String>>[
-            <String, String>{'name': 'gadget'},
-          ],
-        }),
+      writePubGetOutput(
+        fileSystem.directory('/p/.dart_tool'),
+        packages: const <String, String>{'gadget': 'file:///pubcache/gadget'},
       );
       return FlutterProject.fromDirectory(projectDir);
     }
@@ -1171,11 +1123,9 @@ flutter:
             .childDirectory('Runner')
             .createSync(recursive: true);
         projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
-        fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
-          ..createSync(recursive: true)
-          ..writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
-        projectDir.childFile('.flutter-plugins-dependencies').writeAsStringSync(
-          json.encode(<String, dynamic>{'dependencyGraph': <dynamic>[]}),
+        writePubGetOutput(
+          fileSystem.directory('/p/.dart_tool'),
+          packages: const <String, String>{},
         );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
@@ -1208,12 +1158,10 @@ flutter:
         final Directory projectDir = fileSystem.directory('/p')..createSync();
         projectDir.childDirectory('tvos').createSync();
         projectDir.childFile('pubspec.yaml').writeAsStringSync('name: app\n');
-        fileSystem.directory('/p/.dart_tool').childFile('package_config.json')
-          ..createSync(recursive: true)
-          ..writeAsStringSync(json.encode(<String, dynamic>{'packages': <dynamic>[]}));
-        projectDir
-            .childFile('.flutter-plugins-dependencies')
-            .writeAsStringSync(json.encode(<String, dynamic>{'dependencyGraph': <dynamic>[]}));
+        writePubGetOutput(
+          fileSystem.directory('/p/.dart_tool'),
+          packages: const <String, String>{},
+        );
 
         final FlutterProject project = FlutterProject.fromDirectory(projectDir);
         await ensureReadyForTvosTooling(project);

@@ -70,7 +70,7 @@ Exactly one source is required: a positional path, `--from-pub`, or `--from-git`
 
 ### FFI / native-assets plugins → a skeleton
 
-Plugins built on `dart:ffi` + `package:objective_c` with a `hook/build.dart` (e.g. `path_provider_foundation`) can't be mechanically ported — the toolchain doesn't build Dart native assets for tvOS. For these, the porter emits a **buildable Swift skeleton** (method-channel stubs + a federated Dart class) and the report says so explicitly. You hand-write the native side. Often easy — `path_provider_tvos` is `NSFileManager` over a channel.
+Plugins built on `dart:ffi` + `package:objective_c` with a `hook/build.dart` (e.g. `path_provider_foundation`) can't be mechanically ported. The toolchain does install the code assets a build hook produces for tvOS (with `flutter config --enable-dart-data-assets`; see [develop-plugin.md](develop-plugin.md#code-assets-from-build-hooks)), but these hooks build for iOS and macOS only: `objective_c`'s hook builds nothing when told `tvos`, and the porter cannot rewrite a hook. For these, the porter emits a **buildable Swift skeleton** (method-channel stubs + a federated Dart class) and the report says so explicitly. You hand-write the native side. Often easy — `path_provider_tvos` is `NSFileManager` over a channel.
 
 ### "Ported" ≠ "verified working"
 

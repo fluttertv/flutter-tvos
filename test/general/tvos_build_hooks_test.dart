@@ -18,12 +18,14 @@
 
 import 'dart:convert' show json;
 import 'dart:io' as io;
+import 'dart:typed_data';
 
 import 'package:code_assets/code_assets.dart';
 import 'package:data_assets/data_assets.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/asset.dart' show FlutterHookResult;
+import 'package:flutter_tools/src/base/context.dart' show context;
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
@@ -34,9 +36,10 @@ import 'package:flutter_tools/src/features.dart';
 import 'package:flutter_tools/src/isolated/native_assets/native_assets.dart';
 import 'package:flutter_tools/src/isolated/native_assets/targets.dart';
 import 'package:flutter_tools/src/macos/xcode.dart' show Xcode;
+import 'package:flutter_tvos/build_targets/tvos_code_assets.dart' show TvosInstallCodeAssets;
 import 'package:flutter_tvos/build_targets/tvos_hooks.dart';
 import 'package:hooks/hooks.dart';
-import 'package:hooks_runner/hooks_runner.dart';
+import 'package:hooks_runner/hooks_runner.dart' hide Target;
 import 'package:logging/logging.dart' as logging;
 import 'package:test/fake.dart';
 
@@ -58,11 +61,26 @@ class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
     this.alwaysFails = false,
     this.assets = const <EncodedAsset>[],
     this.dependencies = const <Uri>[],
+    this.validates = false,
   });
 
   /// What the hooks "produced". Empty in tests that only care about the input.
   final List<EncodedAsset> assets;
   final List<Uri> dependencies;
+
+  /// Whether a successful attempt runs the extensions' checks on [assets] the
+  /// way hooks_runner does, and fails on the first error.
+  ///
+  /// Off by default: the other tests use asset files that do not exist, and
+  /// only care about what the hooks were told or what is kept.
+  final bool validates;
+
+  /// The errors the extensions reported, one list per validated attempt.
+  final validationErrors = <List<String>>[];
+
+  /// The files the extensions asked hooks_runner to hash, which is what makes
+  /// a hook run again when one of them changes.
+  final outputFiles = <Uri>[];
 
   /// How many attempts refuse to build before one succeeds. One stands for a
   /// hook that cannot cope with being told `tvos` but can build for the iOS
@@ -101,9 +119,37 @@ class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
     for (final extension in extensions) {
       extension.setupBuildInput(input);
     }
-    inputs.add(BuildInput(input.json));
+    final builtInput = BuildInput(input.json);
+    inputs.add(builtInput);
     if (alwaysFails || inputs.length <= failuresBeforeSuccess) {
       return null;
+    }
+    if (validates) {
+      // What hooks_runner 1.6 does with a hook's output: every extension
+      // checks the input and the output, then the whole set of assets, and
+      // any error is a failed run. Then it hashes the extensions' output files.
+      final logger = logging.Logger.detached('fake_hooks_runner');
+      for (final extension in extensions) {
+        extension.setupLogger(logger);
+      }
+      final BuildOutput output = (BuildOutputBuilder()..assets.addEncodedAssets(assets)).build();
+      final errors = <String>[
+        for (final extension in extensions) ...await extension.validateBuildInput(builtInput),
+        for (final extension in extensions)
+          ...await extension.validateBuildOutput(builtInput, output),
+      ];
+      if (errors.isEmpty) {
+        errors.addAll(<String>[
+          for (final extension in extensions) ...await extension.validateApplicationAssets(assets),
+        ]);
+      }
+      validationErrors.add(errors);
+      if (errors.isNotEmpty) {
+        return null;
+      }
+      outputFiles.addAll(<Uri>[
+        for (final extension in extensions) ...extension.outputFiles(assets),
+      ]);
     }
     return FakeFlutterNativeAssetsBuilderResult(
       encodedAssets: assets,
@@ -125,6 +171,9 @@ class _RecordingBuildRunner implements FlutterNativeAssetsBuildRunner {
     target.cCompilerConfigSync = null;
   }
 }
+
+/// The host C toolchain `cCompilerConfigMacOS` looks up, in the order it asks.
+const _hostTools = <String>['clang', 'ar', 'ld'];
 
 /// Stands in for the real Xcode when the fallback has to derive an SDK root
 /// because the environment carries none.
@@ -252,23 +301,28 @@ void main() {
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
     });
 
-    testUsingContext('keeps the data assets and drops the code assets', () async {
+    final EncodedAsset dataAsset = DataAsset(
+      package: 'some_package',
+      name: 'shaders/bundle.bin',
+      file: Uri.file('/tmp/bundle.bin'),
+    ).encode();
+    final EncodedAsset codeAsset = CodeAsset(
+      package: 'some_package',
+      name: 'native.dylib',
+      linkMode: DynamicLoadingBundled(),
+      file: Uri.file('/tmp/native.dylib'),
+    ).encode();
+
+    Map<String, Object?> written(Environment env) =>
+        json.decode(env.buildDir.childFile(LinkHooks.resultFilename).readAsStringSync())
+            as Map<String, Object?>;
+
+    testUsingContext('keeps the data assets and the code assets of the tvOS pass', () async {
       // Every other test here drives a runner that produces nothing, so none of
       // them can see what this pass does with what a hook returns. Without an
       // asset in flight, inverting the `isDataAsset` filter — which is the
       // original bug, an app shipping no generated assets — leaves the suite
       // green.
-      final EncodedAsset dataAsset = DataAsset(
-        package: 'some_package',
-        name: 'shaders/bundle.bin',
-        file: Uri.file('/tmp/bundle.bin'),
-      ).encode();
-      final EncodedAsset codeAsset = CodeAsset(
-        package: 'some_package',
-        name: 'native.dylib',
-        linkMode: DynamicLoadingBundled(),
-        file: Uri.file('/tmp/native.dylib'),
-      ).encode();
       final runner = _RecordingBuildRunner(
         assets: <EncodedAsset>[dataAsset, codeAsset],
         dependencies: <Uri>[Uri.file('/tmp/shader.glsl')],
@@ -277,24 +331,73 @@ void main() {
 
       await TvosBuildHooks(buildRunner: runner).build(env);
 
-      final written =
-          json.decode(env.buildDir.childFile(LinkHooks.resultFilename).readAsStringSync())
-              as Map<String, Object?>;
       expect(
-        written['data_assets'],
+        written(env)['data_assets'],
         hasLength(1),
         reason: 'the data asset a hook produced has to reach CopyFlutterBundle',
       );
+      final codeAssets = written(env)['code_assets']! as List<Object?>;
       expect(
-        written['code_assets'],
-        isEmpty,
-        reason: 'nothing a code-asset hook produces is installed into a tvOS app',
+        codeAssets,
+        hasLength(1),
+        reason: 'a library a hook built for tvOS has to reach TvosInstallCodeAssets',
       );
-      expect(written['dependencies'], hasLength(1));
+      expect(
+        (codeAssets.single! as Map<String, Object?>)['os'],
+        'tvos',
+        reason: 'recorded as what the hook was told; only the manifest uses the '
+            "engine's key",
+      );
+      expect(written(env)['dependencies'], hasLength(1));
     }, overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
       ProcessManager: () => FakeProcessManager.any(),
       FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    });
+
+    testUsingContext('drops the code assets of the iOS-family retry', () async {
+      // The retry tells a hook `ios` with an iPhone SDK, so what it builds is an
+      // iPhone library. Its data assets are why it exists; its code assets
+      // would not load on tvOS.
+      final runner = _RecordingBuildRunner(
+        failuresBeforeSuccess: 1,
+        assets: <EncodedAsset>[dataAsset, codeAsset],
+      );
+      final logger = BufferLogger.test();
+      final Environment env = buildEnv(logger: logger);
+
+      await TvosBuildHooks(buildRunner: runner).build(env);
+
+      expect(runner.inputs, hasLength(2), reason: 'the pass was not retried');
+      expect(written(env)['code_assets'], isEmpty);
+      expect(written(env)['data_assets'], hasLength(1));
+      expect(
+        logger.warningText,
+        contains('Discarding 1 code asset(s) from the iOS-family retry'),
+        reason: 'a library the app may call is missing; that is not a trace-level '
+            'fact, and "none existed" and "dropped" must not look the same',
+      );
+      expect(logger.warningText, contains('package:some_package/native.dylib'));
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+      FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    });
+
+    testUsingContext('drops the code assets with native assets turned off', () async {
+      final runner = _RecordingBuildRunner(assets: <EncodedAsset>[dataAsset, codeAsset]);
+      final logger = BufferLogger.test();
+      final Environment env = buildEnv(logger: logger);
+
+      await TvosBuildHooks(buildRunner: runner).build(env);
+
+      expect(written(env)['code_assets'], isEmpty);
+      expect(written(env)['data_assets'], hasLength(1));
+      expect(logger.warningText, contains('--enable-native-assets'));
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+      FeatureFlags: () => TestFeatureFlags(isDartDataAssetsEnabled: true),
     });
 
     testUsingContext('does not run the hooks when data assets are off', () async {
@@ -313,6 +416,12 @@ void main() {
         logger.warningText,
         contains('flutter config --enable-dart-data-assets'),
         reason: 'the warning has to name the one command that fixes it',
+      );
+      expect(
+        logger.warningText,
+        contains('native library'),
+        reason: 'a package shipping a dart:ffi library loses it too, and that '
+            'fails at runtime rather than rendering wrong',
       );
     }, overrides: <Type, Generator>{
       FileSystem: () => fileSystem,
@@ -420,6 +529,388 @@ void main() {
     });
   });
 
+  group('re-runs when what the result depends on changes', () {
+    // The build system skips a target whose input files and buildKey are
+    // unchanged. The hooks' result also depends on two feature flags, and on
+    // what this CLI does with it, neither of which is a file: before the
+    // buildKey, turning a flag on or off, or upgrading from a CLI that kept no
+    // code assets, left the old result in place until `clean`.
+    late FlutterBuildSystem buildSystem;
+
+    setUp(() {
+      buildSystem = FlutterBuildSystem(
+        fileSystem: fileSystem,
+        platform: FakePlatform(),
+        logger: BufferLogger.test(),
+      );
+    });
+
+    final EncodedAsset processAsset = CodeAsset(
+      package: 'some_package',
+      name: 'in_process.dart',
+      linkMode: LookupInProcess(),
+    ).encode();
+
+    Future<void> buildWith(
+      Target target,
+      Environment env, {
+      required bool dataAssets,
+      bool nativeAssets = true,
+    }) async {
+      await context.run<void>(
+        overrides: <Type, Generator>{
+          FeatureFlags: () => TestFeatureFlags(
+            isDartDataAssetsEnabled: dataAssets,
+            isNativeAssetsEnabled: nativeAssets,
+          ),
+        },
+        body: () async {
+          expect((await buildSystem.build(target, env)).success, isTrue);
+        },
+      );
+    }
+
+    Map<String, Object?> manifest(Environment env) =>
+        json.decode(env.buildDir.childFile('native_assets.json').readAsStringSync())
+            as Map<String, Object?>;
+
+    testUsingContext('turning data assets on picks the hooks up without clean', () async {
+      final runner = _RecordingBuildRunner(assets: <EncodedAsset>[processAsset]);
+      final Environment env = buildEnv();
+      final target = TvosInstallCodeAssets(hooks: TvosBuildHooks(buildRunner: runner));
+
+      await buildWith(target, env, dataAssets: false);
+      expect(runner.inputs, isEmpty);
+      expect(manifest(env)['native-assets'], isEmpty);
+
+      await buildWith(target, env, dataAssets: true);
+      expect(runner.inputs, isNotEmpty, reason: 'the hooks did not run after the flag went on');
+      expect(
+        (manifest(env)['native-assets']! as Map<String, Object?>)['ios_arm64'],
+        contains('package:some_package/in_process.dart'),
+      );
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+    });
+
+    testUsingContext('turning data assets off removes what was installed', () async {
+      final runner = _RecordingBuildRunner(assets: <EncodedAsset>[processAsset]);
+      final Environment env = buildEnv();
+      final target = TvosInstallCodeAssets(hooks: TvosBuildHooks(buildRunner: runner));
+
+      await buildWith(target, env, dataAssets: true);
+      expect(manifest(env)['native-assets'], isNotEmpty);
+      // What an earlier build with a bundled library left installed.
+      final Directory framework = env.buildDir
+          .childDirectory(TvosInstallCodeAssets.directoryName)
+          .childDirectory('foo.framework')
+        ..createSync(recursive: true);
+
+      await buildWith(target, env, dataAssets: false);
+      expect(manifest(env)['native-assets'], isEmpty);
+      expect(
+        framework.existsSync(),
+        isFalse,
+        reason: 'NativeTvosBundle stages from here, so it must be empty too',
+      );
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+    });
+
+    testUsingContext('turning native assets off drops the code assets', () async {
+      final runner = _RecordingBuildRunner(assets: <EncodedAsset>[processAsset]);
+      final Environment env = buildEnv();
+      final target = TvosInstallCodeAssets(hooks: TvosBuildHooks(buildRunner: runner));
+
+      await buildWith(target, env, dataAssets: true);
+      expect(manifest(env)['native-assets'], isNotEmpty);
+
+      await buildWith(target, env, dataAssets: true, nativeAssets: false);
+      expect(manifest(env)['native-assets'], isEmpty);
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+    });
+
+    testUsingContext('a result written by an earlier CLI is not trusted', () async {
+      final runner = _RecordingBuildRunner(assets: <EncodedAsset>[processAsset]);
+      final Environment env = buildEnv();
+      final target = TvosInstallCodeAssets(hooks: TvosBuildHooks(buildRunner: runner));
+      await buildWith(target, env, dataAssets: true);
+      final int runs = runner.inputs.length;
+
+      // What 1.12.2 left behind: the same result with no code assets, and
+      // stamps that carry no buildKey.
+      final File result = env.buildDir.childFile(LinkHooks.resultFilename);
+      final old = json.decode(result.readAsStringSync()) as Map<String, Object?>;
+      result.writeAsStringSync(json.encode(<String, Object?>{...old, 'code_assets': <Object?>[]}));
+      for (final name in <String>['tvos_build_hooks', 'tvos_install_code_assets']) {
+        final File stamp = env.buildDir.childFile('$name.stamp');
+        final values = json.decode(stamp.readAsStringSync()) as Map<String, Object?>;
+        expect(values, contains('buildKey'));
+        values.remove('buildKey');
+        stamp.writeAsStringSync(json.encode(values));
+      }
+
+      await buildWith(target, env, dataAssets: true);
+      expect(runner.inputs.length, greaterThan(runs), reason: 'the old result was reused');
+      expect(manifest(env)['native-assets'], isNotEmpty);
+    }, overrides: <Type, Generator>{
+      FileSystem: () => fileSystem,
+      ProcessManager: () => FakeProcessManager.any(),
+    });
+
+    testWithoutContext('the key names the schema and both flags', () {
+      final keys = <String>{
+        for (final data in <bool>[true, false])
+          for (final native in <bool>[true, false])
+            tvosHooksBuildKey(schema: 's', dartDataAssets: data, nativeAssets: native),
+      };
+      expect(keys, hasLength(4));
+      expect(
+        tvosHooksBuildKey(schema: 'a', dartDataAssets: true, nativeAssets: true),
+        isNot(tvosHooksBuildKey(schema: 'b', dartDataAssets: true, nativeAssets: true)),
+      );
+    });
+  });
+
+  group('keepsCodeAssets', () {
+    testWithoutContext('keeps only a tvOS pass with native assets on', () {
+      expect(keepsCodeAssets(fromIOSFamilyRetry: false, nativeAssetsEnabled: true), isTrue);
+      expect(keepsCodeAssets(fromIOSFamilyRetry: true, nativeAssetsEnabled: true), isFalse);
+      expect(keepsCodeAssets(fromIOSFamilyRetry: false, nativeAssetsEnabled: false), isFalse);
+      expect(keepsCodeAssets(fromIOSFamilyRetry: true, nativeAssetsEnabled: false), isFalse);
+    });
+  });
+
+  // The retry keeps a package's data assets flowing when its hook cannot read
+  // `tvos`, and discards its code assets, which are iPhone libraries. Since
+  // code_assets 2.0 a bare `CodeAssetExtension` told `ios` reads each
+  // library's Mach-O header and rejects a universal one, or one for another
+  // architecture, and hooks_runner fails the run on that: a build that passed
+  // on 1.11.5 failed from 1.12.0 to 1.12.2 over a library it was about to
+  // throw away (#102). These drive a runner that validates as hooks_runner
+  // does, with real files, because the checks read them through dart:io.
+  group('the iOS-family retry', () {
+    late io.Directory temp;
+
+    setUp(() {
+      temp = io.Directory(
+        io.Directory.systemTemp.resolveSymbolicLinksSync(),
+      ).createTempSync('tvos_hooks_retry_');
+      // The host toolchain the input names. Its input checks still run on the
+      // retry, and they want the files to exist.
+      for (final String tool in _hostTools) {
+        io.File('${temp.path}/$tool').createSync();
+      }
+    });
+
+    tearDown(() {
+      temp.deleteSync(recursive: true);
+    });
+
+    Uri writeFile(String name, List<int> bytes) =>
+        (io.File('${temp.path}/$name')..writeAsBytesSync(bytes)).uri;
+
+    /// The header of a universal Mach-O library with an arm64 and an x86_64
+    /// slice, which is as much of the file as code_assets' check reads.
+    List<int> universalLibrary() {
+      final header = ByteData(8 + 2 * 20)
+        ..setUint32(0, 0xcafebabe) // FAT_MAGIC, big-endian
+        ..setUint32(4, 2) // two slices
+        ..setUint32(8, 0x0100000c) // CPU_TYPE_ARM64
+        ..setUint32(28, 0x01000007); // CPU_TYPE_X86_64
+      return header.buffer.asUint8List();
+    }
+
+    /// The header of a thin 64-bit Mach-O library for [cpuType].
+    List<int> thinLibrary(int cpuType) {
+      final header = ByteData(32)
+        ..setUint32(0, 0xfeedfacf, Endian.little) // MH_MAGIC_64
+        ..setUint32(4, cpuType, Endian.little);
+      return header.buffer.asUint8List();
+    }
+
+    EncodedAsset library(Uri file) => CodeAsset(
+      package: 'some_package',
+      name: 'native.dart',
+      linkMode: DynamicLoadingBundled(),
+      file: file,
+    ).encode();
+
+    EncodedAsset data(Uri file) =>
+        DataAsset(package: 'some_package', name: 'greeting.txt', file: file).encode();
+
+    /// What a bare iOS `CodeAssetExtension` — the retry's extension from 1.12.0
+    /// to 1.12.2 — reports on [asset], so each case shows that its fixture is
+    /// one the protocol's checks do reject.
+    Future<List<String>> bareIOSErrors(EncodedAsset asset) async {
+      final input = BuildInputBuilder()
+        ..setupShared(
+          packageRoot: temp.uri.resolve('some_package/'),
+          packageName: 'some_package',
+          outputDirectoryShared: temp.uri.resolve('shared/'),
+          outputFile: temp.uri.resolve('some_package/output.json'),
+        )
+        ..setupBuildInput()
+        ..config.setupBuild(linkingEnabled: false);
+      final bare = CodeAssetExtension(
+        targetArchitecture: tvOSArchitecture,
+        targetOS: OS.iOS,
+        linkModePreference: LinkModePreference.dynamic,
+        iOS: IOSCodeConfig(targetSdk: IOSSdk.iPhoneSimulator, targetVersion: 13),
+      )..setupLogger(logging.Logger.detached('bare'));
+      bare.setupBuildInput(input);
+      return bare.validateBuildOutput(
+        BuildInput(input.json),
+        (BuildOutputBuilder()..assets.addEncodedAsset(asset)).build(),
+      );
+    }
+
+    /// Builds with a hook that refuses `tvos` and, told `ios`, produces
+    /// [assets]. Returns the runner and the result the target wrote.
+    Future<(_RecordingBuildRunner, Map<String, Object?>)> retry(
+      List<EncodedAsset> assets, {
+      BufferLogger? logger,
+    }) async {
+      final runner = _RecordingBuildRunner(
+        failuresBeforeSuccess: 1,
+        validates: true,
+        assets: assets,
+      );
+      final Environment env = buildEnv(logger: logger);
+      await TvosBuildHooks(buildRunner: runner).build(env);
+      final written =
+          json.decode(env.buildDir.childFile(LinkHooks.resultFilename).readAsStringSync())
+              as Map<String, Object?>;
+      return (runner, written);
+    }
+
+    Map<Type, Generator> overrides() => <Type, Generator>{
+      FileSystem: () => fileSystem,
+      // `xcrun --find`, as the pass asks for the host C toolchain.
+      ProcessManager: () => FakeProcessManager.list(<FakeCommand>[
+        for (final String tool in _hostTools)
+          FakeCommand(command: <String>['xcrun', '--find', tool], stdout: '${temp.path}/$tool\n'),
+      ]),
+      FeatureFlags: () => TestFeatureFlags(isNativeAssetsEnabled: true, isDartDataAssetsEnabled: true),
+    };
+
+    for (final (String what, List<int> Function() bytes, String rejection)
+        in <(String, List<int> Function(), String)>[
+          ('a universal library', universalLibrary, 'is a multi-architecture Mach-O binary'),
+          (
+            'a library for another architecture',
+            () => thinLibrary(0x01000007), // CPU_TYPE_X86_64
+            'is built for x64, but the target architecture is arm64',
+          ),
+        ]) {
+      testUsingContext('does not fail the build over $what it discards', () async {
+        final EncodedAsset code = library(writeFile('libnative.dylib', bytes()));
+        expect(
+          await bareIOSErrors(code),
+          contains(contains(rejection)),
+          reason: 'the fixture has to be one the iOS checks reject, or this proves nothing',
+        );
+        final logger = BufferLogger.test();
+
+        final (_RecordingBuildRunner runner, Map<String, Object?> written) = await retry(
+          <EncodedAsset>[code, data(writeFile('greeting.txt', 'hello'.codeUnits))],
+          logger: logger,
+        );
+
+        expect(runner.inputs, hasLength(2), reason: 'the pass was not retried');
+        expect(runner.validationErrors.single, isEmpty);
+        expect(
+          written['data_assets'],
+          hasLength(1),
+          reason: "the package's data asset is what the retry is for",
+        );
+        expect(written['code_assets'], isEmpty);
+        // Reported the way a discarded code asset of the retry is reported.
+        expect(
+          logger.warningText,
+          contains('Discarding 1 code asset(s) from the iOS-family retry'),
+        );
+      }, overrides: overrides());
+    }
+
+    testUsingContext('does not fail the build over a discarded library that is missing', () async {
+      final EncodedAsset code = library(temp.uri.resolve('libmissing.dylib'));
+      expect(await bareIOSErrors(code), contains(contains('does not exist as a file')));
+
+      final (_RecordingBuildRunner runner, Map<String, Object?> written) = await retry(
+        <EncodedAsset>[code, data(writeFile('greeting.txt', 'hello'.codeUnits))],
+      );
+
+      expect(runner.validationErrors.single, isEmpty);
+      expect(written['data_assets'], hasLength(1));
+      expect(written['code_assets'], isEmpty);
+    }, overrides: overrides());
+
+    testUsingContext('still hashes the libraries it discards', () async {
+      // hooks_runner runs a hook again when one of its output files changes. A
+      // library rebuilt in place has to keep doing that, or the next build
+      // reuses the hook's stale output, data assets included.
+      final Uri file = writeFile('libnative.dylib', universalLibrary());
+
+      final (_RecordingBuildRunner runner, _) = await retry(<EncodedAsset>[
+        library(file),
+        data(writeFile('greeting.txt', 'hello'.codeUnits)),
+      ]);
+
+      expect(runner.outputFiles, contains(file));
+    }, overrides: overrides());
+
+    testUsingContext('still fails over a data asset that is missing', () async {
+      // Data assets are what the retry keeps, so their checks stay: a hook that
+      // names a file it did not write is broken, whatever it was told.
+      final runner = _RecordingBuildRunner(
+        failuresBeforeSuccess: 1,
+        validates: true,
+        assets: <EncodedAsset>[
+          library(writeFile('libnative.dylib', universalLibrary())),
+          data(temp.uri.resolve('missing.txt')),
+        ],
+      );
+
+      await expectLater(
+        TvosBuildHooks(buildRunner: runner).build(buildEnv()),
+        throwsToolExit(message: 'both as tvOS and as the iOS family'),
+      );
+      expect(
+        runner.validationErrors.single,
+        <Matcher>[contains('missing.txt')],
+        reason: 'the failure has to be the data asset, not the discarded library',
+      );
+    }, overrides: overrides());
+
+    testUsingContext('still fails over a code asset that cannot be read', () async {
+      // Not a library the iOS checks dislike, but output that breaks the
+      // protocol. hooks_runner parses every code asset to find its output
+      // files, so this has to fail the hook by name rather than crash later.
+      final EncodedAsset valid = library(writeFile('libnative.dylib', universalLibrary()));
+      final unreadable = EncodedAsset(
+        valid.type,
+        <String, Object?>{...valid.encoding}..remove('link_mode'),
+      );
+      final runner = _RecordingBuildRunner(
+        failuresBeforeSuccess: 1,
+        validates: true,
+        assets: <EncodedAsset>[unreadable],
+      );
+
+      await expectLater(
+        TvosBuildHooks(buildRunner: runner).build(buildEnv()),
+        throwsToolExit(message: 'both as tvOS and as the iOS family'),
+      );
+      expect(runner.validationErrors.single, isNotEmpty);
+      expect(runner.outputFiles, isEmpty);
+    }, overrides: overrides());
+  });
+
   group('TvosCodeAssetExtension', () {
     // hooks_runner hands each extension its logger before calling anything
     // else on it, and only ever calls the wrapper. The wrapped
@@ -427,6 +918,164 @@ void main() {
     // the same one.
     testWithoutContext("passes the runner's logger on to the wrapped extension", () {
       final extension = TvosCodeAssetExtension(cCompiler: null);
+      final logger = logging.Logger.detached('tvos_hooks_test')..level = logging.Level.ALL;
+      final records = <logging.LogRecord>[];
+      logger.onRecord.listen(records.add);
+
+      extension.setupLogger(logger);
+      extension.codeAssets.logger.warning('a real warning');
+      extension.codeAssets.logger.warning(
+        'Could not validate code asset "x" file "y": No registered validator '
+        'recognized the file and target. If this is a valid native library, ...',
+      );
+
+      expect(extension.logger, same(logger));
+      expect(records.map((logging.LogRecord r) => r.level), <logging.Level>[
+        logging.Level.WARNING,
+        // Every tvOS library gets this one; it is not a defect in the package.
+        logging.Level.FINE,
+      ]);
+      expect(records.first.message, 'a real warning');
+    });
+
+    // The protocol's own checks, forwarded. Before, the wrapper forwarded only
+    // the setup calls, so none of these were made, and hooks_runner never
+    // learned which files a hook emitted.
+    final base = '${io.Directory.systemTemp.resolveSymbolicLinksSync()}/tvos_validation_test';
+
+    BuildInput input(String package) {
+      final builder = BuildInputBuilder()
+        ..setupShared(
+          packageRoot: Uri.directory('$base/$package'),
+          packageName: package,
+          outputDirectoryShared: Uri.directory('$base/shared'),
+          outputFile: Uri.file('$base/$package/output.json'),
+        )
+        ..setupBuildInput()
+        ..config.setupBuild(linkingEnabled: false);
+      TvosCodeAssetExtension(cCompiler: null).setupBuildInput(builder);
+      return BuildInput(builder.json);
+    }
+
+    BuildOutput output(List<CodeAsset> assets) {
+      final builder = BuildOutputBuilder();
+      assets.forEach(builder.assets.code.add);
+      return BuildOutput(builder.json);
+    }
+
+    TvosCodeAssetExtension extension() =>
+        TvosCodeAssetExtension(cCompiler: null)..setupLogger(logging.Logger.detached('t'));
+
+    testWithoutContext('accepts a valid tvOS hook output', () async {
+      // The forwarded checks must not reject what a correct tvOS hook writes;
+      // code_assets cannot recognize a tvOS library, which is a warning only.
+      final dir = io.Directory(base)..createSync(recursive: true);
+      final file = io.File('${dir.path}/libok.dylib')..writeAsBytesSync(<int>[0xcf, 0xfa, 0xed, 0xfe]);
+      addTearDown(file.deleteSync);
+      final List<String> errors = await extension().validateBuildOutput(
+        input('foo'),
+        output(<CodeAsset>[
+          CodeAsset(
+            package: 'foo',
+            name: 'foo.dart',
+            linkMode: DynamicLoadingBundled(),
+            file: file.uri,
+          ),
+        ]),
+      );
+      expect(errors, isEmpty);
+      expect(await extension().validateBuildInput(input('foo')), isEmpty);
+    });
+
+    testWithoutContext('reports a statically linked asset', () async {
+      final List<String> errors = await extension().validateBuildOutput(
+        input('foo'),
+        output(<CodeAsset>[
+          CodeAsset(
+            package: 'foo',
+            name: 'foo.dart',
+            linkMode: StaticLinking(),
+            file: Uri.file('$base/libfoo.a'),
+          ),
+        ]),
+      );
+      expect(errors, contains(contains('link mode')));
+    });
+
+    testWithoutContext('reports a library the hook did not write', () async {
+      final List<String> errors = await extension().validateBuildOutput(
+        input('foo'),
+        output(<CodeAsset>[
+          CodeAsset(
+            package: 'foo',
+            name: 'foo.dart',
+            linkMode: DynamicLoadingBundled(),
+            file: Uri.file('$base/missing/libfoo.dylib'),
+          ),
+        ]),
+      );
+      expect(errors, contains(contains('libfoo.dylib')));
+    });
+
+    testWithoutContext('reports two packages shipping the same library file name', () async {
+      final List<String> errors = await extension().validateApplicationAssets(<EncodedAsset>[
+        CodeAsset(
+          package: 'foo',
+          name: 'foo.dart',
+          linkMode: DynamicLoadingBundled(),
+          file: Uri.file('$base/foo/libnative.dylib'),
+        ).encode(),
+        CodeAsset(
+          package: 'bar',
+          name: 'bar.dart',
+          linkMode: DynamicLoadingBundled(),
+          file: Uri.file('$base/bar/libnative.dylib'),
+        ).encode(),
+      ]);
+      expect(errors, contains(contains('Duplicate dynamic library file name "libnative.dylib"')));
+    });
+
+    testWithoutContext('reports a duplicate asset id', () async {
+      final List<String> errors = await extension().validateApplicationAssets(<EncodedAsset>[
+        for (final dir in <String>['a', 'b'])
+          CodeAsset(
+            package: 'foo',
+            name: 'foo.dart',
+            linkMode: DynamicLoadingBundled(),
+            file: Uri.file('$base/$dir/lib$dir.dylib'),
+          ).encode(),
+      ]);
+      expect(errors, contains(contains('package:foo/foo.dart')));
+    });
+
+    testWithoutContext('names the files a hook emitted, so a changed one reruns it', () {
+      final file = Uri.file('$base/foo/libfoo.dylib');
+      expect(
+        extension().outputFiles(<EncodedAsset>[
+          CodeAsset(
+            package: 'foo',
+            name: 'foo.dart',
+            linkMode: DynamicLoadingBundled(),
+            file: file,
+          ).encode(),
+        ]),
+        <Uri>[file],
+      );
+    });
+  });
+
+  group('TvosRetryCodeAssetExtension', () {
+    // The same promise as above: the wrapped extension still validates inputs
+    // and reads its logger while doing so.
+    testWithoutContext("passes the runner's logger on to the wrapped extension", () {
+      final extension = TvosRetryCodeAssetExtension(
+        CodeAssetExtension(
+          targetArchitecture: tvOSArchitecture,
+          targetOS: OS.iOS,
+          linkModePreference: LinkModePreference.dynamic,
+          iOS: IOSCodeConfig(targetSdk: IOSSdk.iPhoneOS, targetVersion: 13),
+        ),
+      );
       final logger = logging.Logger('tvos_hooks_test');
 
       extension.setupLogger(logger);

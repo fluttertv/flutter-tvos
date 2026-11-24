@@ -2,6 +2,129 @@
 
 All notable changes to flutter-tvos will be documented here.
 
+## [1.13.0] - 2026-11-24
+
+### Added
+
+- **Code assets from Dart build hooks are installed into tvOS apps** (#95).
+  A package that ships a native library through `hook/build.dart` and calls
+  it with `@Native` now works on tvOS: each dynamic library is bundled as
+  `<name>.framework` in the app's `Frameworks/`, install-named
+  `@rpath/<name>.framework/<name>`, stripped with a dSYM outside debug, and
+  listed in `NativeAssetsManifest.json`, as Flutter does for iOS. Until now
+  the hooks ran and their code assets were discarded.
+
+  Still behind `flutter config --enable-dart-data-assets`, like the hook pass
+  itself: turning it on by default would start running every hook in every
+  tvOS app on upgrade. Only the pass that told the hooks `tvos` contributes;
+  the libraries of the iOS-family retry are iPhone libraries and stay
+  discarded.
+
+  The manifest key is `ios_arm64`, not `tvos_arm64`. The tvOS engine is the
+  iOS engine, and it picks the key at compile time from `FML_OS_IOS`, which
+  is set on tvOS too. An app whose manifest says `tvos_arm64` fails its first
+  `@Native` call with "No asset with id ... found"; checked on a simulator.
+
+  **A hook still cannot tell device from simulator** (see 1.8.0), and for a
+  native library that decides whether it loads at all. So the build reads the
+  Mach-O platform of every library before installing it, and fails, naming
+  the library, when it was built for the other SDK, instead of shipping an
+  app that fails at launch. A device and a simulator build share one hooks
+  cache entry, so a package has to choose the SDK by some means of its own,
+  such as a user-define in the app's `pubspec.yaml`. `native_toolchain_c`
+  cannot build for tvOS; see `doc/develop-plugin.md`.
+
+  Native assets have to stay enabled too (they are by default); with them
+  off, or when a hook only builds through the iOS-family retry, the build warns
+  that code assets were discarded. Turning either flag on or off takes effect
+  on the next build, without `flutter-tvos clean`, and a library the app no
+  longer has is removed from it.
+
+  The "Embed Flutter.framework" build phase embeds and signs the libraries,
+  which also covers archiving from Xcode. A project created with 1.9.0
+  through 1.12.2 whose phase is unchanged has the phase updated in
+  `tvos/Runner.xcodeproj/project.pbxproj` on its next build, and the build
+  says so. A phase that was edited is left alone. Whether a project embeds
+  the libraries is not judged from its project file, since an XML-format
+  project file, a script kept in a file or another phase can do it: the
+  libraries an earlier build left in the app are removed before Xcode runs,
+  and the built app then shows which ones the Xcode build embedded.
+  Simulator and `--no-codesign` builds add the missing ones after the Xcode
+  build, with a warning, and a signed device build stops after the Xcode
+  build, printing the lines to add, instead of adding them to an app Xcode
+  has signed, which would break its signature.
+
+  Each library's framework declares tvOS in its `Info.plist`
+  (`CFBundleSupportedPlatforms`, `DTPlatformName`, `UIDeviceFamily`), takes
+  `MinimumOSVersion` from the library, with a warning when that is above the
+  app's deployment target, and a library that would be named
+  `Flutter.framework` or `App.framework` stops the build.
+
+### Fixed
+
+- **tvOS plugins are found from what `pub get` resolved**, the package
+  config and package graph in `.dart_tool/`, the way Flutter finds its own
+  plugins ([#99](https://github.com/fluttertv/flutter-tvos/issues/99)). They
+  used to be read from the `dependencyGraph` of
+  `.flutter-plugins-dependencies`, which Flutter keeps only for backwards
+  compatibility; without it, or with it in another shape, an app was built
+  with no plugins and every plugin call threw `MissingPluginException` at
+  runtime, with no error at build time. The plugins found, and their order in
+  the registrants, the Podfile list and the Swift package, are the same as
+  before, and a tvOS plugin that is only a dev dependency is still included. A
+  package config or package graph that is still missing or unreadable after
+  `pub get` now stops the build and says to run `flutter-tvos pub get`.
+
+- `flutter-tvos daemon`, `run --machine` and `attach --machine` work again
+  ([#100](https://github.com/fluttertv/flutter-tvos/issues/100)). All three
+  stopped before doing anything, with a `StateError` or `TypeError` about the
+  logger, because flutter-tvos always built a plain terminal logger, and these
+  commands need the daemon and machine-output loggers stock Flutter builds for
+  them. This also kept IDEs, which drive the tool through the daemon and
+  `--machine`, from running or attaching to an app. The logger is now built by
+  Flutter's own logger factory, from the same flags stock reads
+  (`--machine`, `--verbose`, `--prefixed-errors`, the command name), with the
+  `(tv)` device category rewrite kept in the chain; it never touches a line of
+  JSON output.
+
+  The 1.12.0 entry saying the daemon reports `"cpuArch": "arm64"` for tvOS
+  devices did not hold as released: the daemon failed at startup. `devices
+  --machine` did report it. With this fix the daemon starts, and its device
+  list carries the same `cpuArch` field.
+
+- The launcher prints its own messages ("Running pub get...", pub's output,
+  "Compiling flutter-tvos...", the Flutter SDK setup lines) to stderr, as
+  stock Flutter does. They went to stdout, so the first `--machine` or
+  `daemon` command after an edit or an upgrade began with lines that are not
+  JSON.
+
+- **`flutter-tvos precache --force` keeps the tvOS engine stamp it writes**
+  ([#101](https://github.com/fluttertv/flutter-tvos/issues/101)). It cleared the
+  cache stamps after downloading the tvOS engine, which deleted the engine's
+  fresh stamp, so the next command found the engine stale and downloaded all of
+  it again. It now takes the cache lock and clears the stamps before it
+  downloads anything, as stock `flutter precache` does, so the tvOS engine is
+  also no longer downloaded without holding the cache lock.
+
+- **A build hook's discarded iPhone library no longer fails a tvOS build**
+  ([#102](https://github.com/fluttertv/flutter-tvos/issues/102)). When a
+  package's hook cannot be told `tvos` — one on `package:code_assets` 1.x
+  throws on it — the hooks run again as the iOS family, so that the package's
+  data assets are still collected; the code assets that pass produces are
+  discarded. From 1.12.0 that second pass checked those code assets anyway, and
+  `package:code_assets` 2.x, which 1.12.0 moved to, reads an iOS library's
+  header: a universal `arm64` + `x86_64` library (what cargokit-style hooks
+  ship), an `arm64e` one, or one built for another architecture failed the
+  build with "A Dart build hook failed while building for tvOS, both as tvOS
+  and as the iOS family", where 1.11.5 built the same app. Only 1.12.0
+  through 1.12.2 are affected, and only with Dart data assets enabled.
+
+  The second pass now skips the checks on the code assets it discards — the
+  same ones the first pass has always skipped — and keeps the rest: data
+  assets are checked as before, a hook that fails or writes a code asset that
+  cannot be read still fails the build, and a library the hook reports still
+  makes the hook run again when it changes.
+
 ## [1.12.2] - 2026-11-21
 
 ### Changed
@@ -14,6 +137,27 @@ All notable changes to flutter-tvos will be documented here.
   engine unit tests passed, the CLI analyzes and tests clean against the new
   SDK, and the end-to-end matrix ran on a tvOS simulator with the device
   profile and release builds compiled.
+
+- **Menu (Back on the second-generation Siri Remote) reaches Flutter as a
+  key event first.** The engine sends `LogicalKeyboardKey.goBack` down and up
+  on `flutter/keyevent`, the logical key Flutter reports for Android's Back
+  key. It sends `popRoute` on `flutter/navigation` only when the button is
+  released, and only if nothing reported the key down or the key up as
+  handled. Up to 1.12.1, Menu sent only `popRoute`, when the button went down,
+  and no key event.
+
+  For existing apps:
+  - Routes, dialogs and `PopScope` now pop when Menu is released, not when
+    it goes down.
+  - An app that already listens for `goBack`, for example for Android TV,
+    now receives it on tvOS. If it reports the key as handled, nothing pops.
+  - An app that handles `goBack` on its top-level screen keeps the app open:
+    Menu leaves for the Home screen only when nothing handles it.
+
+  Flutter binds nothing to `goBack` by default, so an app that does not
+  handle it pops as before, on release. The change is in the engine and comes
+  with the engine artifacts of this release. The `flutter_tvos` package README
+  describes the new behaviour and how to handle Menu.
 
 ## [1.12.1] - 2026-11-20
 

@@ -6,13 +6,20 @@
 
 import 'dart:io';
 
+// Stock's own command-name lookup, so `daemon`, `doctor` and `help` are found
+// the way stock finds them (after any global options). It is marked
+// @visibleForTesting only because stock has no other caller.
+// ignore: invalid_use_of_visible_for_testing_member
+import 'package:flutter_tools/executable.dart' as stock show findCommandName;
 import 'package:flutter_tools/runner.dart' as runner;
 import 'package:flutter_tools/src/android/android_workflow.dart';
 import 'package:flutter_tools/src/application_package.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/context.dart';
+import 'package:flutter_tools/src/base/io.dart' show Stdio;
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/template.dart';
+import 'package:flutter_tools/src/base/terminal.dart' show OutputPreferences, Terminal;
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/build_targets.dart';
 import 'package:flutter_tools/src/cache.dart';
@@ -215,23 +222,85 @@ List<FlutterCommand> tvosCommands({
   ];
 }
 
+/// The flags `main` derives from argv before anything else runs.
+typedef TvosMainFlags = ({
+  bool verbose,
+  bool verboseHelp,
+  bool muteCommandLogging,
+  bool prefixedErrors,
+  bool daemon,
+  bool machine,
+});
+
+/// Derives [TvosMainFlags] from [args] exactly as stock `flutter.main` derives
+/// them, and, as there, changes [args] in place: `-?` and `/?` become `-h`.
+///
+/// Stock's `widget-preview` flag is left out: flutter-tvos has no such
+/// command.
+@visibleForTesting
+TvosMainFlags mainFlags(List<String> args) {
+  final bool veryVerbose = args.contains('-vv');
+  final bool verbose = args.contains('-v') || args.contains('--verbose') || veryVerbose;
+  final bool prefixedErrors = args.contains('--prefixed-errors');
+  // Support universal help idioms.
+  final int powershellHelpIndex = args.indexOf('-?');
+  if (powershellHelpIndex != -1) {
+    args[powershellHelpIndex] = '-h';
+  }
+  final int slashQuestionHelpIndex = args.indexOf('/?');
+  if (slashQuestionHelpIndex != -1) {
+    args[slashQuestionHelpIndex] = '-h';
+  }
+
+  // ignore: invalid_use_of_visible_for_testing_member
+  final String? commandName = stock.findCommandName(args);
+  final doctor = commandName == 'doctor';
+  final bool help =
+      args.contains('-h') ||
+      args.contains('--help') ||
+      commandName == 'help' ||
+      (args.length == 1 && verbose);
+  final bool muteCommandLogging = (help || doctor) && !veryVerbose;
+  final bool verboseHelp = help && verbose;
+  final daemon = commandName == 'daemon';
+  final bool runMachine = args.contains('--machine');
+  return (
+    verbose: verbose,
+    verboseHelp: verboseHelp,
+    muteCommandLogging: muteCommandLogging,
+    prefixedErrors: prefixedErrors,
+    daemon: daemon,
+    machine: runMachine,
+  );
+}
+
+/// The logger `main` installs for [flags], as stock's `Logger` override
+/// builds it from the same flags (see [createTvosLogger]).
+@visibleForTesting
+Logger mainLogger(
+  TvosMainFlags flags, {
+  required Terminal terminal,
+  required Stdio stdio,
+  required OutputPreferences outputPreferences,
+  required bool windows,
+}) => createTvosLogger(
+  terminal: terminal,
+  stdio: stdio,
+  outputPreferences: outputPreferences,
+  daemon: flags.daemon,
+  machine: flags.machine,
+  verbose: flags.verbose && !flags.muteCommandLogging,
+  prefixedErrors: flags.prefixedErrors,
+  windows: windows,
+);
+
 /// Main entry point for commands.
 ///
 /// Source: `flutter.main` in `executable.dart` (some commands and options were omitted)
 Future<void> main(List<String> args) async {
-  final bool veryVerbose = args.contains('-vv');
-  final bool verbose = args.contains('-v') || args.contains('--verbose') || veryVerbose;
-
-  final bool doctor =
-      (args.isNotEmpty && args.first == 'doctor') ||
-      (args.length == 2 && verbose && args.last == 'doctor');
-  final bool help =
-      args.contains('-h') ||
-      args.contains('--help') ||
-      (args.isNotEmpty && args.first == 'help') ||
-      (args.length == 1 && verbose);
-  final bool muteCommandLogging = (help || doctor) && !veryVerbose;
-  final bool verboseHelp = help && verbose;
+  // Together these choose the logger (see [mainLogger]).
+  final TvosMainFlags flags = mainFlags(args);
+  final TvosMainFlags(:bool verbose, :bool verboseHelp, :bool muteCommandLogging) = flags;
 
   args = <String>[
     '--suppress-analytics', // Suppress flutter analytics by default.
@@ -319,24 +388,17 @@ Future<void> main(List<String> args) async {
         tvosWorkflow: tvosWorkflow!,
       ),
       TvosValidator: () => TvosValidator(processManager: globals.processManager),
-      // Always wrap the logger with TvosCategoryRewritingLogger so the
-      // device list shows `(tv)` instead of `(mobile)` for tvOS devices.
-      // The wrapper is a no-op on every other line. In verbose mode,
-      // VerboseLogger sits inside ours so timestamps still apply.
-      Logger: () => TvosCategoryRewritingLogger(
-        verbose && !muteCommandLogging
-            ? VerboseLogger(
-                StdoutLogger(
-                  stdio: globals.stdio,
-                  terminal: globals.terminal,
-                  outputPreferences: globals.outputPreferences,
-                ),
-              )
-            : StdoutLogger(
-                stdio: globals.stdio,
-                terminal: globals.terminal,
-                outputPreferences: globals.outputPreferences,
-              ),
+      // Stock's logger for the mode (daemon, --machine, verbose,
+      // --prefixed-errors), with TvosCategoryRewritingLogger in the chain so
+      // the device list shows `(tv)` instead of `(mobile)` for tvOS devices.
+      // Stock code looks the daemon and machine loggers up by type, so
+      // `daemon`, `run --machine` and `attach --machine` need them.
+      Logger: () => mainLogger(
+        flags,
+        terminal: globals.terminal,
+        stdio: globals.stdio,
+        outputPreferences: globals.outputPreferences,
+        windows: globals.platform.isWindows,
       ),
     },
     shutdownHooks: globals.shutdownHooks,
