@@ -38,6 +38,7 @@ import 'package:flutter_tvos/tvos_embed_phase_migration.dart';
 import '../src/common.dart';
 import '../src/context.dart';
 import '../src/fakes.dart';
+import '../src/pub_get.dart';
 
 late Directory _root;
 
@@ -331,6 +332,12 @@ void main() {
       fileSystem.file('/project/pubspec.yaml')
         ..createSync(recursive: true)
         ..writeAsStringSync('name: app\nversion: 1.0.0+1\n');
+      // What `pub get` leaves for an app with no packages. Plugin discovery
+      // reads it, and stops the build when it is missing.
+      writePubGetOutput(
+        fileSystem.directory('/project/.dart_tool'),
+        packages: const <String, String>{},
+      );
       fileSystem.file(pbxprojPath)
         ..createSync(recursive: true)
         ..writeAsStringSync(pbxproj);
