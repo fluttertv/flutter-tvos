@@ -1,3 +1,20 @@
+## 1.1.5
+
+- `tvos/Package.swift` declares tvOS 15.0, the floor the podspec and the
+  README state and the flutter-tvos engine has required since flutter-tvos
+  1.6.0. It still said tvOS 13. flutter-tvos builds this plugin through Swift
+  Package Manager, so what 1.1.4 said about the deployment target held only
+  for a CocoaPods build.
+- An app whose Xcode project still declares a deployment target below 15.0
+  should raise it to 15.0 (`TVOS_DEPLOYMENT_TARGET` and the `Podfile`
+  platform line), or regenerate `tvos/` with `flutter-tvos create .`: Swift
+  Package Manager does not let a package depend on one with a higher floor
+  than its own.
+- The podspec's `s.version` follows the package version again. It had stayed
+  at 1.1.0.
+- No library, API, or native code changes — `lib/` and `tvos/Classes/` are
+  byte-identical to 1.1.4.
+
 ## 1.1.4
 
 - Documentation: the README describes how the Menu button (Back on the
