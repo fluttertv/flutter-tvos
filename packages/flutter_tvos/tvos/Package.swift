@@ -19,8 +19,10 @@ import PackageDescription
 
 let package = Package(
   name: "flutter_tvos",
+  // The floor the podspec and the README state, and the one the flutter-tvos
+  // engine requires. test/package_metadata_test.dart keeps them together.
   platforms: [
-    .tvOS(.v13),
+    .tvOS(.v15),
   ],
   products: [
     .library(name: "flutter-tvos", targets: ["flutter_tvos"]),
